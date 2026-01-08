@@ -1,0 +1,5 @@
+[test]
+coveragePathIgnorePatterns = [
+  "tests/**",
+  "src/zod/utils.ts"
+]
