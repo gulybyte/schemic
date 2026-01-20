@@ -1,5 +1,12 @@
-import z, { core, globalRegistry } from "zod";
-import { ZodSurrealType, type SurrealZodInternals } from "./schema";
+import type z from "zod";
+import { core } from "zod";
+import type { ParsingEncodingDecodingMethodNames } from "./parse";
+import {
+  ZodSurrealField,
+  type ZodSurrealFieldMethods,
+  type ZodSurrealTypeDefInternals,
+  ZodSurrealType,
+} from "./schema";
 
 export type UnionToIntersection<U> = (
   U extends any
@@ -18,36 +25,36 @@ export type UnionToTuple<U, T extends any[] = []> = [U] extends [never]
   ? T
   : UnionToTuple<Exclude<U, LastOf<U>>, [LastOf<U>, ...T]>;
 
-export type OverrideOutput<
-  T extends core.$ZodType,
-  O = unknown,
-  SurrealInternals extends SurrealZodInternals = SurrealZodInternals,
-> = Omit<T, "_zod" | "_output"> & {
-  _zod: Omit<T["_zod"], "output" | "def"> & {
-    def: T["_zod"]["def"] & {
-      surreal: SurrealInternals;
-    };
-    output: O;
-  };
-  _output: O;
-};
-
 export type OverrideOutputInput<
   T extends core.$ZodType,
   O = unknown,
   I = unknown,
-  SurrealInternals extends SurrealZodInternals = SurrealZodInternals,
-> = Omit<T, "_zod" | "_output" | "_input"> & {
+  DBO = O,
+  DBI = I,
+  SurrealInternals extends
+    ZodSurrealTypeDefInternals = ZodSurrealTypeDefInternals,
+> = Omit<
+  T,
+  | "_zod"
+  | "_output"
+  | "_input"
+  | "~standard"
+  | ParsingEncodingDecodingMethodNames
+> & {
+  "~standard": core.ZodStandardSchemaWithJSON<core.$ZodType<O, I>>;
   _zod: Omit<T["_zod"], "def" | "output" | "input"> & {
     def: T["_zod"]["def"] & {
       surreal: SurrealInternals;
     };
     output: O;
     input: I;
+    dboutput: DBO;
+    dbinput: DBI;
   };
   _output: O;
   _input: I;
 };
+
 type ZodTrait = {
   _zod: {
     def: any;
@@ -55,8 +62,47 @@ type ZodTrait = {
   };
 };
 
+export type _patch<
+  T extends core.$ZodType,
+  O = unknown,
+  I = unknown,
+  SurrealInternals extends
+    ZodSurrealTypeDefInternals = ZodSurrealTypeDefInternals,
+> = patch<T, O, I, O, I, SurrealInternals>;
+
+export type patch<
+  T extends core.$ZodType,
+  O = unknown,
+  I = unknown,
+  DBO = O,
+  DBI = I,
+  SurrealInternals extends
+    ZodSurrealTypeDefInternals = ZodSurrealTypeDefInternals,
+> = Omit<
+  T,
+  | "_zod"
+  | "_output"
+  | "_input"
+  | "~standard"
+  | ParsingEncodingDecodingMethodNames
+> &
+  ZodSurrealFieldMethods<T> & {
+    "~standard": core.ZodStandardSchemaWithJSON<core.$ZodType<O, I>>;
+    _zod: Omit<T["_zod"], "def" | "output" | "input"> & {
+      def: T["_zod"]["def"] & {
+        surreal: SurrealInternals;
+      };
+      output: O;
+      input: I;
+      dboutput: DBO;
+      dbinput: DBI;
+    };
+    _output: O;
+    _input: I;
+  };
+
 export function patch<
-  T extends ZodTrait,
+  T extends core.$ZodType,
   P = unknown,
   I extends core.$ZodIssueBase = never,
 >(options: {
@@ -83,11 +129,15 @@ export function patch<
    * Executed after a successful parsing and validation.
    */
   onRunSuccess?(result: core.ParsePayload<P>): void;
-}): core.$constructor<T> {
-  return core.$constructor<T>(options.name, (inst, def) => {
+}): core.$constructor<
+  T & ZodSurrealType<z.output<T>, z.input<T>> & ZodSurrealFieldMethods<T>
+> {
+  return core.$constructor(options.name, (inst, def) => {
     options.original.init(inst, def);
-    // @ts-expect-error - SurrealZodType overrides the type property
     ZodSurrealType.init(inst, def);
+    // @ts-expect-error
+    ZodSurrealField.init(inst, def);
+
     options.extend?.forEach((extend) => {
       // @ts-expect-error - extend is a constructor
       extend.init(inst, def);

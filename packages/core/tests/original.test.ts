@@ -1,8 +1,8 @@
 import { describe } from "bun:test";
 import { DateTime } from "surrealdb";
-import { issue, issues, testCase } from "./utils";
-import { setupSurrealTests } from "./common";
 import z from "zod";
+import { setupSurrealTests } from "./common";
+import { issue, issues, testCase } from "./utils";
 
 describe("zod", () => {
   const { defineTest } = setupSurrealTests();
@@ -1791,7 +1791,7 @@ describe("zod", () => {
   const object = z.object({
     name: z.string(),
     age: z.number(),
-    children: z.array(z.string().or(z.lazy(() => object))),
+    children: z.array(z.string().or(z.lazy((): any => object))),
   });
   // @original
   defineTest("lazy", object, {

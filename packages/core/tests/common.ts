@@ -8,8 +8,9 @@ import {
 } from "./utils";
 import dedent from "dedent";
 import { core } from "zod";
-import { SurrealZodTable } from "../src/zod/schema";
+import { ZodSurrealTable } from "../src/zod/schema";
 import { z } from "../src";
+import { formatQuery } from "../src/surql";
 
 export function setupSurrealTests() {
   let testInstance: TestInstance;
@@ -33,25 +34,44 @@ export function setupSurrealTests() {
   function getFieldQuery(field: TestCaseChildField, table = "test") {
     return dedent.withOptions({ alignValues: true })`
       DEFINE FIELD OVERWRITE ${field.name} ON TABLE ${table} TYPE ${field.type}${
+        ""
+        // field.reference === true ? " REFERENCE" : reference ? ` REFERENCE ${reference}" : ""
+      }${
         field.default
           ? field.default.always
-            ? ` DEFAULT ALWAYS ${field.default.value}`
-            : ` DEFAULT ${field.default.value}`
+            ? ` DEFAULT ALWAYS ${formatQuery(field.default.value)}`
+            : ` DEFAULT ${formatQuery(field.default.value)}`
           : ""
-      }${
-        field.transforms?.length
+      }${field.readonly ? " READONLY" : ""}${
+        field.value
           ? ` ${dedent.withOptions({ alignValues: true })`
-              VALUE {
-                  ${field.transforms?.join("\n")}
-              }
+              VALUE ${formatQuery(field.value)}
             `}`
           : ""
+        // field.transforms?.length
+        //   ? ` ${dedent.withOptions({ alignValues: true })`
+        //       VALUE {
+        //           ${field.transforms?.join("\n")}
+        //       }
+        //     `}`
+        //   : ""
       }${
-        field.asserts?.length
+        field.assert
           ? ` ${dedent.withOptions({ alignValues: true })`
-              ASSERT {
-                  ${field.asserts?.join("\n")}
-              }
+              ASSERT ${formatQuery(field.assert)}
+            `}`
+          : ""
+        // field.asserts?.length
+        //   ? ` ${dedent.withOptions({ alignValues: true })`
+        //       ASSERT {
+        //           ${field.asserts?.join("\n")}
+        //       }
+        //     `}`
+        //   : ""
+      }${
+        field.comment
+          ? ` ${dedent.withOptions({ alignValues: true })`
+              COMMENT ${JSON.stringify(field.comment)}
             `}`
           : ""
       };\n
@@ -67,7 +87,7 @@ export function setupSurrealTests() {
       schemas = Array.isArray(schemas) ? schemas : [schemas];
 
       for (const schema of schemas) {
-        const isTable = schema instanceof SurrealZodTable;
+        const isTable = schema instanceof ZodSurrealTable;
         const table = isTable
           ? schema
           : z.table("test").fields({
@@ -104,9 +124,6 @@ export function setupSurrealTests() {
             {
               name: "id",
               type: "any",
-              default: expected.default ?? undefined,
-              transforms: expected.transforms ?? [],
-              asserts: expected.asserts ?? [],
             },
             tableName,
           );
@@ -115,8 +132,10 @@ export function setupSurrealTests() {
               name: "test",
               type: expected.type ?? "any",
               default: expected.default ?? undefined,
-              transforms: expected.transforms ?? [],
-              asserts: expected.asserts ?? [],
+              value: expected.value ?? undefined,
+              comment: expected.comment ?? undefined,
+              readonly: expected.readonly ?? undefined,
+              assert: expected.assert ?? undefined,
             },
             tableName,
           );

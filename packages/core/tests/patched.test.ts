@@ -1748,7 +1748,7 @@ describe("zod", () => {
   const object = z.object({
     name: z.string(),
     age: z.number(),
-    children: z.array(z.string().or(z.lazy(() => object))),
+    children: z.array(z.string().or(z.lazy((): any => object))),
   });
   // @original
   defineTest("lazy", object, {

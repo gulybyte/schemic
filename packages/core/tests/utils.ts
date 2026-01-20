@@ -92,8 +92,12 @@ export type ZodTest = {
   async?: boolean;
   default?: { value: any; always?: boolean };
   children?: TestCaseChildField[];
-  asserts?: string[];
-  transforms?: string[];
+  assert?: string;
+  value?: string;
+  comment?: string;
+  readonly?: boolean;
+  // asserts?: string[];
+  // transforms?: string[];
   schemafull?: boolean;
   debug?: boolean;
   tests?: readonly TestCase<any>[];
@@ -104,8 +108,12 @@ export type TestCaseChildField = {
   name: string;
   type: string;
   default?: { value: any; always?: boolean };
-  asserts?: string[];
-  transforms?: string[];
+  assert?: string;
+  value?: string;
+  comment?: string;
+  readonly?: boolean;
+  // asserts?: string[];
+  // transforms?: string[];
   children?: TestCaseChildField[];
 };
 

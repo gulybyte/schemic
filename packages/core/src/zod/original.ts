@@ -2,9 +2,9 @@
 
 export {
   // string
-  string,
-  _ZodString,
-  ZodString,
+  // string,
+  // _ZodString,
+  // ZodString,
   type ZodCoercedString,
   // iso
   iso,
@@ -176,8 +176,8 @@ export {
   intersection,
   ZodIntersection,
   // tuple
-  tuple,
-  ZodTuple,
+  // tuple,
+  // ZodTuple,
   // record
   record,
   ZodRecord,

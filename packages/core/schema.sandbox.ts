@@ -1,19 +1,25 @@
 import {
-  Surreal,
-  DateTime,
-  Decimal,
-  RecordId,
-  Uuid,
-  surql,
-  Table,
-  escapeIdent,
   Duration,
-  Value,
-  applyDiagnostics,
-  createRemoteEngines,
-  Future,
+  surql,
+  Surreal,
+  Uuid,
+  // DateTime,
+  // Decimal,
+  // RecordId,
+  // Uuid,
+  // surql,
+  // Table,
+  // escapeIdent,
+  // Duration,
+  // Value,
+  // applyDiagnostics,
+  // createRemoteEngines,
+  // Future,
 } from "surrealdb";
-import z from "./src";
+import z, { ZodSurrealField } from "./src";
+import z4 from "zod/v4";
+import { inspect } from "bun";
+// import z4 from "zod/v4";
 
 // // import { createNodeEngines } from "@surrealdb/node";
 // // import z, { sz } from "./src";
@@ -375,8 +381,132 @@ await surreal.connect("ws://127.0.0.1:8000", {
 // // // const result = schema.parse("Hello World");
 // // // console.log(result);
 
-const date = z.date().$default(surql`time::now()`);
-console.log(date.decode(undefined));
+// const schema0_optional = z
+//   .table("user")
+//   .fields({
+//     name: z.string(),
+//     createdAt: z.date().$default(surql`time::now()`).$comment("Date field"),
+//   })
+//   .decode({
+//     id: new RecordId("user", 123),
+//     name: "",
+//   });
+// const schema0_required = z
+//   .table("user")
+//   .fields({
+//     name: z.string(),
+//     createdAt: z.date().$default(surql`time::now()`).$comment("Date field"),
+//   })
+//   .decode(
+//     {
+//       id: new RecordId("user", 123),
+//       name: "",
+//     },
+//     { db: surreal },
+//   );
+
+// schema0_optional.createdAt.toISOString();
+// schema0_required.createdAt.toISOString();
+
+// const schema1_rejectsUndefied_outputsDate = z
+//   //
+//   .date()
+//   .decode(undefined);
+// const schema2_rejectsUndefied_outputsDate = z
+//   .date()
+//   .decode(undefined, { db: surreal });
+// const schema3_acceptsUndefined_outputsOptionalDate = z
+//   .date()
+//   .$default(surql``)
+//   .$assert(surql`$value > 10`)
+//   .decode(undefined);
+// const schema4_acceptsUndefined_outputsDate = z
+//   .date()
+//   .$default(surql``)
+//   .decode(undefined, { db: surreal });
+
+// const User = z.table("user").fields({
+//   id: z.tuple([z.string(), z.string().$default(surql`rand::ulid()`)])._zod.in,
+//   name: z.string(),
+// });
+
+const schema = z.uuid();
+
+console.log(schema._zod.def);
+console.log(
+  inspect(schema.decode(new Uuid("3836340b-7be8-4481-b07b-9d7cafaa7876")), {
+    colors: true,
+  }),
+);
+
+// console.log("default().$default() expected:", 456);
+// const innerSchema = z4.string().trim().min(8).default(456);
+// const oSchema = new ZodSurrealField({
+//   type: "any",
+//   innerType: innerSchema,
+//   surreal: {
+//     type: "string",
+//     field: {
+//       default: {
+//         value: surql`123`,
+//         always: false,
+//         parse: false,
+//       },
+//     },
+//   },
+// });
+// const data = await oSchema.safeDecodeAsync(undefined, { db: surreal });
+// console.log(data);
+
+// console.log("\n.default().$default() expected:", undefined);
+// const innerSchema2 = z4.string().trim().min(8).default(undefined);
+// const oSchema2 = new ZodSurrealField({
+//   type: "any",
+//   innerType: innerSchema2,
+//   surreal: {
+//     type: "string",
+//     field: {
+//       default: {
+//         value: surql`123`,
+//         always: false,
+//         parse: false,
+//       },
+//     },
+//   },
+// });
+// const data2 = await oSchema2.safeDecodeAsync(undefined, { db: surreal });
+// console.log(data2);
+
+// const data = await User.decode(
+//   {
+//     id: User.record().fromId(["client"]),
+//     name: "Manuel",
+//   },
+//   { db: surreal },
+// );
+// const id = data.id;
+// z4.
+
+// const dataLocal = await schema.safeDecode("1");
+// const dataRemote = await schema.safeDecodeAsync("1", { db: surreal });
+// console.log({
+//   dataLocal,
+//   dataRemote,
+// });
+// console.log(
+//   z
+//     .table("token")
+//     .fields({
+//       expiresAt: schema,
+//     })
+//     .toSurql("define", { fields: true }),
+// );
+// const data = await schema.decodeAsync(undefined, { db: surreal });
+// console.log("data", data);
+
+// const schema = z.recordId("client").decode(new RecordId("user", 123));
+// const data = schema.decode(undefined, { db: surreal });
+// console.log("data", data);
 
 // // Id
 // console.log(
