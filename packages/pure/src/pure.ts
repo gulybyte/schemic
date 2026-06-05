@@ -15,6 +15,12 @@ import { DateTime, RecordId, type BoundQuery, type RecordIdValue } from "surreal
  */
 export const surrealTypeRegistry = new WeakMap<z.ZodType, string>();
 
+/**
+ * Maps an object schema built via `sz.object` to its original SField shape, so
+ * nested fields keep their DDL metadata ($default/$assert/...) during generation.
+ */
+export const objectFieldsRegistry = new WeakMap<z.ZodType, Record<string, SField>>();
+
 /** SurrealQL DDL metadata — the `$`-prefixed field options. */
 export interface SurrealMeta {
   default?: BoundQuery;
@@ -128,6 +134,24 @@ export const sz = {
   datetime: () => new SField(datetimeCodec()),
   recordId: <T extends string>(table: T | T[]) =>
     new RecordIdField<T>(Array.isArray(table) ? table : [table]),
+  /** A nested object whose fields keep their surreal metadata + native types. */
+  object: <S extends Shape>(shape: S): SField<z.ZodObject<ZShape<S>>> => {
+    const fields: Record<string, SField> = {};
+    const zshape: Record<string, z.ZodType> = {};
+    for (const [k, v] of Object.entries(shape)) {
+      const f = v instanceof SField ? v : new SField(v);
+      fields[k] = f;
+      zshape[k] = f.schema;
+    }
+    const schema = z.object(zshape) as z.ZodObject<ZShape<S>>;
+    objectFieldsRegistry.set(schema, fields);
+    return new SField(schema);
+  },
+  /** An array of `element` (an SField or a raw Zod schema). */
+  array: <F extends SField | z.ZodType>(element: F): SField<z.ZodArray<SchemaOf<F>>> =>
+    (element instanceof SField ? element : new SField(element)).array() as SField<
+      z.ZodArray<SchemaOf<F>>
+    >,
 };
 
 // --- Tables & relations ---

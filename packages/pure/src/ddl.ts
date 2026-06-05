@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { escapeIdent, toSurqlString, type BoundQuery } from "surrealdb";
-import { surrealTypeRegistry, type SField, type Shape, type TableDef } from "./pure";
+import {
+  objectFieldsRegistry,
+  surrealTypeRegistry,
+  type SField,
+  type Shape,
+  type SurrealMeta,
+  type TableDef,
+} from "./pure";
 
 /** Inline a BoundQuery's bindings into a literal SurrealQL string for DDL use. */
 function inline(query: BoundQuery): string {
@@ -16,75 +23,123 @@ function zdef(schema: z.ZodType): { type: string; [k: string]: unknown } {
   return schema._zod.def as unknown as { type: string; [k: string]: unknown };
 }
 
-/** Map a stock Zod schema to a SurrealQL type. */
-function zodToSurreal(schema: z.ZodType): string {
+/**
+ * The SurrealQL type of a field plus any nested fields it expands into:
+ * object subfields (`path.key`) and array/record element fields (`path.*`).
+ */
+interface FieldInfo {
+  type: string;
+  flexible: boolean;
+  children: { suffix: string; info: FieldInfo; surreal?: SurrealMeta }[];
+}
+const leaf = (type: string): FieldInfo => ({ type, flexible: false, children: [] });
+
+/** Infer a field's SurrealQL type + nested structure from a Zod schema. */
+function inferField(schema: z.ZodType): FieldInfo {
+  // Surreal-native schemas (datetime, recordId) carry their type explicitly.
   const explicit = surrealTypeRegistry.get(schema);
-  if (explicit) return explicit;
+  if (explicit) return leaf(explicit);
+
   const def = zdef(schema);
   switch (def.type) {
     case "string":
-      return "string";
+      return leaf("string");
     case "number":
-      return "number";
+      return leaf("number");
     case "int":
-      return "int";
+      return leaf("int");
     case "boolean":
-      return "bool";
+      return leaf("bool");
     case "date":
-      return "datetime";
-    case "array":
-      return `array<${zodToSurreal(def.element as z.ZodType)}>`;
-    case "pipe": // a codec — use its encoded (wire) side
-      return zodToSurreal(def.in as z.ZodType);
+      return leaf("datetime");
+
     case "optional":
-    case "nullable":
-    case "default":
-    case "readonly":
-      return zodToSurreal(def.innerType as z.ZodType);
-    case "object":
-      return "object";
-    default:
-      return "any";
-  }
-}
-
-/** Resolve a field's SurrealQL TYPE, honoring optionality and explicit metadata. */
-function ddlType(field: SField): string {
-  let schema: z.ZodType = field.schema;
-  let optional = false;
-  // Peel wrappers that affect optionality but not the underlying Surreal type.
-  for (;;) {
-    const def = zdef(schema);
-    if (def.type === "optional" || def.type === "default" || def.type === "nullable") {
-      if (def.type !== "nullable") optional = true;
-      schema = def.innerType as z.ZodType;
-      continue;
+    case "default": {
+      const inner = inferField(def.innerType as z.ZodType);
+      return { ...inner, type: `option<${inner.type}>` };
     }
-    break;
+    case "nullable":
+    case "readonly":
+      return inferField(def.innerType as z.ZodType);
+    case "pipe": // a codec with no explicit type — use its encoded (wire) side
+      return inferField(def.in as z.ZodType);
+
+    case "object": {
+      const shape = def.shape as Record<string, z.ZodType>;
+      const fields = objectFieldsRegistry.get(schema); // SField shape if built via sz.object
+      const catchall = def.catchall as z.ZodType | undefined;
+      const flexible = !!catchall && zdef(catchall).type === "unknown";
+      const children = Object.entries(shape).map(([key, value]) => ({
+        suffix: `.${escapeIdent(key)}`,
+        info: inferField(value),
+        surreal: fields?.[key]?.surreal,
+      }));
+      return { type: "object", flexible, children };
+    }
+
+    case "array":
+    case "set": {
+      const elem = inferField((def.element ?? def.valueType) as z.ZodType);
+      // Element subfields live under `path.*`, but only when the element is structured.
+      const children =
+        elem.children.length > 0 || elem.type === "object"
+          ? [{ suffix: ".*", info: elem }]
+          : [];
+      return { type: `array<${elem.type}>`, flexible: false, children };
+    }
+
+    case "record":
+    case "map": {
+      const value = inferField(def.valueType as z.ZodType);
+      return { type: "object", flexible: false, children: [{ suffix: ".*", info: value }] };
+    }
+
+    default:
+      // union / enum / literal / tuple land here for now (Phase 2).
+      return leaf("any");
   }
-  const base = zodToSurreal(schema);
-  // A DB-side DEFAULT/VALUE means the column is always populated -> not `option`.
-  if (field.surreal.default || field.surreal.value) return base;
-  return optional ? `option<${base}>` : base;
 }
 
-/** `DEFINE FIELD ...` for a single field. */
+/** Emit `DEFINE FIELD path ...` for a node, then recurse into its children. */
+function emit(
+  path: string,
+  table: string,
+  info: FieldInfo,
+  surreal: SurrealMeta | undefined,
+  opts: { overwrite?: boolean } | undefined,
+  lines: string[],
+): void {
+  let type = info.type;
+  // A DB-side DEFAULT/VALUE means the column is always populated -> drop a leading option<>.
+  if ((surreal?.default || surreal?.value) && type.startsWith("option<")) {
+    type = type.slice("option<".length, -1);
+  }
+  const parts = [
+    `DEFINE FIELD ${opts?.overwrite ? "OVERWRITE " : ""}${path} ON TABLE ${escapeIdent(table)} TYPE ${type}`,
+  ];
+  if (info.flexible) parts.push("FLEXIBLE");
+  if (surreal?.default) parts.push(`DEFAULT ${inline(surreal.default)}`);
+  if (surreal?.value) parts.push(`VALUE ${inline(surreal.value)}`);
+  if (surreal?.assert) parts.push(`ASSERT ${inline(surreal.assert)}`);
+  if (surreal?.readonly) parts.push("READONLY");
+  if (surreal?.comment) parts.push(`COMMENT ${JSON.stringify(surreal.comment)}`);
+  lines.push(`${parts.join(" ")};`);
+
+  for (const child of info.children) {
+    emit(`${path}${child.suffix}`, table, child.info, child.surreal, opts, lines);
+  }
+}
+
+/** `DEFINE FIELD ...` for a field (and any nested object/array/record subfields). */
 export function defineField(
   name: string,
   table: string,
   field: SField,
   opts?: { overwrite?: boolean },
 ): string {
-  const parts = [
-    `DEFINE FIELD ${opts?.overwrite ? "OVERWRITE " : ""}${escapeIdent(name)} ON TABLE ${escapeIdent(table)} TYPE ${ddlType(field)}`,
-  ];
-  const m = field.surreal;
-  if (m.default) parts.push(`DEFAULT ${inline(m.default)}`);
-  if (m.value) parts.push(`VALUE ${inline(m.value)}`);
-  if (m.assert) parts.push(`ASSERT ${inline(m.assert)}`);
-  if (m.readonly) parts.push("READONLY");
-  if (m.comment) parts.push(`COMMENT ${JSON.stringify(m.comment)}`);
-  return `${parts.join(" ")};`;
+  const lines: string[] = [];
+  emit(escapeIdent(name), table, inferField(field.schema), field.surreal, opts, lines);
+  return lines.join("\n");
 }
 
 /** `DEFINE TABLE ...` plus a `DEFINE FIELD` per field. */

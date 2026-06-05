@@ -24,12 +24,15 @@ await db.query(surql`DELETE liked; DELETE friend; DELETE comment; DELETE post; D
 rule("Create users — make() ids, DB-filled defaults");
 const alice = User.record().make("alice");
 const bob = User.record().make("bob");
-await db.query(surql`CREATE ${alice} SET name = "Alice", email = "alice@example.com", bio = "Builder"`);
-await db.query(surql`CREATE ${bob} SET name = "Bob", email = "bob@example.com"`);
+await db.query(surql`CREATE ${alice} SET name = "Alice", email = "alice@example.com", bio = "Builder",
+  settings = { theme: "dark", notifications: true, lastSeen: time::now() }`);
+await db.query(surql`CREATE ${bob} SET name = "Bob", email = "bob@example.com",
+  settings = { theme: "light", notifications: false }`);
 const [userRows] = await db.query<[unknown[]]>(surql`SELECT * FROM user ORDER BY name`);
 for (const row of userRows) {
   const u = User.decode(row);
-  console.log(`  ${String(u.id)}  status=${u.status}  createdAt=Date(${u.createdAt instanceof Date})`);
+  const seen = u.settings.lastSeen instanceof Date ? "Date" : "—";
+  console.log(`  ${String(u.id)}  status=${u.status}  theme=${u.settings.theme}  lastSeen=${seen}`);
 }
 
 rule("Post — author link + array<record<tag>>");
@@ -75,4 +78,3 @@ const publicUser = PublicUser.decode(userRows[0]);
 console.log("  keys:", Object.keys(publicUser).join(", "));
 
 await db.close();
-process.exit(0);

@@ -14,6 +14,11 @@ export const User = table("user", {
   name: sz.string(),
   email: sz.email(),
   bio: sz.string().optional().$comment("Short profile blurb"),
+  settings: sz.object({
+    theme: sz.string().$default(surql`"light"`),
+    notifications: sz.boolean().$default(surql`true`),
+    lastSeen: sz.datetime().optional(),
+  }),
   status: sz.string().$default(surql`"pending"`),
   createdAt: sz.datetime().$default(surql`time::now()`).$readonly(),
   bestFriend: sz.recordId("user").optional(),
