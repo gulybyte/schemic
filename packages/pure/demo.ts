@@ -21,19 +21,33 @@ const db = await connect();
 await db.query(ddl);
 await db.query(surql`DELETE liked; DELETE friend; DELETE comment; DELETE post; DELETE tag; DELETE user;`);
 
-rule("Create users — make() ids, DB-filled defaults");
+rule("Create users — User.make() builds the CONTENT payload");
 const alice = User.record().make("alice");
 const bob = User.record().make("bob");
-await db.query(surql`CREATE ${alice} SET name = "Alice", email = "alice@example.com", bio = "Builder",
-  settings = { theme: "dark", notifications: true, lastSeen: time::now() }`);
-await db.query(surql`CREATE ${bob} SET name = "Bob", email = "bob@example.com",
-  settings = { theme: "light", notifications: false }`);
+// make() input: id/status/role/createdAt are optional (DB-filled); name/email/settings required.
+await db.query(surql`CREATE ${alice} CONTENT ${User.make({
+  name: "Alice",
+  email: "alice@example.com",
+  bio: "Builder",
+  settings: { theme: "dark", notifications: true, lastSeen: new Date() },
+})}`);
+await db.query(surql`CREATE ${bob} CONTENT ${User.make({
+  name: "Bob",
+  email: "bob@example.com",
+  settings: { theme: "light", notifications: false },
+})}`);
 const [userRows] = await db.query<[unknown[]]>(surql`SELECT * FROM user ORDER BY name`);
 for (const row of userRows) {
   const u = User.decode(row);
   const seen = u.settings.lastSeen instanceof Date ? "Date" : "—";
   console.log(`  ${String(u.id)}  role=${u.role}  status=${u.status}  theme=${u.settings.theme}  lastSeen=${seen}`);
 }
+
+rule("Update — User.makePartial() (id & readonly createdAt excluded by the type)");
+await db.query(surql`UPDATE ${alice} MERGE ${User.makePartial({ role: "admin", bio: "Builder & maintainer" })}`);
+const [aliceRow] = await db.query<[unknown[]]>(surql`SELECT * FROM ${alice}`);
+const updated = User.decode(aliceRow[0]);
+console.log(`  alice role=${updated.role}  bio="${updated.bio}"`);
 
 rule("Post — author link + array<record<tag>>");
 const ts = Tag.record().make("ts");
