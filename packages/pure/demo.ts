@@ -32,7 +32,7 @@ const [userRows] = await db.query<[unknown[]]>(surql`SELECT * FROM user ORDER BY
 for (const row of userRows) {
   const u = User.decode(row);
   const seen = u.settings.lastSeen instanceof Date ? "Date" : "—";
-  console.log(`  ${String(u.id)}  status=${u.status}  theme=${u.settings.theme}  lastSeen=${seen}`);
+  console.log(`  ${String(u.id)}  role=${u.role}  status=${u.status}  theme=${u.settings.theme}  lastSeen=${seen}`);
 }
 
 rule("Post — author link + array<record<tag>>");

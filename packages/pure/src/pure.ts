@@ -125,6 +125,12 @@ export class RecordIdField<
   }
 }
 
+/** Unwrap an SField to its Zod schema (raw Zod schemas pass through). */
+const toZod = (v: SField | z.ZodType): z.ZodType => (v instanceof SField ? v.schema : v);
+type ZodsOf<T extends readonly (SField | z.ZodType)[]> = {
+  -readonly [K in keyof T]: SchemaOf<T[K]>;
+};
+
 /** Field constructors — the authoring surface. */
 export const sz = {
   string: () => new SField(z.string()),
@@ -152,6 +158,19 @@ export const sz = {
     (element instanceof SField ? element : new SField(element)).array() as SField<
       z.ZodArray<SchemaOf<F>>
     >,
+  /** A literal value type. */
+  literal: <const T extends string | number | boolean | bigint>(value: T) =>
+    new SField(z.literal(value)),
+  /** A string enum. */
+  enum: <const T extends readonly [string, ...string[]]>(values: T) => new SField(z.enum(values)),
+  /** A union of fields/schemas. */
+  union: <const T extends readonly [SField | z.ZodType, ...(SField | z.ZodType)[]]>(
+    options: T,
+  ): SField<z.ZodUnion<ZodsOf<T>>> => new SField(z.union(options.map(toZod) as ZodsOf<T>)),
+  /** A fixed-length tuple of fields/schemas. */
+  tuple: <const T extends readonly [SField | z.ZodType, ...(SField | z.ZodType)[]]>(
+    items: T,
+  ): SField<z.ZodTuple<ZodsOf<T>>> => new SField(z.tuple(items.map(toZod) as ZodsOf<T>)),
 };
 
 // --- Tables & relations ---

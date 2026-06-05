@@ -23,6 +23,15 @@ function zdef(schema: z.ZodType): { type: string; [k: string]: unknown } {
   return schema._zod.def as unknown as { type: string; [k: string]: unknown };
 }
 
+/** Format a literal value as a SurrealQL literal type (e.g. `'admin'`, `42`). */
+function surqlLiteral(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return toSurqlString(value).replace(/^s"/, '"');
+}
+
 /**
  * The SurrealQL type of a field plus any nested fields it expands into:
  * object subfields (`path.key`) and array/record element fields (`path.*`).
@@ -94,8 +103,28 @@ function inferField(schema: z.ZodType): FieldInfo {
       return { type: "object", flexible: false, children: [{ suffix: ".*", info: value }] };
     }
 
+    case "union": {
+      const opts = (def.options ?? []) as z.ZodType[];
+      const types = [...new Set(opts.map((o) => inferField(o).type))];
+      return leaf(types.join(" | ") || "any");
+    }
+    case "enum": {
+      const entries = (def.entries ?? {}) as Record<string, string | number>;
+      const types = [...new Set(Object.values(entries).map(surqlLiteral))];
+      return leaf(types.join(" | ") || "any");
+    }
+    case "literal": {
+      const values = (def.values ?? []) as unknown[];
+      const types = [...new Set(values.map(surqlLiteral))];
+      return leaf(types.join(" | ") || "any");
+    }
+    case "tuple": {
+      if (def.rest) return leaf("array"); // variadic tuple -> generic array
+      const items = (def.items ?? []) as z.ZodType[];
+      return leaf(`[${items.map((i) => inferField(i).type).join(", ")}]`);
+    }
+
     default:
-      // union / enum / literal / tuple land here for now (Phase 2).
       return leaf("any");
   }
 }

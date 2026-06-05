@@ -20,6 +20,7 @@ export const User = table("user", {
     lastSeen: sz.datetime().optional(),
   }),
   status: sz.string().$default(surql`"pending"`),
+  role: sz.enum(["admin", "member"]).$default(surql`"member"`),
   createdAt: sz.datetime().$default(surql`time::now()`).$readonly(),
   bestFriend: sz.recordId("user").optional(),
 }).comment("Application users");
