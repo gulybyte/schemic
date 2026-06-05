@@ -1,0 +1,78 @@
+/**
+ * Live showcase: generates the schema DDL, applies it, then exercises CRUD,
+ * record links, arrays of links, graph relations + traversal, and derived shapes.
+ *
+ * Run: SURREAL_PASS=... bun demo.ts
+ */
+import { surql } from "surrealdb";
+import { connect } from "./src/db";
+import { defineTable } from "./src/ddl";
+import { Comment, Friend, Liked, Post, PublicUser, Tag, User } from "./schema";
+
+const rule = (t: string) => console.log(`\n─── ${t} ${"─".repeat(Math.max(0, 52 - t.length))}`);
+
+rule("Generated schema (DDL)");
+const ddl = [User, Tag, Post, Comment, Friend, Liked]
+  .map((t) => defineTable(t, { overwrite: true }))
+  .join("\n");
+console.log(ddl);
+
+const db = await connect();
+await db.query(ddl);
+await db.query(surql`DELETE liked; DELETE friend; DELETE comment; DELETE post; DELETE tag; DELETE user;`);
+
+rule("Create users — make() ids, DB-filled defaults");
+const alice = User.record().make("alice");
+const bob = User.record().make("bob");
+await db.query(surql`CREATE ${alice} SET name = "Alice", email = "alice@example.com", bio = "Builder"`);
+await db.query(surql`CREATE ${bob} SET name = "Bob", email = "bob@example.com"`);
+const [userRows] = await db.query<[unknown[]]>(surql`SELECT * FROM user ORDER BY name`);
+for (const row of userRows) {
+  const u = User.decode(row);
+  console.log(`  ${String(u.id)}  status=${u.status}  createdAt=Date(${u.createdAt instanceof Date})`);
+}
+
+rule("Post — author link + array<record<tag>>");
+const ts = Tag.record().make("ts");
+const dbTag = Tag.record().make("db");
+await db.query(surql`
+  CREATE ${ts} SET label = "TypeScript", slug = "typescript";
+  CREATE ${dbTag} SET label = "SurrealDB", slug = "surrealdb";
+`);
+const [postRows] = await db.query<[unknown[]]>(surql`
+  CREATE post SET author = ${alice}, title = "Hello, Surreal", body = "First post!",
+    tags = ${[ts, dbTag]}, published = true, publishedAt = time::now()
+`);
+const post = Post.decode(postRows[0]);
+console.log("  author:", String(post.author));
+console.log("  tags:  ", post.tags.map(String).join(", "));
+console.log("  views:", post.views, "| published:", post.published, "| publishedAt is Date:", post.publishedAt instanceof Date);
+
+rule("Comment");
+const [commentRows] = await db.query<[unknown[]]>(
+  surql`CREATE comment SET post = ${post.id}, author = ${bob}, body = "Great first post!"`,
+);
+const comment = Comment.decode(commentRows[0]);
+console.log(" ", String(comment.author), "->", String(comment.post), ":", comment.body);
+
+rule("Graph relations (friend, liked)");
+await db.query(surql`RELATE ${alice}->friend->${bob} SET strength = 0.8`);
+await db.query(surql`RELATE ${bob}->liked->${post.id}`);
+const [friendRows] = await db.query<[unknown[]]>(surql`SELECT * FROM friend`);
+const friend = Friend.decode(friendRows[0]);
+console.log("  friend:", String(friend.in), "->", String(friend.out), "strength", friend.strength, "| since Date:", friend.since instanceof Date);
+const [likedRows] = await db.query<[unknown[]]>(surql`SELECT * FROM liked`);
+console.log("  liked.at is Date:", Liked.decode(likedRows[0]).at instanceof Date);
+
+rule("Graph traversal — Alice's friends");
+const [traversal] = await db.query<[{ friends: string[] }[]]>(
+  surql`SELECT ->friend->user.name AS friends FROM ${alice}`,
+);
+console.log("  ", traversal);
+
+rule("Derived shape — PublicUser (omit email + status)");
+const publicUser = PublicUser.decode(userRows[0]);
+console.log("  keys:", Object.keys(publicUser).join(", "));
+
+await db.close();
+process.exit(0);

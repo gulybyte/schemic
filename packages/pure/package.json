@@ -1,0 +1,16 @@
+{
+  "name": "pure",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "bun demo.ts",
+    "server": "bun server.ts"
+  },
+  "dependencies": {
+    "surrealdb": "^2.0.3",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

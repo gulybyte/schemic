@@ -1,0 +1,275 @@
+import { z } from "zod";
+import { DateTime, RecordId, type BoundQuery, type RecordIdValue } from "surrealdb";
+
+/**
+ * The "pure" approach: a field is a stock Zod schema + SurrealQL DDL metadata.
+ * The JS<->DB mapping rides on Zod's two native channels via codecs:
+ *   - encoded side (`z.input`)  = DB wire type
+ *   - decoded side (`z.output`) = app type
+ * `z.decode` reads from the DB, `z.encode` writes to it.
+ */
+
+/**
+ * Maps a Surreal-native schema (datetime codec, recordId) to its SurrealQL type.
+ * Kept on the schema — not the field — so it composes through array()/optional()/nesting.
+ */
+export const surrealTypeRegistry = new WeakMap<z.ZodType, string>();
+
+/** SurrealQL DDL metadata — the `$`-prefixed field options. */
+export interface SurrealMeta {
+  default?: BoundQuery;
+  value?: BoundQuery;
+  assert?: BoundQuery;
+  readonly?: boolean;
+  comment?: string;
+}
+
+/** A Zod schema paired with SurrealQL DDL metadata. */
+export class SField<S extends z.ZodType = z.ZodType> {
+  constructor(
+    readonly schema: S,
+    readonly surreal: SurrealMeta = {},
+  ) {}
+
+  // Zod wrappers — delegate to the inner schema, carry DDL metadata forward.
+  optional() {
+    return new SField(this.schema.optional(), this.surreal);
+  }
+  nullable() {
+    return new SField(this.schema.nullable(), this.surreal);
+  }
+  default(value: z.input<S>) {
+    return new SField(this.schema.default(value as never), this.surreal);
+  }
+  array() {
+    return new SField(z.array(this.schema), this.surreal);
+  }
+
+  // SurrealQL DDL metadata (mirrors surreal-zod's $-prefixed methods).
+  $default(expr: BoundQuery) {
+    return new SField(this.schema, { ...this.surreal, default: expr });
+  }
+  $value(expr: BoundQuery) {
+    return new SField(this.schema, { ...this.surreal, value: expr });
+  }
+  $assert(expr: BoundQuery) {
+    return new SField(this.schema, { ...this.surreal, assert: expr });
+  }
+  $readonly(readonly = true) {
+    return new SField(this.schema, { ...this.surreal, readonly });
+  }
+  $comment(comment: string) {
+    return new SField(this.schema, { ...this.surreal, comment });
+  }
+}
+
+// --- Surreal-native field schemas ---
+
+/** Surreal `datetime` <-> JS `Date` (a real codec — the types differ). */
+function datetimeCodec() {
+  const codec = z.codec(z.instanceof(DateTime), z.date(), {
+    decode: (dt) => new Date(dt.toString()),
+    encode: (d) => new DateTime(d),
+  });
+  surrealTypeRegistry.set(codec, "datetime");
+  return codec;
+}
+
+/** A `RecordId` restricted to `tables` (+ optional id-value type). Identity, so no codec. */
+function recordIdSchema<T extends string, V extends RecordIdValue = RecordIdValue>(
+  tables: T[],
+  valueType?: z.ZodType<V>,
+): z.ZodType<RecordId<T, V>, RecordId<T, V>> {
+  const schema = z.instanceof(RecordId).refine(
+    // RecordId.table is a Table object; .name is the unescaped name.
+    (r) =>
+      (tables as readonly string[]).includes(r.table.name) &&
+      (valueType ? valueType.safeParse(r.id).success : true),
+    { error: `Expected record<${tables.join(" | ")}>` },
+  );
+  surrealTypeRegistry.set(schema, `record<${tables.join(" | ")}>`);
+  return schema as unknown as z.ZodType<RecordId<T, V>, RecordId<T, V>>;
+}
+
+/** A `record<…>` field: table restriction (+ optional id-value type) and construction helpers. */
+export class RecordIdField<
+  T extends string,
+  V extends RecordIdValue = RecordIdValue,
+> extends SField<z.ZodType<RecordId<T, V>, RecordId<T, V>>> {
+  constructor(
+    readonly tables: T[],
+    readonly valueType?: z.ZodType<V>,
+    surreal: SurrealMeta = {},
+  ) {
+    super(recordIdSchema<T, V>(tables, valueType), surreal);
+  }
+
+  /** Restrict the id value's type — reflected as `RecordId<T, V>` and validated at runtime. */
+  type<V2 extends RecordIdValue>(schema: z.ZodType<V2>): RecordIdField<T, V2> {
+    return new RecordIdField<T, V2>(this.tables, schema, this.surreal);
+  }
+
+  /** Build a RecordId. Single-table: `make(id)`; multi-table: `make(table, id)`. */
+  make(idOrTable: V | T, id?: V): RecordId<T, V> {
+    return (
+      id === undefined
+        ? new RecordId(this.tables[0]!, idOrTable as V)
+        : new RecordId(idOrTable as T, id)
+    ) as RecordId<T, V>;
+  }
+}
+
+/** Field constructors — the authoring surface. */
+export const sz = {
+  string: () => new SField(z.string()),
+  number: () => new SField(z.number()),
+  boolean: () => new SField(z.boolean()),
+  email: () => new SField(z.email()),
+  datetime: () => new SField(datetimeCodec()),
+  recordId: <T extends string>(table: T | T[]) =>
+    new RecordIdField<T>(Array.isArray(table) ? table : [table]),
+};
+
+// --- Tables & relations ---
+
+export type Shape = Record<string, SField | z.ZodType>;
+type SchemaOf<F> = F extends SField<infer S> ? S : F extends z.ZodType ? F : never;
+type ZShape<S extends Shape> = { [K in keyof S]: SchemaOf<S[K]> };
+type Fields<S extends Shape> = { [K in keyof S]: SField<SchemaOf<S[K]>> };
+type Unwrap<F> = F extends SField<z.ZodOptional<infer Inner extends z.ZodType>> ? SField<Inner> : F;
+type PartialShape<S extends Shape> = { [K in keyof S]: SField<z.ZodOptional<SchemaOf<S[K]>>> };
+type RequiredShape<S extends Shape> = { [K in keyof S]: Unwrap<Fields<S>[K]> };
+
+export interface TableConfig {
+  schemafull: boolean;
+  drop?: boolean;
+  comment?: string;
+  relation?: { from: string; to: string };
+}
+
+function normalizeFields<S extends Shape>(shape: S): Fields<S> {
+  const out: Record<string, SField> = {};
+  for (const [k, v] of Object.entries(shape)) {
+    out[k] = v instanceof SField ? v : new SField(v);
+  }
+  return out as Fields<S>;
+}
+
+/** A table (or relation) definition: shape + DDL config, with chainable builders. */
+export class TableDef<Name extends string, S extends Shape> {
+  /** Zod object over the inner schemas — drives validation, encode/decode, types. */
+  readonly object: z.ZodObject<ZShape<S>>;
+
+  constructor(
+    readonly name: Name,
+    readonly fields: Fields<S>,
+    readonly config: TableConfig = { schemafull: true },
+  ) {
+    const zshape: Record<string, z.ZodType> = {};
+    for (const [k, f] of Object.entries(fields)) zshape[k] = (f as SField).schema;
+    this.object = z.object(zshape) as z.ZodObject<ZShape<S>>;
+  }
+
+  get kind(): "table" | "relation" {
+    return this.config.relation ? "relation" : "table";
+  }
+
+  /** DB wire row -> app object. */
+  decode(row: unknown): z.output<z.ZodObject<ZShape<S>>> {
+    return z.decode(this.object, row as never);
+  }
+  /** App object -> DB wire row. */
+  encode(value: z.output<z.ZodObject<ZShape<S>>>): z.input<z.ZodObject<ZShape<S>>> {
+    return z.encode(this.object, value);
+  }
+
+  // --- DDL config (chainable, immutable) ---
+  private withConfig(config: Partial<TableConfig>): TableDef<Name, S> {
+    return new TableDef(this.name, this.fields, { ...this.config, ...config });
+  }
+  schemafull() {
+    return this.withConfig({ schemafull: true });
+  }
+  schemaless() {
+    return this.withConfig({ schemafull: false });
+  }
+  drop(drop = true) {
+    return this.withConfig({ drop });
+  }
+  comment(comment: string) {
+    return this.withConfig({ comment });
+  }
+
+  // --- Shape ops (mirror Zod's object methods; carry DDL metadata + config) ---
+  extend<E extends Shape>(ext: E): TableDef<Name, Omit<S, keyof E> & E> {
+    const f: Record<string, SField> = {
+      ...(this.fields as Record<string, SField>),
+      ...normalizeFields(ext),
+    };
+    return new TableDef(this.name, f as Fields<Omit<S, keyof E> & E>, this.config);
+  }
+  pick<K extends keyof S>(...keys: K[]): TableDef<Name, Pick<S, K>> {
+    const f: Record<string, SField> = {};
+    for (const k of keys) f[k as string] = (this.fields as Record<string, SField>)[k as string]!;
+    return new TableDef(this.name, f as Fields<Pick<S, K>>, this.config);
+  }
+  omit<K extends keyof S>(...keys: K[]): TableDef<Name, Omit<S, K>> {
+    const f: Record<string, SField> = { ...(this.fields as Record<string, SField>) };
+    for (const k of keys) delete f[k as string];
+    return new TableDef(this.name, f as Fields<Omit<S, K>>, this.config);
+  }
+  partial(): TableDef<Name, PartialShape<S>> {
+    const f: Record<string, SField> = {};
+    for (const [k, field] of Object.entries(this.fields)) f[k] = (field as SField).optional();
+    return new TableDef(this.name, f as Fields<PartialShape<S>>, this.config);
+  }
+  required(): TableDef<Name, RequiredShape<S>> {
+    const f: Record<string, SField> = {};
+    for (const [k, field] of Object.entries(this.fields)) {
+      const sf = field as SField;
+      const def = sf.schema._zod.def as unknown as { type: string; innerType?: z.ZodType };
+      f[k] = def.type === "optional" && def.innerType ? new SField(def.innerType, sf.surreal) : sf;
+    }
+    return new TableDef(this.name, f as Fields<RequiredShape<S>>, this.config);
+  }
+
+  /** Derive a `record<name>` link to this table, for use as a field elsewhere. */
+  record(): RecordIdField<Name> {
+    return new RecordIdField([this.name]);
+  }
+}
+
+/** Define a normal table (schemafull by default). */
+export function table<Name extends string, S extends Shape>(
+  name: Name,
+  shape: S,
+): TableDef<Name, S> {
+  return new TableDef(name, normalizeFields(shape), { schemafull: true });
+}
+
+/** Define a graph relation (edge table) with implicit id/in/out record links. */
+export function relation<
+  Name extends string,
+  From extends string,
+  To extends string,
+  S extends Shape = {},
+>(
+  name: Name,
+  opts: { from: From; to: To; fields?: S },
+): TableDef<Name, S & { id: SField; in: SField; out: SField }> {
+  const shape = {
+    id: sz.recordId(name),
+    in: sz.recordId(opts.from),
+    out: sz.recordId(opts.to),
+    ...(opts.fields ?? {}),
+  } as unknown as S & { id: SField; in: SField; out: SField };
+  return new TableDef(name, normalizeFields(shape), {
+    schemafull: true,
+    relation: { from: opts.from, to: opts.to },
+  });
+}
+
+/** The app-facing type (what your code reads). */
+export type App<T extends { object: z.ZodType }> = z.output<T["object"]>;
+/** The DB wire type (what crosses the wire). */
+export type Wire<T extends { object: z.ZodType }> = z.input<T["object"]>;
