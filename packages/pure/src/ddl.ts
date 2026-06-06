@@ -53,14 +53,24 @@ function inferField(schema: z.ZodType, seen: Set<z.ZodType> = new Set()): FieldI
   switch (def.type) {
     case "string":
       return leaf("string");
-    case "number":
+    case "number": {
+      // z.int/int32/uint32/float64 share def.type "number"; the format discriminates.
+      const fmt = def.format as string | undefined;
+      if (fmt?.includes("float")) return leaf("float");
+      if (fmt?.includes("int")) return leaf("int");
       return leaf("number");
-    case "int":
+    }
+    case "bigint":
       return leaf("int");
     case "boolean":
       return leaf("bool");
     case "date":
       return leaf("datetime");
+    case "any":
+    case "unknown":
+      return leaf("any");
+    case "null":
+      return leaf("null");
 
     case "optional":
     case "default": {

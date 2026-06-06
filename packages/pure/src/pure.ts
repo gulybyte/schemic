@@ -150,7 +150,37 @@ export const sz = {
   number: () => new SField(z.number()),
   boolean: () => new SField(z.boolean()),
   email: () => new SField(z.email()),
+
+  // String formats — all map to DDL `string` (their Zod def.type is "string").
+  url: (params?: Parameters<typeof z.url>[0]) => new SField(z.url(params)),
+  uuid: (params?: Parameters<typeof z.uuid>[0]) => new SField(z.uuid(params)),
+  guid: (params?: Parameters<typeof z.guid>[0]) => new SField(z.guid(params)),
+  nanoid: (params?: Parameters<typeof z.nanoid>[0]) => new SField(z.nanoid(params)),
+  cuid: (params?: Parameters<typeof z.cuid>[0]) => new SField(z.cuid(params)),
+  cuid2: (params?: Parameters<typeof z.cuid2>[0]) => new SField(z.cuid2(params)),
+  ulid: (params?: Parameters<typeof z.ulid>[0]) => new SField(z.ulid(params)),
+  xid: (params?: Parameters<typeof z.xid>[0]) => new SField(z.xid(params)),
+  ksuid: (params?: Parameters<typeof z.ksuid>[0]) => new SField(z.ksuid(params)),
+  ipv4: (params?: Parameters<typeof z.ipv4>[0]) => new SField(z.ipv4(params)),
+  ipv6: (params?: Parameters<typeof z.ipv6>[0]) => new SField(z.ipv6(params)),
+  cidrv4: (params?: Parameters<typeof z.cidrv4>[0]) => new SField(z.cidrv4(params)),
+  cidrv6: (params?: Parameters<typeof z.cidrv6>[0]) => new SField(z.cidrv6(params)),
+  base64: (params?: Parameters<typeof z.base64>[0]) => new SField(z.base64(params)),
+  base64url: (params?: Parameters<typeof z.base64url>[0]) => new SField(z.base64url(params)),
+  e164: (params?: Parameters<typeof z.e164>[0]) => new SField(z.e164(params)),
+  jwt: (params?: Parameters<typeof z.jwt>[0]) => new SField(z.jwt(params)),
+  emoji: (params?: Parameters<typeof z.emoji>[0]) => new SField(z.emoji(params)),
+
+  // Numbers. int/int32/uint32 -> DDL `int`; float -> DDL `float` (def.format-driven).
+  int: (params?: Parameters<typeof z.int>[0]) => new SField(z.int(params)),
+  float: (params?: Parameters<typeof z.float64>[0]) => new SField(z.float64(params)),
+  int32: (params?: Parameters<typeof z.int32>[0]) => new SField(z.int32(params)),
+  uint32: (params?: Parameters<typeof z.uint32>[0]) => new SField(z.uint32(params)),
+  bigint: (params?: Parameters<typeof z.bigint>[0]) => new SField(z.bigint(params)),
+
   datetime: () => new SField(datetimeCodec()),
+  /** Alias of `datetime` (Surreal stores a `datetime`; there is no plain date). */
+  date: () => new SField(datetimeCodec()),
   recordId: <T extends string>(table: T | T[]) =>
     new RecordIdField<T>(Array.isArray(table) ? table : [table]),
   /** A nested object whose fields keep their surreal metadata + native types. */
@@ -184,6 +214,68 @@ export const sz = {
   tuple: <const T extends readonly [AnyField | z.ZodType, ...(AnyField | z.ZodType)[]]>(
     items: T,
   ): SField<z.ZodTuple<ZodsOf<T>>> => new SField(z.tuple(items.map(toZod) as ZodsOf<T>)),
+
+  /** An open-keyed record `record<key, value>` -> SurrealQL `object` with a `.*` value field. */
+  record: <K extends z.core.$ZodRecordKey, V extends AnyField | z.ZodType>(
+    key: K,
+    value: V,
+  ): SField<z.ZodRecord<K, SchemaOf<V>>> =>
+    new SField(z.record(key, toZod(value) as SchemaOf<V>)),
+  /** A `Map<key, value>` -> SurrealQL `object` with a `.*` value field. */
+  map: <K extends AnyField | z.ZodType, V extends AnyField | z.ZodType>(
+    key: K,
+    value: V,
+  ): SField<z.ZodMap<SchemaOf<K>, SchemaOf<V>>> =>
+    new SField(z.map(toZod(key) as SchemaOf<K>, toZod(value) as SchemaOf<V>)),
+  /** A `Set<element>` -> SurrealQL `array<element>`. */
+  set: <V extends AnyField | z.ZodType>(element: V): SField<z.ZodSet<SchemaOf<V>>> =>
+    new SField(z.set(toZod(element) as SchemaOf<V>)),
+  /** The intersection of two schemas (object fields are merged in DDL). */
+  intersection: <A extends AnyField | z.ZodType, B extends AnyField | z.ZodType>(
+    a: A,
+    b: B,
+  ): SField<z.ZodIntersection<SchemaOf<A>, SchemaOf<B>>> =>
+    new SField(z.intersection(toZod(a) as SchemaOf<A>, toZod(b) as SchemaOf<B>)),
+  /** A lazily-resolved schema/field (for recursive types). */
+  lazy: <V extends AnyField | z.ZodType>(getter: () => V): SField<z.ZodLazy<SchemaOf<V>>> =>
+    new SField(z.lazy(() => toZod(getter()) as SchemaOf<V>)),
+
+  /** A native TS enum (string enums recommended; numeric enums emit a verbose DDL union). */
+  nativeEnum: <const T extends Record<string, string | number>>(entries: T) =>
+    new SField(z.nativeEnum(entries)),
+  /** A discriminated union of object schemas/fields -> DDL `object`. */
+  discriminatedUnion: <
+    Disc extends string,
+    const T extends readonly [AnyField | z.ZodType, ...(AnyField | z.ZodType)[]],
+  >(
+    discriminator: Disc,
+    options: T,
+  ): SField<z.ZodDiscriminatedUnion<ZodsOf<T>, Disc>> =>
+    new SField(
+      z.discriminatedUnion(discriminator, options.map(toZod) as never) as unknown as z.ZodDiscriminatedUnion<ZodsOf<T>, Disc>,
+    ),
+
+  /** Wrap a field/schema as optional (constructor form of `.optional()`). */
+  optional: <F extends AnyField | z.ZodType>(
+    field: F,
+  ): SField<z.ZodOptional<SchemaOf<F>>, FlagsOf<F>> =>
+    (field instanceof SField ? field : new SField(field)).optional() as SField<
+      z.ZodOptional<SchemaOf<F>>,
+      FlagsOf<F>
+    >,
+  /** Wrap a field/schema as nullable (constructor form of `.nullable()`). */
+  nullable: <F extends AnyField | z.ZodType>(
+    field: F,
+  ): SField<z.ZodNullable<SchemaOf<F>>, FlagsOf<F>> =>
+    (field instanceof SField ? field : new SField(field)).nullable() as SField<
+      z.ZodNullable<SchemaOf<F>>,
+      FlagsOf<F>
+    >,
+
+  // Catch-alls.
+  any: () => new SField(z.any()),
+  unknown: () => new SField(z.unknown()),
+  null: () => new SField(z.null()),
 };
 
 // --- Tables & relations ---
