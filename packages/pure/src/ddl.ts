@@ -141,7 +141,9 @@ function inferField(schema: z.ZodType, seen: Set<z.ZodType> = new Set()): FieldI
     }
     case "enum": {
       const entries = (def.entries ?? {}) as Record<string, string | number>;
-      const types = [...new Set(Object.values(entries).map(surqlLiteral))];
+      // Drop TS numeric-enum reverse mappings (name->number); keep the real values.
+      const values = Object.values(entries).filter((v) => typeof entries[v as string] !== "number");
+      const types = [...new Set(values.map(surqlLiteral))];
       return leaf(types.join(" | ") || "any");
     }
     case "literal": {

@@ -320,7 +320,7 @@ export const sz = {
   lazy: <V extends AnyField | z.ZodType>(getter: () => V): SField<z.ZodLazy<SchemaOf<V>>> =>
     new SField(z.lazy(() => toZod(getter()) as SchemaOf<V>)),
 
-  /** A native TS enum (string enums recommended; numeric enums emit a verbose DDL union). */
+  /** A native TS enum — string or numeric (numeric reverse-mappings are filtered out). */
   nativeEnum: <const T extends Record<string, string | number>>(entries: T) =>
     new SField(z.nativeEnum(entries)),
   /** A discriminated union of object schemas/fields -> DDL `object`. */
