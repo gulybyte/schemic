@@ -282,6 +282,28 @@ export class TableDef<Name extends string, S extends Shape> {
   encode(value: z.output<z.ZodObject<ZShape<S>>>): z.input<z.ZodObject<ZShape<S>>> {
     return z.encode(this.object, value);
   }
+  // Async variants (for async refinements).
+  decodeAsync(row: unknown): Promise<z.output<z.ZodObject<ZShape<S>>>> {
+    return z.decodeAsync(this.object, row as never);
+  }
+  encodeAsync(value: z.output<z.ZodObject<ZShape<S>>>): Promise<z.input<z.ZodObject<ZShape<S>>>> {
+    return z.encodeAsync(this.object, value);
+  }
+
+  // No-throw variants — return { success, data } | { success, error }.
+  // (To validate an app object without converting, use safeEncode — it validates the app side.)
+  safeDecode(row: unknown) {
+    return z.safeDecode(this.object, row as never);
+  }
+  safeEncode(value: z.output<z.ZodObject<ZShape<S>>>) {
+    return z.safeEncode(this.object, value);
+  }
+  safeDecodeAsync(row: unknown) {
+    return z.safeDecodeAsync(this.object, row as never);
+  }
+  safeEncodeAsync(value: z.output<z.ZodObject<ZShape<S>>>) {
+    return z.safeEncodeAsync(this.object, value);
+  }
 
   /** Build a wire payload for `CREATE` (DB-filled fields optional). */
   make(input: CreateShape<S>): Record<string, unknown> {
