@@ -5,8 +5,8 @@
  * Run: SURREAL_PASS=... bun server.ts
  */
 import { RecordId, surql } from "surrealdb";
-import { connect } from "./src/db";
-import { defineTable } from "./src/ddl";
+import { defineTable } from "../src";
+import { connect } from "./db";
 import { Friend, User } from "./schema";
 
 const db = await connect();

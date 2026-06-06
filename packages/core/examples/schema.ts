@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { surql } from "surrealdb";
-import { sz, table, relation, type App, type Wire } from "./src/pure";
+import { sz, table, relation, type App, type Wire } from "../src";
 
 /**
  * Showcase data model for a tiny blog / social app. Demonstrates: smart record

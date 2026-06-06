@@ -5,8 +5,8 @@
  * Run: SURREAL_PASS=... bun demo.ts
  */
 import { surql } from "surrealdb";
-import { connect } from "./src/db";
-import { defineTable } from "./src/ddl";
+import { defineTable } from "../src";
+import { connect } from "./db";
 import { Comment, Friend, Liked, Post, PublicUser, Tag, User } from "./schema";
 
 const rule = (t: string) => console.log(`\n─── ${t} ${"─".repeat(Math.max(0, 52 - t.length))}`);
