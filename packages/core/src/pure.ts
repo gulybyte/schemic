@@ -737,42 +737,14 @@ function arrayElementFields(core: z.ZodType): Record<string, AnyField> | undefin
 }
 
 /**
- * Encode one provided field value to its wire form. For a nested `sz.object` (or an array
- * of one) it recurses via `encodeInput`, so absent nested keys are OMITTED — on CREATE the
- * DB fills their defaults; on UPDATE `makePartial` is deep-partial and pairs with `MERGE`,
- * which deep-merges, so omitted siblings are preserved by the DB (not dropped). Leaf fields
- * go through `z.encode`, which validates. NOTE: recursing skips any object-LEVEL refinement
- * on the nested schema (rare on `sz.object`) — acceptable; leaf-field validation still runs.
- */
-function encodeValue(field: AnyField, v: unknown): unknown {
-  const core = unwrapCore(field.schema);
-  const nested = objectFieldsRegistry.get(core);
-  if (nested) return encodeInput(nested, v as Record<string, unknown>);
-  const elem = arrayElementFields(core);
-  if (elem) return (v as unknown[]).map((el) => encodeInput(elem, el as Record<string, unknown>));
-  return z.encode(field.schema, v as never);
-}
-
-/** Encode a (partial) app object to a wire payload, omitting absent (or `undefined`) fields
- * and recursing into nested `sz.object` fields (see `encodeValue`). */
-function encodeInput(
-  fields: Record<string, AnyField>,
-  input: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(input)) {
-    if (v === undefined) continue;
-    const field = fields[k];
-    out[k] = field ? encodeValue(field, v) : v;
-  }
-  return out;
-}
-
-/**
- * Non-throwing mirror of `encodeValue`: a nested `sz.object` (or an array of one) recurses
- * via `safeEncodeFields`, so a PARTIAL nested value is accepted exactly like `make`; leaf
- * fields go through `z.safeEncode`. Any leaf issues are pushed into `issues` with their path
- * prefixed by `path`, so the aggregate `ZodError` carries correct, fully-qualified paths.
+ * Validate + encode one provided field value to its wire form (non-throwing — the shared core
+ * of both `make` and `safeMake`). A nested `sz.object` (or an array of one) recurses via
+ * `safeEncodeInput`, so absent nested keys are OMITTED — on CREATE the DB fills their defaults;
+ * on UPDATE `makePartial` is deep-partial and pairs with `MERGE` (which deep-merges), so
+ * omitted siblings are preserved. Leaf fields go through `z.safeEncode` (which validates);
+ * issues are pushed into `issues` with their path prefixed by `path`, so the aggregate
+ * `ZodError` carries fully-qualified paths. Object-LEVEL refinements on a nested `sz.object`
+ * are skipped (rare; leaf validation still runs).
  */
 function safeEncodeValue(
   field: AnyField,
@@ -795,8 +767,8 @@ function safeEncodeValue(
   return undefined;
 }
 
-/** Non-throwing mirror of `encodeInput` (see `safeEncodeValue`): recurse over the provided
- * keys, omitting absent (`undefined`) ones, building the wire object and collecting issues. */
+/** Recurse over the provided keys (see `safeEncodeValue`), omitting absent (`undefined`) ones,
+ * building the wire object and collecting issues. */
 function safeEncodeInput(
   fields: Record<string, AnyField>,
   input: Record<string, unknown>,
@@ -813,10 +785,10 @@ function safeEncodeInput(
 }
 
 /**
- * The non-throwing core of `safeMake`/`safeMakePartial`: validate+encode the PROVIDED keys
- * exactly as `make` does (same recursion), aggregating every leaf issue (with correct paths)
- * into one `z.ZodError`. Because it mirrors `encodeInput`/`encodeValue`, `safeMake(x)` succeeds
- * iff `make(x)` does not throw — including for a PARTIAL nested `sz.object` value.
+ * The core of `safeMake`/`safeMakePartial` AND `make`/`makePartial`: validate+encode the
+ * PROVIDED keys, aggregating every leaf issue (with correct paths) into one `z.ZodError`.
+ * `safeMake` returns the result; `make` throws `error` (so `make` and `safeMake` are the
+ * same operation — `make` = `safeMake` + throw — including for a PARTIAL nested `sz.object`).
  */
 function safeEncodeFields(
   fields: Record<string, AnyField>,
@@ -1024,14 +996,18 @@ export class TableDef<Name extends string, S extends Shape> {
    * on invalid input. Use `safeMake` for the non-throwing form.
    */
   make(input: CreateShape<S>): MakeWire<S> {
-    return encodeInput(this.fields as unknown as Record<string, AnyField>, input) as MakeWire<S>;
+    const r = this.safeMake(input);
+    if (!r.success) throw r.error;
+    return r.data;
   }
   /**
    * Build a wire payload for `UPDATE`/`MERGE` (a partial patch; excludes id/readonly).
    * VALIDATES and THROWS on invalid input; use `safeMakePartial` for the non-throwing form.
    */
   makePartial(input: UpdateShape<S>): MakeWire<S> {
-    return encodeInput(this.fields as unknown as Record<string, AnyField>, input) as MakeWire<S>;
+    const r = this.safeMakePartial(input);
+    if (!r.success) throw r.error;
+    return r.data;
   }
   /**
    * Non-throwing `make`: validates+encodes the provided keys and returns a Zod-style
@@ -1177,14 +1153,18 @@ export class SystemView<Name extends string, S extends Shape> {
    * `z.ZodError` on invalid input; use `safeMake` for the non-throwing form.
    */
   make(input: CreateShapeAll<S>): MakeWireAll<S> {
-    return encodeInput(this.fields, input as Record<string, unknown>) as MakeWireAll<S>;
+    const r = this.safeMake(input);
+    if (!r.success) throw r.error;
+    return r.data;
   }
   /**
    * Build an `UPDATE`/`MERGE` payload allowed to set internal fields. VALIDATES and THROWS
    * on invalid input; use `safeMakePartial` for the non-throwing form.
    */
   makePartial(input: UpdateShapeAll<S>): MakeWireAll<S> {
-    return encodeInput(this.fields, input as Record<string, unknown>) as MakeWireAll<S>;
+    const r = this.safeMakePartial(input);
+    if (!r.success) throw r.error;
+    return r.data;
   }
   /** Non-throwing `make` over ALL fields (see `TableDef.safeMake`). */
   safeMake(input: CreateShapeAll<S>): SafeResult<MakeWireAll<S>> {
