@@ -139,13 +139,32 @@ purely to silence it (which also, conveniently, drops the `option<>` in DDL beca
 **Suggestion:** `$value` should imply create-optional (and arguably update-excluded), the
 same way `$default` implies create-optional and `$readonly` implies update-excluded.
 
-### 6. `make()` / `makePartial()` return `Record<string, unknown>` — Low/Medium
+### 6. `make()` / `makePartial()` return `Record<string, unknown>` — Low/Medium — RESOLVED
+RESOLVED: `make`/`makePartial` now return a typed `Partial<z.input<…>>` (i.e. `Partial<Wire<T>>`)
+instead of `Record<string, unknown>`, reusing the existing `ZShape`/`ZShapeAll` machinery — so
+the payload handed to `surql\`CREATE … CONTENT ${…}\`` is checked against the wire shape, with
+codec fields wire-typed (`createdAt` is a `DateTime`, not a `Date`). `SystemView.make`/`makePartial`
+use `ZShapeAll` so internal fields are included. Runtime is unchanged (the `encodeInput` result
+is cast). The tracker's `web/api.ts` `make(...)`/`makePartial(...)` calls feed `surql` unchanged
+and still typecheck; the 12 live tests pass.
+
+Original finding:
 The *input* types (`Create`/`Update`) are excellent, but the *output* is untyped, so the
 payload handed to `surql\`CREATE ... CONTENT ${...}\`` isn't checked against `Wire<>`. In
 practice it's immediately consumed by surql so the blast radius is small, but a typed return
 (`Partial<Wire<T>>`) would catch encode-shape bugs and document intent.
 
-### 7. `make()` does not validate against the schema before writing — Low/Medium
+### 7. `make()` does not validate against the schema before writing — Low/Medium — RESOLVED
+RESOLVED: `make` actually does validate — `z.encode` validates as it encodes and **throws** a
+`ZodError` on invalid input (now documented in its jsdoc). For the non-throwing form, `safeMake`
+/ `safeMakePartial` were added to both `TableDef` and `SystemView`. They compose a `z.object`
+from the provided keys' field schemas and call `z.safeEncode`, so Zod aggregates every field
+error (with correct paths) into one `ZodError`, returning a Zod-style
+`{ success: true; data } | { success: false; error }` (`data` typed as the same `Partial<Wire<T>>`
+as `make`). A browser client can now catch invalid input (e.g. an empty `.$min(1)` title or a
+bad email) without a server round-trip.
+
+Original finding:
 `make()` runs `encode` per field but doesn't *parse*: it won't reject values your schema (or
 a DB `ASSERT`) would. The empty-title case only fails after the round-trip, at the DB. A
 `safeMake`/parse-on-make (or a documented "validate first with `safeEncode`") would let the

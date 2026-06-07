@@ -50,6 +50,61 @@ describe("make / makePartial", () => {
   });
 });
 
+describe("safeMake / make validation (#6, #7)", () => {
+  const User = table("user", {
+    id: z.string(),
+    name: sz.string().$min(1),
+    email: sz.email(),
+    createdAt: sz.datetime().$default(surql`time::now()`).$readonly(),
+    passhash: sz.string().$internal(),
+  });
+
+  test("safeMake with valid input -> { success: true, data } with encoded/wire values", () => {
+    const res = User.safeMake({
+      name: "Alice",
+      email: "alice@example.com",
+      createdAt: new Date("2022-01-01T00:00:00.000Z"),
+    });
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.data.name).toBe("Alice");
+      expect(res.data.email).toBe("alice@example.com");
+      // codec field encoded to its wire value
+      expect(res.data.createdAt).toBeInstanceOf(DateTime);
+    }
+  });
+
+  test("safeMake with invalid input -> { success: false } with an aggregated ZodError", () => {
+    const res = User.safeMake({ name: "", email: "not-an-email" });
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error).toBeInstanceOf(z.ZodError);
+      const paths = res.error.issues.map((i) => i.path.join("."));
+      expect(paths).toContain("name"); // .$min(1) rejects ""
+      expect(paths).toContain("email"); // bad email format
+    }
+  });
+
+  test("make throws a ZodError on invalid input", () => {
+    expect(() => User.make({ name: "", email: "alice@example.com" })).toThrow();
+    expect(() => User.make({ name: "Alice", email: "nope" })).toThrow();
+  });
+
+  test("safeMakePartial validates only the provided keys", () => {
+    expect(User.safeMakePartial({ name: "Bob" }).success).toBe(true);
+    expect(User.safeMakePartial({ name: "" }).success).toBe(false);
+  });
+
+  test("SystemView.safeMake validates internal fields too", () => {
+    const ok = User.system.safeMake({ name: "Alice", email: "a@b.co", passhash: "secret" });
+    expect(ok.success).toBe(true);
+    if (ok.success) expect(ok.data.passhash).toBe("secret");
+
+    const bad = User.system.safeMake({ name: "", email: "a@b.co", passhash: "secret" });
+    expect(bad.success).toBe(false);
+  });
+});
+
 describe("$internal fields (runtime)", () => {
   const Account = table("account", {
     id: z.string(),

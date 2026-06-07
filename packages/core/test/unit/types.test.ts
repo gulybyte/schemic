@@ -77,6 +77,37 @@ describe("App<> / Wire<>", () => {
   });
 });
 
+describe("make / safeMake return types (#6, #7)", () => {
+  test("make returns Partial<Wire<>>: codec fields are wire-typed (DateTime, not Date)", () => {
+    const made = User.make({ name: "Alice", email: "alice@example.com" });
+    expectTypeOf(made).toEqualTypeOf<Partial<Wire<typeof User>>>();
+    // a datetime codec field is its wire type (DateTime) on the way out, never the app Date
+    expectTypeOf(made.createdAt).toEqualTypeOf<DateTime | undefined>();
+    expectTypeOf(made.createdAt).not.toEqualTypeOf<Date | undefined>();
+  });
+
+  test("makePartial returns the same Partial<Wire<>>", () => {
+    expectTypeOf(User.makePartial({ name: "x" })).toEqualTypeOf<Partial<Wire<typeof User>>>();
+  });
+
+  test("safeMake's result is the Zod success|error union; data is the wire partial", () => {
+    const res = User.safeMake({ name: "Alice", email: "alice@example.com" });
+    expectTypeOf(res).toEqualTypeOf<z.ZodSafeParseResult<Partial<Wire<typeof User>>>>();
+    if (res.success) {
+      expectTypeOf(res.data).toEqualTypeOf<Partial<Wire<typeof User>>>();
+      expectTypeOf(res.data.createdAt).toEqualTypeOf<DateTime | undefined>();
+    } else {
+      expectTypeOf(res.error).toEqualTypeOf<z.ZodError<Partial<Wire<typeof User>>>>();
+    }
+  });
+
+  test("safeMakePartial mirrors safeMake's result type", () => {
+    expectTypeOf(User.safeMakePartial({ name: "x" })).toEqualTypeOf<
+      z.ZodSafeParseResult<Partial<Wire<typeof User>>>
+    >();
+  });
+});
+
 describe("field method types", () => {
   test("unwrap peels the wrapper type", () => {
     expectTypeOf(sz.string().optional().unwrap().schema).toExtend<z.ZodString>();

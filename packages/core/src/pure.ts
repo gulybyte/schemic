@@ -760,6 +760,15 @@ type UpdateShapeAll<S extends Shape> = Prettify<{
   [K in keyof S as UpdateExcluded<S, K> extends true ? never : K]?: AppOf<S[K]>;
 }>;
 
+/** A Zod-style non-throwing result: `{ success: true; data }` | `{ success: false; error }`
+ * (mirrors `z.safeEncode`/`z.safeDecode`, so `safeMake` matches `safeEncode`). */
+type SafeResult<T> = z.ZodSafeParseResult<T>;
+/** The wire payload `make`/`safeMake` build: the provided keys' wire (`z.input`) types. Only
+ * the supplied keys are present at runtime, hence `Partial`. */
+type MakeWire<S extends Shape> = Partial<z.input<z.ZodObject<ZShape<S>>>>;
+/** Same, over ALL fields — the `.system` view includes `$internal()` ones. */
+type MakeWireAll<S extends Shape> = Partial<z.input<z.ZodObject<ZShapeAll<S>>>>;
+
 /** A table (or relation) definition: shape + DDL config, with chainable builders. */
 export class TableDef<Name extends string, S extends Shape> {
   /** Zod object over the inner schemas — drives validation, encode/decode, types. */
@@ -815,13 +824,42 @@ export class TableDef<Name extends string, S extends Shape> {
     return z.safeEncodeAsync(this.object, value);
   }
 
-  /** Build a wire payload for `CREATE` (DB-filled fields optional). */
-  make(input: CreateShape<S>): Record<string, unknown> {
-    return encodeInput(this.fields as unknown as Record<string, AnyField>, input);
+  /**
+   * Build a wire payload for `CREATE` (DB-filled fields optional). Encodes each provided
+   * field via `z.encode`, which validates — so this VALIDATES and THROWS a `z.ZodError`
+   * on invalid input. Use `safeMake` for the non-throwing form.
+   */
+  make(input: CreateShape<S>): MakeWire<S> {
+    return encodeInput(this.fields as unknown as Record<string, AnyField>, input) as MakeWire<S>;
   }
-  /** Build a wire payload for `UPDATE`/`MERGE` (a partial patch; excludes id/readonly). */
-  makePartial(input: UpdateShape<S>): Record<string, unknown> {
-    return encodeInput(this.fields as unknown as Record<string, AnyField>, input);
+  /**
+   * Build a wire payload for `UPDATE`/`MERGE` (a partial patch; excludes id/readonly).
+   * VALIDATES and THROWS on invalid input; use `safeMakePartial` for the non-throwing form.
+   */
+  makePartial(input: UpdateShape<S>): MakeWire<S> {
+    return encodeInput(this.fields as unknown as Record<string, AnyField>, input) as MakeWire<S>;
+  }
+  /**
+   * Non-throwing `make`: validates+encodes the provided keys and returns a Zod-style
+   * `{ success: true; data }` | `{ success: false; error }`. All field errors are
+   * aggregated (with correct paths) into a single `z.ZodError`.
+   */
+  safeMake(input: CreateShape<S>): SafeResult<MakeWire<S>> {
+    return this.safeEncodeProvided(input as Record<string, unknown>) as SafeResult<MakeWire<S>>;
+  }
+  /** Non-throwing `makePartial` (see `safeMake`). */
+  safeMakePartial(input: UpdateShape<S>): SafeResult<MakeWire<S>> {
+    return this.safeEncodeProvided(input as Record<string, unknown>) as SafeResult<MakeWire<S>>;
+  }
+  /** Compose a `z.object` from the PROVIDED keys' field schemas and `safeEncode` it, so Zod
+   * aggregates every field error (with correct paths) into one `z.ZodError`. */
+  private safeEncodeProvided(input: Record<string, unknown>): z.ZodSafeParseResult<unknown> {
+    const shape: Record<string, z.ZodType> = {};
+    for (const k of Object.keys(input)) {
+      const f = (this.fields as unknown as Record<string, AnyField>)[k];
+      if (f) shape[k] = f.schema;
+    }
+    return z.safeEncode(z.object(shape), input as never);
   }
 
   /**
@@ -944,13 +982,37 @@ export class SystemView<Name extends string, S extends Shape> {
     return z.safeEncodeAsync(this.object, value);
   }
 
-  /** Build a `CREATE` payload allowed to set internal fields. */
-  make(input: CreateShapeAll<S>): Record<string, unknown> {
-    return encodeInput(this.fields, input as Record<string, unknown>);
+  /**
+   * Build a `CREATE` payload allowed to set internal fields. VALIDATES and THROWS a
+   * `z.ZodError` on invalid input; use `safeMake` for the non-throwing form.
+   */
+  make(input: CreateShapeAll<S>): MakeWireAll<S> {
+    return encodeInput(this.fields, input as Record<string, unknown>) as MakeWireAll<S>;
   }
-  /** Build an `UPDATE`/`MERGE` payload allowed to set internal fields. */
-  makePartial(input: UpdateShapeAll<S>): Record<string, unknown> {
-    return encodeInput(this.fields, input as Record<string, unknown>);
+  /**
+   * Build an `UPDATE`/`MERGE` payload allowed to set internal fields. VALIDATES and THROWS
+   * on invalid input; use `safeMakePartial` for the non-throwing form.
+   */
+  makePartial(input: UpdateShapeAll<S>): MakeWireAll<S> {
+    return encodeInput(this.fields, input as Record<string, unknown>) as MakeWireAll<S>;
+  }
+  /** Non-throwing `make` over ALL fields (see `TableDef.safeMake`). */
+  safeMake(input: CreateShapeAll<S>): SafeResult<MakeWireAll<S>> {
+    return this.safeEncodeProvided(input as Record<string, unknown>) as SafeResult<MakeWireAll<S>>;
+  }
+  /** Non-throwing `makePartial` over ALL fields. */
+  safeMakePartial(input: UpdateShapeAll<S>): SafeResult<MakeWireAll<S>> {
+    return this.safeEncodeProvided(input as Record<string, unknown>) as SafeResult<MakeWireAll<S>>;
+  }
+  /** See `TableDef.safeEncodeProvided` — composes a `z.object` from the provided keys and
+   * `safeEncode`s it so Zod aggregates field errors into one `z.ZodError`. */
+  private safeEncodeProvided(input: Record<string, unknown>): z.ZodSafeParseResult<unknown> {
+    const shape: Record<string, z.ZodType> = {};
+    for (const k of Object.keys(input)) {
+      const f = this.fields[k];
+      if (f) shape[k] = f.schema;
+    }
+    return z.safeEncode(z.object(shape), input as never);
   }
 }
 

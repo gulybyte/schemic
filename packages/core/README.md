@@ -46,6 +46,13 @@ const payload = User.make({ name: "Alice", email: "alice@example.com" });
 type AppUser = App<typeof User>; // id: RecordId, createdAt: Date, ...
 ```
 
+`make` / `makePartial` validate and encode your input, returning a typed `Partial<Wire<T>>`
+(codec fields are wire-typed — `createdAt` is a `DateTime`, not a `Date`). They **throw** a
+`ZodError` on invalid input. For the non-throwing form use `safeMake` / `safeMakePartial`,
+which return a Zod-style `{ success: true; data } | { success: false; error }` (all field
+errors aggregated into one `ZodError`). `TableDef.system.{make,safeMake,…}` are the same over
+the full shape, including `$internal()` fields.
+
 See [`examples/`](./examples) for a full schema, a live demo (`bun examples/demo.ts`),
 and a small CRUD server.
 
@@ -101,6 +108,20 @@ sz.string().$min(1).$max(120);                 // string::len($value) >= 1 AND .
 sz.number().$gte(0).$lte(1);                    // $value >= 0 AND $value <= 1
 sz.email().$assert(surql`$value != $forbidden`); // string::is_email($value) AND $value != $forbidden
 ```
+
+## Live queries
+
+There's no special live API — a subscription payload is just a row, so decode it exactly like
+a query result:
+
+```ts
+await db.live("user", (action, value) => {
+  if (action === "CLOSE") return;
+  const user = User.decode(value); // decoded App<User> — RecordId, Date, …
+});
+```
+
+A typed query + live layer (results decoded automatically) is planned in `surreal-zod/orm`.
 
 ## Develop
 
