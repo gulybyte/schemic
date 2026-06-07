@@ -92,6 +92,37 @@ describe("field method types", () => {
   });
 });
 
+describe("$internal fields", () => {
+  const Account = table("account", {
+    id: z.string(), // -> record<account, string>
+    email: sz.email(),
+    passhash: sz.string().$internal(),
+  });
+
+  test("App excludes the internal key; the system view includes it", () => {
+    expectTypeOf<App<typeof Account>>().toEqualTypeOf<{
+      id: RecordId<"account", string>;
+      email: string;
+    }>();
+    expectTypeOf<App<typeof Account.system>>().toEqualTypeOf<{
+      id: RecordId<"account", string>;
+      email: string;
+      passhash: string;
+    }>();
+  });
+
+  test("Create excludes the internal key; make rejects it, system.make accepts it", () => {
+    expectTypeOf<Create<typeof Account>>().toEqualTypeOf<{
+      email: string;
+      id?: RecordId<"account", string>;
+    }>();
+    // @ts-expect-error - passhash is internal, not part of the public create input
+    Account.make({ email: "alice@example.com", passhash: "x" });
+    // the system view CAN set internal fields
+    Account.system.make({ email: "alice@example.com", passhash: "x" });
+  });
+});
+
 describe("$value create-optionality", () => {
   const T = table("t", {
     id: z.string(),

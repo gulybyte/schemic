@@ -44,6 +44,9 @@ export interface SurrealMeta {
   assert?: BoundQuery;
   readonly?: boolean;
   comment?: string;
+  /** DB-managed, client-hidden: still emits DEFINE FIELD (+ PERMISSIONS NONE) but is
+   * excluded from the public app/create/update surface. See `.$internal()` / `.system`. */
+  internal?: boolean;
 }
 
 /** Render a primitive as a clean SurrealQL literal; non-primitives return "". */
@@ -156,6 +159,15 @@ export class SField<S extends z.ZodType = z.ZodType, Flags extends string = neve
   }
   $comment(comment: string): SField<S, Flags> {
     return new SField(this.schema, { ...this.surreal, comment });
+  }
+  /**
+   * Mark the field DB-managed and client-hidden. It still emits its `DEFINE FIELD`
+   * (so SCHEMAFULL writes from a record-access SIGNUP block succeed) plus
+   * `PERMISSIONS NONE`, but is excluded from the public app/create/update surface.
+   * Reach internal fields via the `.system` view (server/system code).
+   */
+  $internal(): SField<S, Flags | "internal"> {
+    return new SField(this.schema, { ...this.surreal, internal: true });
   }
 }
 
@@ -429,7 +441,23 @@ export const sz = {
 export type Shape = Record<string, AnyField | z.ZodType>;
 type SchemaOf<F> = F extends SField<infer S, infer _> ? S : F extends z.ZodType ? F : never;
 type FlagsOf<F> = F extends SField<z.ZodType, infer Fl> ? Fl : never;
-type ZShape<S extends Shape> = { [K in keyof S]: SchemaOf<S[K]> };
+/**
+ * Whether a field carries the `"internal"` flag (set by `.$internal()`). The
+ * `string extends FlagsOf<F>` guard short-circuits the broad `Shape` case (where
+ * flags widen to `string`, and `"internal" extends string` would wrongly be true),
+ * so `ZShape<Shape>` keeps every key for shape-agnostic refs like `TableDef<string, Shape>`.
+ */
+type IsInternal<F> = string extends FlagsOf<F>
+  ? false
+  : "internal" extends FlagsOf<F>
+    ? true
+    : false;
+/** The public zshape — internal fields are excluded (see `ZShapeAll` for the system view). */
+type ZShape<S extends Shape> = {
+  [K in keyof S as IsInternal<S[K]> extends true ? never : K]: SchemaOf<S[K]>;
+};
+/** Every field's zshape, including internal ones — backs the `.system` view. */
+type ZShapeAll<S extends Shape> = { [K in keyof S]: SchemaOf<S[K]> };
 type ToField<F> = F extends SField<infer Sc, infer Fl> ? SField<Sc, Fl> : SField<SchemaOf<F>>;
 type Fields<S extends Shape> = { [K in keyof S]: ToField<S[K]> };
 type Unwrap<F> = F extends SField<z.ZodOptional<infer Inner extends z.ZodType>, infer Fl>
@@ -478,7 +506,24 @@ type CreateOptional<S extends Shape, K extends keyof S> = K extends "id"
   : "create" extends FlagsOf<S[K]>
     ? true
     : InputOptional<S[K]>;
+// Public create input: internal fields are never settable by clients.
 type CreateShape<S extends Shape> = Prettify<
+  {
+    [K in keyof S as IsInternal<S[K]> extends true
+      ? never
+      : CreateOptional<S, K> extends true
+        ? never
+        : K]: AppOf<S[K]>;
+  } & {
+    [K in keyof S as IsInternal<S[K]> extends true
+      ? never
+      : CreateOptional<S, K> extends true
+        ? K
+        : never]?: AppOf<S[K]>;
+  }
+>;
+// System create input: includes internal fields (the old, all-fields behavior).
+type CreateShapeAll<S extends Shape> = Prettify<
   { [K in keyof S as CreateOptional<S, K> extends true ? never : K]: AppOf<S[K]> } & {
     [K in keyof S as CreateOptional<S, K> extends true ? K : never]?: AppOf<S[K]>;
   }
@@ -489,7 +534,16 @@ type UpdateExcluded<S extends Shape, K extends keyof S> = K extends "id"
   : "readonly" extends FlagsOf<S[K]>
     ? true
     : false;
+// Public update input: internal fields are excluded.
 type UpdateShape<S extends Shape> = Prettify<{
+  [K in keyof S as IsInternal<S[K]> extends true
+    ? never
+    : UpdateExcluded<S, K> extends true
+      ? never
+      : K]?: AppOf<S[K]>;
+}>;
+// System update input: includes internal fields (the old, all-fields behavior).
+type UpdateShapeAll<S extends Shape> = Prettify<{
   [K in keyof S as UpdateExcluded<S, K> extends true ? never : K]?: AppOf<S[K]>;
 }>;
 
@@ -503,8 +557,13 @@ export class TableDef<Name extends string, S extends Shape> {
     readonly fields: Fields<S>,
     readonly config: TableConfig = { schemafull: true },
   ) {
+    // Public object skips internal fields (zod also strips unknown keys — double-safe);
+    // `defineTable` still iterates ALL `this.fields`, so internal fields stay in the DDL.
     const zshape: Record<string, z.ZodType> = {};
-    for (const [k, f] of Object.entries(fields)) zshape[k] = (f as AnyField).schema;
+    for (const [k, f] of Object.entries(fields)) {
+      if ((f as AnyField).surreal.internal) continue;
+      zshape[k] = (f as AnyField).schema;
+    }
     this.object = z.object(zshape) as z.ZodObject<ZShape<S>>;
   }
 
@@ -550,6 +609,15 @@ export class TableDef<Name extends string, S extends Shape> {
   /** Build a wire payload for `UPDATE`/`MERGE` (a partial patch; excludes id/readonly). */
   makePartial(input: UpdateShape<S>): Record<string, unknown> {
     return encodeInput(this.fields as unknown as Record<string, AnyField>, input);
+  }
+
+  /**
+   * The server/system view: the same table over ALL fields, including `$internal()`
+   * ones the public surface hides. Use it in trusted server code that must read or
+   * write internal fields (e.g. a `passhash`).
+   */
+  get system(): SystemView<Name, S> {
+    return new SystemView<Name, S>(this.fields as unknown as Record<string, AnyField>);
   }
 
   // --- DDL config (chainable, immutable) ---
@@ -611,6 +679,61 @@ export class TableDef<Name extends string, S extends Shape> {
       | RecordIdField<Name>
       | undefined;
     return new RecordIdField([this.name], idField?.valueType) as never;
+  }
+}
+
+/**
+ * The server/system view of a table (`TableDef.system`): the same data methods typed
+ * over ALL fields, including `$internal()` ones the public `TableDef` hides. Its
+ * `.object` validates/encodes/decodes the full shape, and `make`/`makePartial` accept
+ * internal fields. Exposed for trusted server code; never hand it to a browser client.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: Name mirrors TableDef<Name, S> for symmetry (type-only)
+export class SystemView<Name extends string, S extends Shape> {
+  /** Zod object over ALL fields (internal included). */
+  readonly object: z.ZodObject<ZShapeAll<S>>;
+
+  constructor(readonly fields: Record<string, AnyField>) {
+    const zshape: Record<string, z.ZodType> = {};
+    for (const [k, f] of Object.entries(fields)) zshape[k] = f.schema;
+    this.object = z.object(zshape) as z.ZodObject<ZShapeAll<S>>;
+  }
+
+  /** DB wire row -> app object (internal fields kept). */
+  decode(row: unknown): z.output<z.ZodObject<ZShapeAll<S>>> {
+    return z.decode(this.object, row as never);
+  }
+  /** App object -> DB wire row (internal fields kept). */
+  encode(value: z.output<z.ZodObject<ZShapeAll<S>>>): z.input<z.ZodObject<ZShapeAll<S>>> {
+    return z.encode(this.object, value);
+  }
+  decodeAsync(row: unknown): Promise<z.output<z.ZodObject<ZShapeAll<S>>>> {
+    return z.decodeAsync(this.object, row as never);
+  }
+  encodeAsync(value: z.output<z.ZodObject<ZShapeAll<S>>>): Promise<z.input<z.ZodObject<ZShapeAll<S>>>> {
+    return z.encodeAsync(this.object, value);
+  }
+
+  safeDecode(row: unknown) {
+    return z.safeDecode(this.object, row as never);
+  }
+  safeEncode(value: z.output<z.ZodObject<ZShapeAll<S>>>) {
+    return z.safeEncode(this.object, value);
+  }
+  safeDecodeAsync(row: unknown) {
+    return z.safeDecodeAsync(this.object, row as never);
+  }
+  safeEncodeAsync(value: z.output<z.ZodObject<ZShapeAll<S>>>) {
+    return z.safeEncodeAsync(this.object, value);
+  }
+
+  /** Build a `CREATE` payload allowed to set internal fields. */
+  make(input: CreateShapeAll<S>): Record<string, unknown> {
+    return encodeInput(this.fields, input as Record<string, unknown>);
+  }
+  /** Build an `UPDATE`/`MERGE` payload allowed to set internal fields. */
+  makePartial(input: UpdateShapeAll<S>): Record<string, unknown> {
+    return encodeInput(this.fields, input as Record<string, unknown>);
   }
 }
 

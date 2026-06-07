@@ -209,6 +209,9 @@ function emit(
   if (surreal?.assert) parts.push(`ASSERT ${inline(surreal.assert)}`);
   if (surreal?.readonly) parts.push("READONLY");
   if (surreal?.comment) parts.push(`COMMENT ${JSON.stringify(surreal.comment)}`);
+  // Internal fields still exist on the table (so SCHEMAFULL writes succeed) but grant
+  // no record-user access.
+  if (surreal?.internal) parts.push("PERMISSIONS NONE");
   lines.push(`${parts.join(" ")};`);
 
   for (const child of info.children) {

@@ -50,6 +50,34 @@ describe("make / makePartial", () => {
   });
 });
 
+describe("$internal fields (runtime)", () => {
+  const Account = table("account", {
+    id: z.string(),
+    email: sz.email(),
+    passhash: sz.string().$internal(),
+  });
+
+  test("decode strips the internal field; the system view keeps it", () => {
+    const row = { id: new RecordId("account", "1"), email: "alice@example.com", passhash: "secret" };
+    const app = Account.decode(row);
+    expect(app).not.toHaveProperty("passhash");
+    expect(app.email).toBe("alice@example.com");
+
+    const sys = Account.system.decode(row);
+    expect(sys.passhash).toBe("secret");
+    expect(sys.email).toBe("alice@example.com");
+  });
+
+  test("make omits internal; system.make includes it", () => {
+    const payload = Account.make({ email: "alice@example.com" });
+    expect(payload).not.toHaveProperty("passhash");
+    expect(payload.email).toBe("alice@example.com");
+
+    const sysPayload = Account.system.make({ email: "alice@example.com", passhash: "secret" });
+    expect(sysPayload.passhash).toBe("secret");
+  });
+});
+
 describe("shape ops", () => {
   const User = table("user", {
     id: z.string(),

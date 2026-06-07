@@ -11,6 +11,7 @@ export {
   SField,
   surrealTypeRegistry,
   sz,
+  SystemView,
   table,
   TableDef,
 } from "./pure";

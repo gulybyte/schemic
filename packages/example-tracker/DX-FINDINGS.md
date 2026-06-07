@@ -56,7 +56,16 @@ create, update, delete })`) and a field `.$permissions(...)`, plus a `defineAcce
 helper for record access. Even accepting a raw permissions string that `defineTable` inlines
 would remove the workaround below.
 
-### 2. Internal / write-only / hidden fields can't be modeled — High
+### 2. Internal / write-only / hidden fields can't be modeled — High — RESOLVED
+RESOLVED: fields now take a `.$internal()` modifier. It (a) still emits the `DEFINE FIELD`
+(so the SCHEMAFULL `SIGNUP` write succeeds) plus `PERMISSIONS NONE`, and (b) is excluded
+from `App`/`Create`/`Update` inference (and stripped by `decode`/`make`). Trusted server
+code reaches internal fields via a `.system` escape-hatch view (`User.system.decode(row)` /
+`User.system.make({ ...passhash })`), typed over the full shape. `passhash` now lives in
+`src/schema.ts` as `sz.string().$internal()`; the raw `DEFINE FIELD passhash ... PERMISSIONS
+NONE` in `setup.ts` is gone — `defineTable` generates it. The 12 live tests still pass
+(signup writes `passhash` via the access block; clients never see it).
+
 `passhash` **must** exist on the SCHEMAFULL `user` table (the record-access `SIGNUP` writes
 it) but must **never** appear in `App<User>` and must never be selectable by clients. There
 is no concept of a DB-only/hidden field. If I add it to the schema it pollutes the app type
@@ -162,7 +171,7 @@ pattern or a tiny `X.decode`-over-`LiveMessage` helper would round out the clien
 | # | Finding | Severity |
 |---|---------|----------|
 | 1 | No `DEFINE ACCESS` / `PERMISSIONS` generation | High |
-| 2 | Can't model internal/hidden fields (e.g. `passhash`) without leaking into `App` | High |
+| 2 | ~~Can't model internal/hidden fields (e.g. `passhash`) without leaking into `App`~~ — RESOLVED via `.$internal()` + `.system` | High |
 | 3 | Adding permissions forces a full table `OVERWRITE` that restates TYPE/SCHEMAFULL/COMMENT | Medium |
 | 4 | Zod format refinements (email/url/min/regex) don't become DB `ASSERT`s | Medium |
 | 5 | `$value` (computed) fields are required in `Create`/`make()` input | Medium |

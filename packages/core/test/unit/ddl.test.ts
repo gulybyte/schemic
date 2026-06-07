@@ -144,6 +144,12 @@ describe("DB-side metadata clauses", () => {
     );
   });
 
+  test("$internal -> PERMISSIONS NONE (field still emitted)", () => {
+    expect(ddl(sz.string().$internal())).toBe(
+      "DEFINE FIELD x ON TABLE t TYPE string PERMISSIONS NONE;",
+    );
+  });
+
   test("clauses combine in a stable order", () => {
     expect(ddl(sz.int().$default(surql`0`).$readonly().$comment("n"))).toBe(
       `DEFINE FIELD x ON TABLE t TYPE int DEFAULT 0 READONLY COMMENT "n";`,
@@ -289,6 +295,13 @@ describe("defineTable", () => {
       "DEFINE FIELD createdAt ON TABLE user TYPE datetime DEFAULT time::now() READONLY;",
     );
     expect(out).toContain(`DEFINE FIELD settings.theme ON TABLE user TYPE string DEFAULT "light";`);
+  });
+
+  test("an $internal() field is still emitted, with PERMISSIONS NONE", () => {
+    const Account = table("user", { email: sz.email(), passhash: sz.string().$internal() });
+    const out = defineTable(Account);
+    expect(out).toContain("DEFINE FIELD passhash ON TABLE user TYPE string PERMISSIONS NONE;");
+    expect(out).toContain("DEFINE FIELD email ON TABLE user TYPE string;");
   });
 
   test("schemaless / drop config", () => {

@@ -9,15 +9,18 @@ import { type App, relation, sz, table, type Wire } from "surreal-zod";
  * with per-field `$default`, enums (status/priority/role), datetime, duration,
  * and DB-side `$default` / `$assert` / `$readonly` / `$comment` / `$value`.
  *
- * NOTE: there is no `passhash` field here on purpose — it is internal to record
- * access and must never appear in the app type. It is defined via raw SurrealQL
- * in `setup.ts` (with `PERMISSIONS NONE`). See DX-FINDINGS.md.
+ * NOTE: `passhash` is modeled with `.$internal()`: it still emits its `DEFINE FIELD`
+ * (so the SCHEMAFULL SIGNUP write succeeds) plus `PERMISSIONS NONE`, but is excluded
+ * from the app type and the create/update input. Server/system code reaches it via
+ * `User.system`. See DX-FINDINGS.md #2.
  */
 
 /** End users. `id` omitted -> `record<user>` with a DB-generated id. */
 export const User = table("user", {
   name: sz.string().$assert(surql`string::len($value) > 0`),
   email: sz.email(),
+  // DB-managed, client-hidden: written by the record-access SIGNUP block, never exposed.
+  passhash: sz.string().$internal(),
   createdAt: sz.datetime().$default(surql`time::now()`).$readonly().$comment("Signup time"),
 }).comment("Application end users");
 
