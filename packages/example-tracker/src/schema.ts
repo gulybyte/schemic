@@ -46,6 +46,9 @@ export const Project = table("project", {
   description: sz.string().optional(),
   color: sz.string().$default("#6366f1"),
   tags: sz.string().array().$default(surql`[]`),
+  // Nested create-optionality: each nested `$default` field is optional in the create input,
+  // so a client may supply a PARTIAL `settings` (e.g. `{ defaultView: "board" }`) and the DB
+  // fills the omitted nested defaults — while both stay REQUIRED on the decoded app side.
   settings: sz
     .object({
       isPublic: sz.boolean().$default(surql`false`),

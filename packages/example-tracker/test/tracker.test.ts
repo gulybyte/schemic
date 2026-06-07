@@ -113,6 +113,16 @@ describe("create + decode (make / DB defaults / codecs)", () => {
     expect(p.settings.defaultView).toBe("list");
     expect(p.createdAt).toBeInstanceOf(Date);
     expect(p.tags).toEqual(["q3"]);
+
+    // Nested create-optionality: provide only ONE nested settings field (defaultView) and
+    // omit the DB-defaulted `isPublic`. The partial nested object must round-trip with the
+    // DB filling the omitted nested default (kept private so it doesn't leak to Bob below).
+    const partial = Project.make({ name: "Partial", settings: { defaultView: "board" } });
+    expect(partial.settings as Record<string, unknown>).not.toHaveProperty("isPublic");
+    const [prows] = await A.query<[unknown[]]>(surql`CREATE project CONTENT ${partial}`);
+    const pp = Project.decode(prows[0]);
+    expect(pp.settings.defaultView).toBe("board"); // client-provided nested value (non-default)
+    expect(pp.settings.isPublic).toBe(false); // DB-filled nested default
   });
 
   test("Task.make + enums, duration, links, $value updatedAt", async () => {

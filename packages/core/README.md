@@ -56,6 +56,64 @@ the full shape, including `$internal()` fields.
 See [`examples/`](./examples) for a full schema, a live demo (`bun examples/demo.ts`),
 and a small CRUD server.
 
+## Nested objects
+
+`sz.object({ ... })` builds a nested SurrealQL `object`, and surreal-zod looks *through* it so
+each nested field keeps its own DDL metadata and create-optionality:
+
+- A nested field with a DB `$default` (or `$value(..., { optional: true })`) is
+  **create-optional** in `make` — omit it and the DB fills it — exactly like a top-level
+  defaulted field. So you can pass a *partial* nested object and let the DB complete it:
+
+  ```ts
+  const Project = table("project", {
+    name: sz.string(),
+    settings: sz.object({
+      isPublic: sz.boolean().$default(surql`false`),
+      defaultView: sz.enum(["list", "board"]).$default("list"),
+    }),
+  });
+
+  Project.make({ name: "Launch", settings: { defaultView: "board" } });
+  // -> { name, settings: { defaultView: "board" } }   (the DB fills settings.isPublic)
+  ```
+
+- On the **decoded** side those nested fields stay **required** in `App<T>` — a stored row has
+  them — consistent with how top-level defaulted fields behave.
+
+### `make` (CONTENT) vs `makePartial` (MERGE)
+
+`make` builds a **`CONTENT`** payload; `makePartial` builds a **deep-partial `MERGE`** payload —
+every nested key is optional, mirroring SurrealDB's `MERGE`, which **recursively deep-merges**
+(siblings are preserved at every level):
+
+```ts
+Project.makePartial({ settings: { defaultView: "board" } });
+// -> { settings: { defaultView: "board" } }   ->   UPDATE $id MERGE $payload
+```
+
+The library only **builds the payload** — you choose the statement. Pair `make` with `CONTENT`
+and `makePartial` with `MERGE`. **Warning:** sending a *partial* payload with `CONTENT`
+**replaces** the record (unsupplied fields are dropped); use `MERGE` for partial writes.
+
+### Atomic (object-level) validation
+
+Only objects built with `sz.object` are flattened/recursed. A field that holds a **raw, refined
+`z.object`** is validated **atomically** — provide it whole, and its object-level `refine` runs:
+
+```ts
+import { z } from "zod";
+
+table("booking", {
+  // validated all-or-nothing; the refine runs on the whole object
+  range: z.object({ from: z.number(), to: z.number() }).refine((r) => r.from <= r.to),
+});
+```
+
+That's the built-in escape when you want all-or-nothing / object-level checks. For full manual
+control, build the payload yourself and pass it via `surql` — `make`/`makePartial` are just
+conveniences, not a requirement.
+
 ## Permissions
 
 Author row-level `PERMISSIONS` with `TableDef.permissions(spec)` and `SField.$permissions(spec)`.

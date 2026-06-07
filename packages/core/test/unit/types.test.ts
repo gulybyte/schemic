@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, test } from "bun:test";
 import { z } from "zod";
-import { DateTime, RecordId, surql, type RecordIdValue } from "surrealdb";
+import { RecordId, surql, type DateTime, type RecordIdValue } from "surrealdb";
 import {
   relation,
   sz,
@@ -151,6 +151,67 @@ describe("$internal fields", () => {
     Account.make({ email: "alice@example.com", passhash: "x" });
     // the system view CAN set internal fields
     Account.system.make({ email: "alice@example.com", passhash: "x" });
+  });
+});
+
+describe("nested create-optionality", () => {
+  // settings is create-REQUIRED (no $default on the object itself), but its nested `theme`
+  // has a DB $default, so `theme` is create-optional while `tz` stays required.
+  const T = table("nested", {
+    id: z.string(),
+    settings: sz.object({
+      theme: sz.string().$default(surql`"x"`),
+      tz: sz.string(),
+    }),
+  });
+
+  test("a nested $default field is create-optional; its siblings stay required", () => {
+    expectTypeOf<Create<typeof T>["settings"]>().toEqualTypeOf<{ tz: string; theme?: string }>();
+    expectTypeOf<{ tz: string }>().toExtend<Create<typeof T>["settings"]>();
+  });
+
+  test("the nested field stays REQUIRED on the decoded app side", () => {
+    expectTypeOf<App<typeof T>["settings"]["theme"]>().toEqualTypeOf<string>();
+    expectTypeOf<App<typeof T>["settings"]["tz"]>().toEqualTypeOf<string>();
+  });
+
+  test("Update<> is deep-partial: every nested field is optional (MERGE deep-merges)", () => {
+    expectTypeOf<Update<typeof T>["settings"]>().toEqualTypeOf<
+      { theme?: string; tz?: string } | undefined
+    >();
+    // a single nested key is a valid patch (deep-partial)
+    expectTypeOf<{ settings: { theme: string } }>().toExtend<Update<typeof T>>();
+    expectTypeOf<{ settings: Record<string, never> }>().toExtend<Update<typeof T>>();
+    T.makePartial({ settings: { theme: "x" } });
+  });
+
+  // The object field itself is $default (create-optional) AND its nested field is too.
+  const T2 = table("nested2", {
+    id: z.string(),
+    settings: sz
+      .object({ theme: sz.string().$default(surql`"x"`), tz: sz.string() })
+      .$default(surql`{}`),
+  });
+
+  test("a $default object is optional, and its value still allows omitting nested defaults", () => {
+    expectTypeOf<Create<typeof T2>>().toEqualTypeOf<{
+      id?: RecordId<"nested2", string>;
+      settings?: { tz: string; theme?: string };
+    }>();
+    // omit settings entirely, or provide it partially
+    expectTypeOf<Record<string, never>>().toExtend<Create<typeof T2>>();
+    expectTypeOf<{ settings: { tz: string } }>().toExtend<Create<typeof T2>>();
+  });
+
+  // Array-of-object: nested defaults are create-optional per element.
+  const T3 = table("nested3", {
+    id: z.string(),
+    tags: sz.object({ name: sz.string(), color: sz.string().$default("#fff") }).array(),
+  });
+
+  test("array<object> recurses: a nested default is optional per element", () => {
+    expectTypeOf<Create<typeof T3>["tags"]>().toEqualTypeOf<{ name: string; color?: string }[]>();
+    expectTypeOf<App<typeof T3>["tags"][number]["color"]>().toEqualTypeOf<string>();
   });
 });
 

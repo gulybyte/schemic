@@ -36,6 +36,13 @@ tool) · Medium (notable friction, easy to trip on) · Low (polish).
   `createdBy` it pairs perfectly with record access: the client omits the field and the DB
   stamps the authenticated user. Nested-object defaults (`settings: sz.object({...})
   .$default(surql\`{}\`)`) populated child defaults correctly.
+- **Nested create-optionality now works (RESOLVED).** A nested `$default` field (e.g.
+  `settings.isPublic` / `settings.defaultView`) is optional in the create input, so a client
+  may pass a PARTIAL nested object (`Project.make({ settings: { defaultView: "board" } })`)
+  and the DB fills the omitted nested defaults — while the field stays REQUIRED in `App<>`
+  (decode). Previously create-optionality applied only to top-level fields; `make`/`makePartial`
+  now recurse into `sz.object` (and arrays of one). Verified live: the partial-settings create
+  round-trips with `isPublic` filled to `false`.
 
 ---
 
@@ -157,12 +164,14 @@ practice it's immediately consumed by surql so the blast radius is small, but a 
 ### 7. `make()` does not validate against the schema before writing — Low/Medium — RESOLVED
 RESOLVED: `make` actually does validate — `z.encode` validates as it encodes and **throws** a
 `ZodError` on invalid input (now documented in its jsdoc). For the non-throwing form, `safeMake`
-/ `safeMakePartial` were added to both `TableDef` and `SystemView`. They compose a `z.object`
-from the provided keys' field schemas and call `z.safeEncode`, so Zod aggregates every field
-error (with correct paths) into one `ZodError`, returning a Zod-style
+/ `safeMakePartial` were added to both `TableDef` and `SystemView`. They **recurse exactly like
+`make`** (mirroring `encodeInput`/`encodeValue`): `z.safeEncode` per leaf, aggregating every
+issue (with correct nested/array paths) into one `ZodError`, returning a Zod-style
 `{ success: true; data } | { success: false; error }` (`data` typed as the same `Partial<Wire<T>>`
-as `make`). A browser client can now catch invalid input (e.g. an empty `.$min(1)` title or a
-bad email) without a server round-trip.
+as `make`). Because they share `make`'s recursion, `safeMake(x)` succeeds **iff** `make(x)` does
+not throw — including for a PARTIAL nested `sz.object` (an earlier `z.object`-from-the-provided-keys
+implementation wrongly rejected those, even though `make` accepted them). A browser client can now
+catch invalid input (e.g. an empty `.$min(1)` title or a bad email) without a server round-trip.
 
 Original finding:
 `make()` runs `encode` per field but doesn't *parse*: it won't reject values your schema (or

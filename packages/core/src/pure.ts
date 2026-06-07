@@ -552,8 +552,15 @@ export const sz = {
     new SField(native(z.instanceof(Geometry), kind ? `geometry<${kind}>` : "geometry")),
   recordId: <T extends string>(table: T | T[]) =>
     new RecordIdField<T>(Array.isArray(table) ? table : [table]),
-  /** A nested object whose fields keep their surreal metadata + native types. */
-  object: <S extends Shape>(shape: S): SField<z.ZodObject<ZShape<S>>> => {
+  /**
+   * A nested object whose fields keep their surreal metadata + native types. The returned
+   * schema TYPE carries the original shape `S` via the `~szShape` brand (type-only — runtime
+   * is unchanged) so `CreateValue`/`ShapeOf` can recover the nested fields' create-flags
+   * (e.g. a nested `$default`) and make them create-optional. The brand survives every
+   * `$`-method and Zod wrapper (`.optional()`/`.array()`/`.$default()`), which all reuse
+   * `this.schema`.
+   */
+  object: <S extends Shape>(shape: S): SField<SZObject<S>> => {
     const fields: Record<string, AnyField> = {};
     const zshape: Record<string, z.ZodType> = {};
     for (const [k, v] of Object.entries(shape)) {
@@ -561,7 +568,7 @@ export const sz = {
       fields[k] = f;
       zshape[k] = f.schema;
     }
-    const schema = z.object(zshape) as z.ZodObject<ZShape<S>>;
+    const schema = z.object(zshape) as SZObject<S>;
     objectFieldsRegistry.set(schema, fields);
     return new SField(schema);
   },
@@ -669,6 +676,14 @@ type ZShape<S extends Shape> = {
 };
 /** Every field's zshape, including internal ones — backs the `.system` view. */
 type ZShapeAll<S extends Shape> = { [K in keyof S]: SchemaOf<S[K]> };
+/**
+ * The schema type returned by `sz.object`: a plain `z.ZodObject` carrying its original
+ * `Shape` via a type-only `~szShape` brand. The brand is optional, so the runtime cast
+ * (`z.object(...) as SZObject<S>`) is sound and the brand is invisible to `z.input`/
+ * `z.output`/`App`/`Wire` — nested fields stay REQUIRED on the decoded side. It exists
+ * solely so `ShapeOf`/`CreateValue` can recover the nested shape for the create surface.
+ */
+type SZObject<S extends Shape> = z.ZodObject<ZShape<S>> & { readonly "~szShape"?: S };
 type ToField<F> = F extends SField<infer Sc, infer Fl> ? SField<Sc, Fl> : SField<SchemaOf<F>>;
 type Fields<S extends Shape> = { [K in keyof S]: ToField<S[K]> };
 type Unwrap<F> = F extends SField<z.ZodOptional<infer Inner extends z.ZodType>, infer Fl>
@@ -696,17 +711,122 @@ function normalizeFields<S extends Shape>(shape: S): Fields<S> {
   return out as unknown as Fields<S>;
 }
 
-/** Encode a (partial) app object to a wire payload, omitting absent fields. */
+/** The wrappers `encodeValue` peels to reach a schema registered in `objectFieldsRegistry`
+ * (and the array element) — the same identity-preserving set `ShapeOf` strips at the type
+ * level. `array` is intentionally NOT peeled (it's handled separately). */
+const ENCODE_PEEL = new Set(["optional", "nullable", "default", "prefault", "catch", "readonly"]);
+
+/** Peel identity-preserving wrappers off a schema to reach its core (registered) schema. */
+function unwrapCore(schema: z.ZodType): z.ZodType {
+  let s = schema;
+  while (ENCODE_PEEL.has((s._zod.def as { type: string }).type)) {
+    const inner = (s._zod.def as { innerType?: z.ZodType }).innerType;
+    if (!inner) break;
+    s = inner;
+  }
+  return s;
+}
+
+/** If `core` is a `ZodArray` whose (unwrapped) element is a registered `sz.object`, return
+ * that element's fields; otherwise undefined. */
+function arrayElementFields(core: z.ZodType): Record<string, AnyField> | undefined {
+  if ((core._zod.def as { type: string }).type !== "array") return undefined;
+  const element = (core._zod.def as { element?: z.ZodType }).element;
+  if (!element) return undefined;
+  return objectFieldsRegistry.get(unwrapCore(element));
+}
+
+/**
+ * Encode one provided field value to its wire form. For a nested `sz.object` (or an array
+ * of one) it recurses via `encodeInput`, so absent nested keys are OMITTED — on CREATE the
+ * DB fills their defaults; on UPDATE `makePartial` is deep-partial and pairs with `MERGE`,
+ * which deep-merges, so omitted siblings are preserved by the DB (not dropped). Leaf fields
+ * go through `z.encode`, which validates. NOTE: recursing skips any object-LEVEL refinement
+ * on the nested schema (rare on `sz.object`) — acceptable; leaf-field validation still runs.
+ */
+function encodeValue(field: AnyField, v: unknown): unknown {
+  const core = unwrapCore(field.schema);
+  const nested = objectFieldsRegistry.get(core);
+  if (nested) return encodeInput(nested, v as Record<string, unknown>);
+  const elem = arrayElementFields(core);
+  if (elem) return (v as unknown[]).map((el) => encodeInput(elem, el as Record<string, unknown>));
+  return z.encode(field.schema, v as never);
+}
+
+/** Encode a (partial) app object to a wire payload, omitting absent (or `undefined`) fields
+ * and recursing into nested `sz.object` fields (see `encodeValue`). */
 function encodeInput(
   fields: Record<string, AnyField>,
   input: Record<string, unknown>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input)) {
+    if (v === undefined) continue;
     const field = fields[k];
-    out[k] = field ? z.encode(field.schema, v as never) : v;
+    out[k] = field ? encodeValue(field, v) : v;
   }
   return out;
+}
+
+/**
+ * Non-throwing mirror of `encodeValue`: a nested `sz.object` (or an array of one) recurses
+ * via `safeEncodeFields`, so a PARTIAL nested value is accepted exactly like `make`; leaf
+ * fields go through `z.safeEncode`. Any leaf issues are pushed into `issues` with their path
+ * prefixed by `path`, so the aggregate `ZodError` carries correct, fully-qualified paths.
+ */
+function safeEncodeValue(
+  field: AnyField,
+  v: unknown,
+  path: PropertyKey[],
+  issues: z.core.$ZodIssue[],
+): unknown {
+  const core = unwrapCore(field.schema);
+  const nested = objectFieldsRegistry.get(core);
+  if (nested) return safeEncodeInput(nested, v as Record<string, unknown>, path, issues);
+  const elem = arrayElementFields(core);
+  if (elem) {
+    return (v as unknown[]).map((el, i) =>
+      safeEncodeInput(elem, el as Record<string, unknown>, [...path, i], issues),
+    );
+  }
+  const res = z.safeEncode(field.schema, v as never);
+  if (res.success) return res.data;
+  for (const issue of res.error.issues) issues.push({ ...issue, path: [...path, ...issue.path] });
+  return undefined;
+}
+
+/** Non-throwing mirror of `encodeInput` (see `safeEncodeValue`): recurse over the provided
+ * keys, omitting absent (`undefined`) ones, building the wire object and collecting issues. */
+function safeEncodeInput(
+  fields: Record<string, AnyField>,
+  input: Record<string, unknown>,
+  path: PropertyKey[],
+  issues: z.core.$ZodIssue[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (v === undefined) continue;
+    const field = fields[k];
+    out[k] = field ? safeEncodeValue(field, v, [...path, k], issues) : v;
+  }
+  return out;
+}
+
+/**
+ * The non-throwing core of `safeMake`/`safeMakePartial`: validate+encode the PROVIDED keys
+ * exactly as `make` does (same recursion), aggregating every leaf issue (with correct paths)
+ * into one `z.ZodError`. Because it mirrors `encodeInput`/`encodeValue`, `safeMake(x)` succeeds
+ * iff `make(x)` does not throw — including for a PARTIAL nested `sz.object` value.
+ */
+function safeEncodeFields(
+  fields: Record<string, AnyField>,
+  input: Record<string, unknown>,
+): z.ZodSafeParseResult<unknown> {
+  const issues: z.core.$ZodIssue[] = [];
+  const data = safeEncodeInput(fields, input, [], issues);
+  return issues.length > 0
+    ? { success: false, error: new z.ZodError(issues) }
+    : { success: true, data };
 }
 
 // --- Create / Update input shapes ---
@@ -714,31 +834,87 @@ type Prettify<T> = { [K in keyof T]: T[K] } & {};
 type AppOf<F> = z.output<SchemaOf<F>>;
 type InputOptional<F> = undefined extends z.input<SchemaOf<F>> ? true : false;
 
+/**
+ * Recover the nested `Shape` of an `sz.object` schema (`never` if the schema isn't one).
+ * Identity-preserving wrappers (optional/default/readonly/nullable) are peeled first, then
+ * the `~szShape` brand is read. The inner `NS extends Shape ? NS : never` drops the
+ * `| undefined` that inferring from an optional property can introduce, so the result is the
+ * clean shape — or `never` for any non-object schema.
+ */
+type ShapeOf<Sc> = Sc extends z.ZodOptional<infer I>
+  ? ShapeOf<I>
+  : Sc extends z.ZodDefault<infer I>
+    ? ShapeOf<I>
+    : Sc extends z.ZodReadonly<infer I>
+      ? ShapeOf<I>
+      : Sc extends z.ZodNullable<infer I>
+        ? ShapeOf<I>
+        : Sc extends { "~szShape"?: infer NS }
+          ? NS extends Shape
+            ? NS
+            : never
+          : never;
+
+/**
+ * The element `Shape` of an `sz.object(...).array()` field (`never` otherwise). Peels the
+ * same identity-preserving wrappers off the array, then reads the element's `~szShape`.
+ */
+type ArrayShapeOf<Sc> = Sc extends z.ZodOptional<infer I>
+  ? ArrayShapeOf<I>
+  : Sc extends z.ZodDefault<infer I>
+    ? ArrayShapeOf<I>
+    : Sc extends z.ZodReadonly<infer I>
+      ? ArrayShapeOf<I>
+      : Sc extends z.ZodNullable<infer I>
+        ? ArrayShapeOf<I>
+        : Sc extends z.ZodArray<infer E>
+          ? ShapeOf<E>
+          : never;
+
+/**
+ * The create-input VALUE type for a field. A nested `sz.object` recurses into its own
+ * `CreateShape` (so nested `$default`/`"create"` fields become optional too); an array of
+ * `sz.object` becomes that nested create-shape's array; everything else is the plain app
+ * type (`AppOf`). `[X] extends [never]` guards each branch because `never extends Shape` is
+ * vacuously true and would otherwise wrongly match the object branch for scalar fields.
+ */
+type CreateValue<F, Sc = SchemaOf<F>> = [ShapeOf<Sc>] extends [never]
+  ? [ArrayShapeOf<Sc>] extends [never]
+    ? AppOf<F>
+    : ArrayShapeOf<Sc> extends infer ENS extends Shape
+      ? CreateShape<ENS>[]
+      : AppOf<F>
+  : ShapeOf<Sc> extends infer NS extends Shape
+    ? CreateShape<NS>
+    : AppOf<F>;
+
 type CreateOptional<S extends Shape, K extends keyof S> = K extends "id"
   ? true
   : "create" extends FlagsOf<S[K]>
     ? true
     : InputOptional<S[K]>;
-// Public create input: internal fields are never settable by clients.
+// Public create input: internal fields are never settable by clients. Field VALUES use
+// `CreateValue` so a nested `sz.object`'s own create-optional fields (a nested `$default`)
+// are optional too — while `CreateOptional` (the `?` modifier) is unchanged.
 type CreateShape<S extends Shape> = Prettify<
   {
     [K in keyof S as IsInternal<S[K]> extends true
       ? never
       : CreateOptional<S, K> extends true
         ? never
-        : K]: AppOf<S[K]>;
+        : K]: CreateValue<S[K]>;
   } & {
     [K in keyof S as IsInternal<S[K]> extends true
       ? never
       : CreateOptional<S, K> extends true
         ? K
-        : never]?: AppOf<S[K]>;
+        : never]?: CreateValue<S[K]>;
   }
 >;
 // System create input: includes internal fields (the old, all-fields behavior).
 type CreateShapeAll<S extends Shape> = Prettify<
-  { [K in keyof S as CreateOptional<S, K> extends true ? never : K]: AppOf<S[K]> } & {
-    [K in keyof S as CreateOptional<S, K> extends true ? K : never]?: AppOf<S[K]>;
+  { [K in keyof S as CreateOptional<S, K> extends true ? never : K]: CreateValue<S[K]> } & {
+    [K in keyof S as CreateOptional<S, K> extends true ? K : never]?: CreateValue<S[K]>;
   }
 >;
 
@@ -747,17 +923,35 @@ type UpdateExcluded<S extends Shape, K extends keyof S> = K extends "id"
   : "readonly" extends FlagsOf<S[K]>
     ? true
     : false;
-// Public update input: internal fields are excluded.
+/**
+ * The update-input VALUE type for a field — a DEEP partial, since `MERGE` recursively
+ * deep-merges nested objects (so any subset of nested keys is a valid patch). A nested
+ * `sz.object` recurses into its own `UpdateShape` (every nested field optional); an array
+ * of `sz.object` becomes that update-shape's array; everything else is the plain app type
+ * (`AppOf`). The `[X] extends [never]` guards mirror `CreateValue` (so scalar fields don't
+ * wrongly match the object branch via `never extends Shape`).
+ */
+type UpdateValue<F, Sc = SchemaOf<F>> = [ShapeOf<Sc>] extends [never]
+  ? [ArrayShapeOf<Sc>] extends [never]
+    ? AppOf<F>
+    : ArrayShapeOf<Sc> extends infer ENS extends Shape
+      ? UpdateShape<ENS>[]
+      : AppOf<F>
+  : ShapeOf<Sc> extends infer NS extends Shape
+    ? UpdateShape<NS>
+    : AppOf<F>;
+// Public update input: internal fields are excluded. Field VALUES use `UpdateValue` so a
+// nested `sz.object` is itself a deep partial (every nested key optional), matching MERGE.
 type UpdateShape<S extends Shape> = Prettify<{
   [K in keyof S as IsInternal<S[K]> extends true
     ? never
     : UpdateExcluded<S, K> extends true
       ? never
-      : K]?: AppOf<S[K]>;
+      : K]?: UpdateValue<S[K]>;
 }>;
 // System update input: includes internal fields (the old, all-fields behavior).
 type UpdateShapeAll<S extends Shape> = Prettify<{
-  [K in keyof S as UpdateExcluded<S, K> extends true ? never : K]?: AppOf<S[K]>;
+  [K in keyof S as UpdateExcluded<S, K> extends true ? never : K]?: UpdateValue<S[K]>;
 }>;
 
 /** A Zod-style non-throwing result: `{ success: true; data }` | `{ success: false; error }`
@@ -845,21 +1039,17 @@ export class TableDef<Name extends string, S extends Shape> {
    * aggregated (with correct paths) into a single `z.ZodError`.
    */
   safeMake(input: CreateShape<S>): SafeResult<MakeWire<S>> {
-    return this.safeEncodeProvided(input as Record<string, unknown>) as SafeResult<MakeWire<S>>;
+    return safeEncodeFields(
+      this.fields as unknown as Record<string, AnyField>,
+      input as Record<string, unknown>,
+    ) as SafeResult<MakeWire<S>>;
   }
   /** Non-throwing `makePartial` (see `safeMake`). */
   safeMakePartial(input: UpdateShape<S>): SafeResult<MakeWire<S>> {
-    return this.safeEncodeProvided(input as Record<string, unknown>) as SafeResult<MakeWire<S>>;
-  }
-  /** Compose a `z.object` from the PROVIDED keys' field schemas and `safeEncode` it, so Zod
-   * aggregates every field error (with correct paths) into one `z.ZodError`. */
-  private safeEncodeProvided(input: Record<string, unknown>): z.ZodSafeParseResult<unknown> {
-    const shape: Record<string, z.ZodType> = {};
-    for (const k of Object.keys(input)) {
-      const f = (this.fields as unknown as Record<string, AnyField>)[k];
-      if (f) shape[k] = f.schema;
-    }
-    return z.safeEncode(z.object(shape), input as never);
+    return safeEncodeFields(
+      this.fields as unknown as Record<string, AnyField>,
+      input as Record<string, unknown>,
+    ) as SafeResult<MakeWire<S>>;
   }
 
   /**
@@ -998,21 +1188,15 @@ export class SystemView<Name extends string, S extends Shape> {
   }
   /** Non-throwing `make` over ALL fields (see `TableDef.safeMake`). */
   safeMake(input: CreateShapeAll<S>): SafeResult<MakeWireAll<S>> {
-    return this.safeEncodeProvided(input as Record<string, unknown>) as SafeResult<MakeWireAll<S>>;
+    return safeEncodeFields(this.fields, input as Record<string, unknown>) as SafeResult<
+      MakeWireAll<S>
+    >;
   }
   /** Non-throwing `makePartial` over ALL fields. */
   safeMakePartial(input: UpdateShapeAll<S>): SafeResult<MakeWireAll<S>> {
-    return this.safeEncodeProvided(input as Record<string, unknown>) as SafeResult<MakeWireAll<S>>;
-  }
-  /** See `TableDef.safeEncodeProvided` — composes a `z.object` from the provided keys and
-   * `safeEncode`s it so Zod aggregates field errors into one `z.ZodError`. */
-  private safeEncodeProvided(input: Record<string, unknown>): z.ZodSafeParseResult<unknown> {
-    const shape: Record<string, z.ZodType> = {};
-    for (const k of Object.keys(input)) {
-      const f = this.fields[k];
-      if (f) shape[k] = f.schema;
-    }
-    return z.safeEncode(z.object(shape), input as never);
+    return safeEncodeFields(this.fields, input as Record<string, unknown>) as SafeResult<
+      MakeWireAll<S>
+    >;
   }
 }
 

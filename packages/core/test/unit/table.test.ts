@@ -50,6 +50,100 @@ describe("make / makePartial", () => {
   });
 });
 
+describe("nested create-optionality (runtime)", () => {
+  const Widget = table("widget", {
+    id: z.string(),
+    settings: sz.object({
+      theme: sz.string().$default(surql`"x"`),
+      tz: sz.string(),
+      lastSeen: sz.datetime().optional(),
+    }),
+  });
+
+  test("make omits an absent nested defaulted field so the DB fills it", () => {
+    const payload = Widget.make({ settings: { tz: "utc" } });
+    expect(Object.keys(payload)).toEqual(["settings"]);
+    const settings = payload.settings as Record<string, unknown>;
+    expect(settings).not.toHaveProperty("theme");
+    expect(Object.keys(settings)).toEqual(["tz"]);
+    expect(settings.tz).toBe("utc");
+  });
+
+  test("make includes a provided nested field and encodes nested codecs", () => {
+    const payload = Widget.make({
+      settings: { tz: "utc", theme: "dark", lastSeen: new Date("2022-01-01T00:00:00.000Z") },
+    });
+    const settings = payload.settings as Record<string, unknown>;
+    expect(Object.keys(settings).sort()).toEqual(["lastSeen", "theme", "tz"]);
+    expect(settings.theme).toBe("dark");
+    // nested datetime codec still encoded through the recursion
+    expect(settings.lastSeen).toBeInstanceOf(DateTime);
+  });
+
+  test("makePartial encodes the full nested object (no sibling dropped)", () => {
+    const patch = Widget.makePartial({ settings: { theme: "dark", tz: "utc" } });
+    const settings = patch.settings as Record<string, unknown>;
+    expect(Object.keys(settings).sort()).toEqual(["theme", "tz"]);
+    expect(settings.theme).toBe("dark");
+    expect(settings.tz).toBe("utc");
+  });
+
+  test("array<object>: absent nested defaults are omitted per element", () => {
+    const List = table("list", {
+      id: z.string(),
+      tags: sz.object({ name: sz.string(), color: sz.string().$default("#fff") }).array(),
+    });
+    const payload = List.make({ tags: [{ name: "a" }, { name: "b", color: "#000" }] });
+    const tags = payload.tags as Record<string, unknown>[];
+    expect(tags[0]).not.toHaveProperty("color");
+    expect(Object.keys(tags[0]!)).toEqual(["name"]);
+    expect(tags[1]!.color).toBe("#000");
+  });
+
+  test("makePartial is deep-partial: a partial nested object round-trips (no sibling added)", () => {
+    // MERGE deep-merges, so a single nested key is a valid patch — and only it is emitted.
+    const patch = Widget.makePartial({ settings: { theme: "dark" } });
+    expect(Object.keys(patch)).toEqual(["settings"]);
+    expect(patch.settings as Record<string, unknown>).toEqual({ theme: "dark" });
+  });
+});
+
+describe("make / safeMake agreement on nested input (Fix 1)", () => {
+  const T = table("nested", {
+    id: z.string(),
+    settings: sz.object({ theme: sz.string().$default(surql`"x"`), tz: sz.string() }),
+  });
+  // Mirror helper: did `make` throw for this input?
+  const makeThrew = (input: Parameters<typeof T.make>[0]) => {
+    try {
+      T.make(input);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  test("a nested-partial input: make accepts and safeMake agrees (same data)", () => {
+    const input = { settings: { tz: "utc" } } as const;
+    expect(makeThrew(input)).toBe(false);
+    const res = T.safeMake(input);
+    expect(res.success).toBe(true);
+    if (res.success) expect(res.data as Record<string, unknown>).toEqual({ settings: { tz: "utc" } });
+  });
+
+  test("an invalid nested field: make throws and safeMake agrees (rejects, correct path)", () => {
+    // tz must be a string — both paths must reject.
+    const input = { settings: { tz: 123 } } as unknown as Parameters<typeof T.make>[0];
+    expect(makeThrew(input)).toBe(true);
+    const res = T.safeMake(input);
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error).toBeInstanceOf(z.ZodError);
+      expect(res.error.issues.map((i) => i.path.join("."))).toContain("settings.tz");
+    }
+  });
+});
+
 describe("safeMake / make validation (#6, #7)", () => {
   const User = table("user", {
     id: z.string(),
