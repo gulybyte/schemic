@@ -49,6 +49,31 @@ type AppUser = App<typeof User>; // id: RecordId, createdAt: Date, ...
 See [`examples/`](./examples) for a full schema, a live demo (`bun examples/demo.ts`),
 and a small CRUD server.
 
+## Permissions
+
+Author row-level `PERMISSIONS` with `TableDef.permissions(spec)` and `SField.$permissions(spec)`.
+A `spec` is `true` (FULL) / `false` (NONE) / a `surql` `WHERE` expr (shared by every op) / a
+per-op object. In a per-op object each op is `true`/`false`/a `surql` expr, or `` `same as <op>` ``
+to reuse another op's rule; ops with an identical resolved rule auto-merge into one `FOR a, b …`
+clause. Table permissions cover `select`/`create`/`update`/`delete`; **fields have no `delete`** op.
+
+```ts
+table("project", {
+  owner: User.record().$default(surql`$auth.id`).$readonly(),
+  // ...
+}).permissions({
+  select: surql`owner = $auth.id OR settings.isPublic = true`,
+  create: surql`owner = $auth.id`,
+  update: "same as create",
+  delete: "same as create",
+});
+```
+
+Table permissions fold into the single generated `DEFINE TABLE` (no separate `OVERWRITE`).
+**Omitted-op asymmetry** (it mirrors SurrealDB's own defaults): an omitted op defaults to
+**NONE** (deny) on a *table* but to **FULL** on a *field* — the table is the gate, so to lock a
+field op you must set it `false` explicitly.
+
 ## Develop
 
 ```bash

@@ -36,6 +36,22 @@ export const surrealTypeRegistry = new WeakMap<z.ZodType, string>();
  */
 export const objectFieldsRegistry = new WeakMap<z.ZodType, Record<string, AnyField>>();
 
+/**
+ * Per-table/field row-level permissions. A `PermOp` is one access operation; `Perm` is
+ * the rule for one op — `true` (FULL) / `false` (NONE) / a `BoundQuery` (a `WHERE` expr) /
+ * `` `same as X` `` to reuse another op's resolved rule. A `TablePermissions` is a blanket
+ * rule, a shared `WHERE`, or per-op rules. Fields have NO `delete` op (verified against
+ * the DB), so they use `FieldPerm` / `FieldPermissions`.
+ */
+export type PermOp = "select" | "create" | "update" | "delete";
+export type Perm = boolean | BoundQuery | `same as ${PermOp}`;
+export type TablePermissions = boolean | BoundQuery | Partial<Record<PermOp, Perm>>;
+export type FieldPerm = boolean | BoundQuery | "same as select" | "same as create" | "same as update";
+export type FieldPermissions =
+  | boolean
+  | BoundQuery
+  | Partial<Record<"select" | "create" | "update", FieldPerm>>;
+
 /** SurrealQL DDL metadata — the `$`-prefixed field options. */
 export interface SurrealMeta {
   default?: BoundQuery;
@@ -44,6 +60,9 @@ export interface SurrealMeta {
   assert?: BoundQuery;
   readonly?: boolean;
   comment?: string;
+  /** Field-level `PERMISSIONS` (no `delete` op). Omitted ops default to FULL in
+   * SurrealDB — the table is the gate; set an op `false` to lock it. See `.$permissions()`. */
+  permissions?: FieldPermissions;
   /** DB-managed, client-hidden: still emits DEFINE FIELD (+ PERMISSIONS NONE) but is
    * excluded from the public app/create/update surface. See `.$internal()` / `.system`. */
   internal?: boolean;
@@ -153,6 +172,10 @@ export class SField<S extends z.ZodType = z.ZodType, Flags extends string = neve
   }
   $assert(expr: BoundQuery): SField<S, Flags> {
     return new SField(this.schema, { ...this.surreal, assert: expr });
+  }
+  /** Set field-level `PERMISSIONS` (no `delete` op). Omitted ops default to FULL. */
+  $permissions(spec: FieldPermissions): SField<S, Flags> {
+    return new SField(this.schema, { ...this.surreal, permissions: spec });
   }
   $readonly(readonly = true): SField<S, Flags | "readonly"> {
     return new SField(this.schema, { ...this.surreal, readonly });
@@ -472,6 +495,8 @@ export interface TableConfig {
   schemafull: boolean;
   drop?: boolean;
   comment?: string;
+  /** Table-level `PERMISSIONS`. Omitted ops default to NONE in SurrealDB. See `.permissions()`. */
+  permissions?: TablePermissions;
   relation?: { from: string[]; to: string[] };
 }
 
@@ -635,6 +660,10 @@ export class TableDef<Name extends string, S extends Shape> {
   }
   comment(comment: string) {
     return this.withConfig({ comment });
+  }
+  /** Set table-level `PERMISSIONS` (folded into the single `DEFINE TABLE` head). */
+  permissions(spec: TablePermissions) {
+    return this.withConfig({ permissions: spec });
   }
 
   // --- Shape ops (mirror Zod's object methods; carry DDL metadata + config) ---

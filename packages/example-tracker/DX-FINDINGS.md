@@ -41,20 +41,21 @@ tool) · Medium (notable friction, easy to trip on) · Low (polish).
 
 ## Gaps & friction
 
-### 1. No generation for `DEFINE ACCESS` or `PERMISSIONS` — High
-The whole point of a browser-direct app is record access + row-level permissions, and the
-package generates **none** of it. `defineTable`/`defineField` cover TABLE/FIELD only. I had
-to hand-write, as raw SurrealQL in `setup.ts`:
-- `DEFINE ACCESS account ON DATABASE TYPE RECORD` with `SIGNUP`/`SIGNIN` blocks;
-- per-table `PERMISSIONS FOR select/create/update/delete`;
-- a field-level `PERMISSIONS NONE` (see #2).
+### 1. No generation for `DEFINE ACCESS` or `PERMISSIONS` — High — PARTIAL
+PARTIAL: table + field `PERMISSIONS` are now generated. `TableDef.permissions(spec)` and
+`SField.$permissions(spec)` take `true` (FULL) / `false` (NONE) / a `surql` `WHERE` expr /
+per-op rules, where an op can be `` `same as <op>` `` to reuse another op's rule; ops with an
+identical resolved rule auto-merge into one `FOR a, b …` clause. The tracker's seven tables
+now author their row-level rules in `src/schema.ts`; the raw `DEFINE TABLE OVERWRITE … PERMISSIONS`
+blocks are gone from `setup.ts`, and the 12 live tests (incl. the isolation checks) still pass.
+NOTE the intentional asymmetry: an omitted op defaults to NONE on a table (deny) but to FULL
+on a field (the table is the gate) — to lock a field op, set it `false`.
 
-For the flagship "Zod-authored SurrealDB schema" use case this is a large hole — the schema
-is only ~60% of what you must ship.
-**Suggestion:** a permissions DSL on `TableDef` (e.g. `.permissions({ select: surql\`...\`,
-create, update, delete })`) and a field `.$permissions(...)`, plus a `defineAccess(...)`
-helper for record access. Even accepting a raw permissions string that `defineTable` inlines
-would remove the workaround below.
+STILL OPEN: `DEFINE ACCESS account ON DATABASE TYPE RECORD` (the `SIGNUP`/`SIGNIN` blocks) is
+still hand-written raw SurrealQL in `setup.ts` — there is no `defineAccess(...)` helper yet.
+The field-level `PERMISSIONS NONE` for `passhash` is generated (see #2). So the remaining hole
+is record access; the schema is no longer only ~60% of what you ship.
+**Suggestion:** add a `defineAccess(...)` helper for record access to close this out.
 
 ### 2. Internal / write-only / hidden fields can't be modeled — High — RESOLVED
 RESOLVED: fields now take a `.$internal()` modifier. It (a) still emits the `DEFINE FIELD`
@@ -77,7 +78,12 @@ silently un-modeled.
 the `DEFINE FIELD` (so SCHEMAFULL writes succeed), (b) emits `PERMISSIONS FOR select NONE`,
 and (c) is excluded from `App`/`Create`/`Update` inference.
 
-### 3. Attaching PERMISSIONS forces a full-table `OVERWRITE` that drops other config — Medium
+### 3. Attaching PERMISSIONS forces a full-table `OVERWRITE` that drops other config — Medium — RESOLVED
+RESOLVED: permissions are now part of `TableConfig` (via `.permissions(...)`), so they are
+folded into the single `DEFINE TABLE` that `defineTable` emits — right after `COMMENT`, in the
+same statement as `TYPE`/`SCHEMAFULL`. No second `DEFINE TABLE OVERWRITE` is needed, so nothing
+has to be restated or kept in sync; a relation keeps its `TYPE RELATION FROM..TO` automatically.
+
 Because permissions aren't part of `TableDef`, the only way to add them after
 `defineTable(..., { exists: "overwrite" })` is a second `DEFINE TABLE OVERWRITE <name> ...
 PERMISSIONS ...`. `OVERWRITE` replaces the whole table definition, so I had to **restate**
@@ -170,8 +176,8 @@ pattern or a tiny `X.decode`-over-`LiveMessage` helper would round out the clien
 
 | # | Finding | Severity |
 |---|---------|----------|
-| 1 | No `DEFINE ACCESS` / `PERMISSIONS` generation | High |
+| 1 | No `DEFINE ACCESS` / `PERMISSIONS` generation — PARTIAL: table/field `PERMISSIONS` now generated (`.permissions` / `.$permissions`); `DEFINE ACCESS` still raw | High |
 | 2 | ~~Can't model internal/hidden fields (e.g. `passhash`) without leaking into `App`~~ — RESOLVED via `.$internal()` + `.system` | High |
-| 3 | Adding permissions forces a full table `OVERWRITE` that restates TYPE/SCHEMAFULL/COMMENT | Medium |
+| 3 | ~~Adding permissions forces a full table `OVERWRITE` that restates TYPE/SCHEMAFULL/COMMENT~~ — RESOLVED: folded into the single `DEFINE TABLE` | Medium |
 | 4 | Zod format refinements (email/url/min/regex) don't become DB `ASSERT`s | Medium |
 | 5 | `$value` (computed) fields are required in `Create`/`make()` input | Medium |

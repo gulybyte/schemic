@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { surql } from "surrealdb";
-import { defineField, defineTable } from "../../src/ddl";
+import { defineField, defineTable, renderPermissions } from "../../src/ddl";
 import { relation, SField, sz, table, type Shape, type TableDef } from "../../src/pure";
 
 /** DDL for a single standalone field `x` on table `t`. */
@@ -338,6 +338,133 @@ describe("defineTable", () => {
       const Multi = relation("rel").from([A, Tag]).to(B);
       expect(defineTable(Multi as TableDef<string, Shape>).split("\n")[0]).toBe(
         "DEFINE TABLE rel TYPE RELATION FROM user | tag TO post SCHEMAFULL;",
+      );
+    });
+  });
+});
+
+describe("PERMISSIONS", () => {
+  /** The first line (table head) of a table's DDL. */
+  const head = (t: TableDef<string, Shape>) => defineTable(t).split("\n")[0];
+  const tbl = (perms: Parameters<TableDef<string, Shape>["permissions"]>[0]) =>
+    table("t", { name: sz.string() }).permissions(perms);
+
+  describe("renderPermissions algorithm (4 table ops)", () => {
+    const ops = ["select", "create", "update", "delete"] as const;
+
+    test("true -> FULL, false -> NONE", () => {
+      expect(renderPermissions(true, ops)).toBe("PERMISSIONS FULL");
+      expect(renderPermissions(false, ops)).toBe("PERMISSIONS NONE");
+    });
+
+    test("a BoundQuery is shared by all ops", () => {
+      expect(renderPermissions(surql`owner = $auth.id`, ops)).toBe(
+        "PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id",
+      );
+    });
+
+    test("object with per-op rules emits one clause per op", () => {
+      expect(
+        renderPermissions(
+          {
+            select: surql`$auth.id != NONE`,
+            create: false,
+            update: surql`id = $auth.id`,
+            delete: surql`id = $auth.id`,
+          },
+          ops,
+        ),
+      ).toBe(
+        "PERMISSIONS FOR select WHERE $auth.id != NONE FOR create NONE FOR update, delete WHERE id = $auth.id",
+      );
+    });
+
+    test("`same as X` reuses X's resolved rule and merges with it", () => {
+      expect(renderPermissions({ select: surql`A`, update: "same as select" }, ops)).toBe(
+        "PERMISSIONS FOR select, update WHERE A",
+      );
+    });
+
+    test("two identical BoundQuery exprs auto-merge into one FOR clause", () => {
+      expect(
+        renderPermissions({ select: surql`owner = $auth.id`, create: surql`owner = $auth.id` }, ops),
+      ).toBe("PERMISSIONS FOR select, create WHERE owner = $auth.id");
+    });
+
+    test("omitted ops emit nothing; an empty object emits no clause at all", () => {
+      expect(renderPermissions({ select: surql`A` }, ops)).toBe("PERMISSIONS FOR select WHERE A");
+      expect(renderPermissions({}, ops)).toBe("");
+    });
+
+    test('`same as <absent op>` is a clear runtime error', () => {
+      expect(() => renderPermissions({ select: "same as delete" }, ops)).toThrow(
+        /references op "delete", which is not in the spec/,
+      );
+    });
+
+    test("a `same as` reference cycle is a clear runtime error", () => {
+      expect(() =>
+        renderPermissions({ select: "same as update", update: "same as select" }, ops),
+      ).toThrow(/reference cycle/);
+    });
+  });
+
+  describe("table wiring (folded into the single DEFINE TABLE head)", () => {
+    test(".permissions(true) -> PERMISSIONS FULL on the head", () => {
+      expect(head(tbl(true))).toBe("DEFINE TABLE t TYPE NORMAL SCHEMAFULL PERMISSIONS FULL;");
+    });
+
+    test(".permissions(false) -> PERMISSIONS NONE", () => {
+      expect(head(tbl(false))).toBe("DEFINE TABLE t TYPE NORMAL SCHEMAFULL PERMISSIONS NONE;");
+    });
+
+    test("a shared BoundQuery covers all four ops, after COMMENT", () => {
+      const T = table("t", { name: sz.string() })
+        .comment("notes")
+        .permissions(surql`owner = $auth.id`);
+      expect(head(T)).toBe(
+        `DEFINE TABLE t TYPE NORMAL SCHEMAFULL COMMENT "notes" PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id;`,
+      );
+    });
+
+    test("per-op object with `same as` merge", () => {
+      const T = tbl({
+        select: surql`$auth.id != NONE`,
+        create: false,
+        update: surql`id = $auth.id`,
+        delete: "same as update",
+      });
+      expect(head(T)).toBe(
+        "DEFINE TABLE t TYPE NORMAL SCHEMAFULL PERMISSIONS FOR select WHERE $auth.id != NONE FOR create NONE FOR update, delete WHERE id = $auth.id;",
+      );
+    });
+  });
+
+  describe("field wiring (3 ops, no delete)", () => {
+    test("blanket BoundQuery covers select, create, update only", () => {
+      expect(ddl(sz.string().$permissions(surql`published = true`))).toBe(
+        "DEFINE FIELD x ON TABLE t TYPE string PERMISSIONS FOR select, create, update WHERE published = true;",
+      );
+    });
+
+    test("an omitted field op stays unemitted (defaults to FULL in the DB)", () => {
+      expect(ddl(sz.string().$permissions({ select: surql`published = true`, update: false }))).toBe(
+        "DEFINE FIELD x ON TABLE t TYPE string PERMISSIONS FOR select WHERE published = true FOR update NONE;",
+      );
+    });
+
+    test("$permissions(false) / (true) -> NONE / FULL", () => {
+      expect(ddl(sz.string().$permissions(false))).toBe(
+        "DEFINE FIELD x ON TABLE t TYPE string PERMISSIONS NONE;",
+      );
+      expect(ddl(sz.string().$permissions(true))).toBe(
+        "DEFINE FIELD x ON TABLE t TYPE string PERMISSIONS FULL;",
+      );
+    });
+
+    test("an $internal() field still emits PERMISSIONS NONE (internal wins over $permissions)", () => {
+      expect(ddl(sz.string().$internal().$permissions({ select: surql`x` }))).toBe(
+        "DEFINE FIELD x ON TABLE t TYPE string PERMISSIONS NONE;",
       );
     });
   });

@@ -1,12 +1,15 @@
 import { z } from "zod";
-import { escapeIdent, toSurqlString, type BoundQuery } from "surrealdb";
+import { BoundQuery, escapeIdent, toSurqlString } from "surrealdb";
 import {
   objectFieldsRegistry,
   surrealTypeRegistry,
+  type FieldPermissions,
+  type PermOp,
   type SField,
   type Shape,
   type SurrealMeta,
   type TableDef,
+  type TablePermissions,
 } from "./pure";
 
 /** Inline a BoundQuery's bindings into a literal SurrealQL string for DDL use. */
@@ -184,6 +187,67 @@ function existsPrefix(opts?: DefineOptions): string {
       : "";
 }
 
+/**
+ * Render a `PERMISSIONS …` clause for a table or field from a permissions spec. `ops` is
+ * the canonical op set: `["select","create","update","delete"]` for tables,
+ * `["select","create","update"]` for fields (fields have no `delete`).
+ *
+ *   - `true`  -> `PERMISSIONS FULL`
+ *   - `false` -> `PERMISSIONS NONE`
+ *   - a `BoundQuery` -> every op shares it: `PERMISSIONS FOR <all ops> WHERE <expr>`
+ *   - an object  -> 1. resolve each present op to a concrete rule (`boolean | BoundQuery`);
+ *     a `` `same as X` `` reuses X's resolved rule (errors if X is absent or on a cycle).
+ *     2. merge ops whose resolved rule is identical (booleans by `===`, BoundQuery by its
+ *     `inline()`-ed string) into one `FOR a, b … <rule>` clause, in canonical op order.
+ *
+ * Omitted ops emit nothing — and the SurrealDB defaults for an omitted op are intentionally
+ * ASYMMETRIC: a TABLE defaults it to NONE (deny), a FIELD defaults it to FULL (the table is
+ * the gate). So to lock a field op you must set it `false` explicitly.
+ */
+export function renderPermissions(
+  spec: TablePermissions | FieldPermissions,
+  ops: readonly PermOp[],
+): string {
+  if (spec === true) return "PERMISSIONS FULL";
+  if (spec === false) return "PERMISSIONS NONE";
+  if (spec instanceof BoundQuery) return `PERMISSIONS FOR ${ops.join(", ")} WHERE ${inline(spec)}`;
+
+  const rules = spec as Partial<Record<PermOp, boolean | BoundQuery | string>>;
+  const present = ops.filter((op) => rules[op] !== undefined);
+  const resolved = new Map<PermOp, boolean | BoundQuery>();
+
+  // Resolve an op's rule, following `same as X` references; `chain` detects cycles.
+  const resolve = (op: PermOp, chain: PermOp[]): boolean | BoundQuery => {
+    const cached = resolved.get(op);
+    if (cached !== undefined) return cached;
+    const rule = rules[op];
+    if (rule === undefined) {
+      throw new Error(`PERMISSIONS: "same as ${op}" references op "${op}", which is not in the spec`);
+    }
+    if (chain.includes(op)) {
+      throw new Error(`PERMISSIONS: "same as" reference cycle: ${[...chain, op].join(" -> ")}`);
+    }
+    const value =
+      typeof rule === "string"
+        ? resolve(rule.slice("same as ".length).trim() as PermOp, [...chain, op])
+        : rule;
+    resolved.set(op, value);
+    return value;
+  };
+
+  // Group present ops by their resolved rule's clause body (canonical order preserved).
+  const groups = new Map<string, PermOp[]>();
+  for (const op of present) {
+    const rule = resolve(op, []);
+    const body = rule === true ? "FULL" : rule === false ? "NONE" : `WHERE ${inline(rule)}`;
+    const group = groups.get(body);
+    if (group) group.push(op);
+    else groups.set(body, [op]);
+  }
+  const clauses = [...groups].map(([body, group]) => `FOR ${group.join(", ")} ${body}`);
+  return clauses.length ? `PERMISSIONS ${clauses.join(" ")}` : "";
+}
+
 /** Emit `DEFINE FIELD path ...` for a node, then recurse into its children. */
 function emit(
   path: string,
@@ -210,8 +274,13 @@ function emit(
   if (surreal?.readonly) parts.push("READONLY");
   if (surreal?.comment) parts.push(`COMMENT ${JSON.stringify(surreal.comment)}`);
   // Internal fields still exist on the table (so SCHEMAFULL writes succeed) but grant
-  // no record-user access.
-  if (surreal?.internal) parts.push("PERMISSIONS NONE");
+  // no record-user access — internal wins over any `$permissions` on the same field.
+  if (surreal?.internal) {
+    parts.push("PERMISSIONS NONE");
+  } else if (surreal?.permissions !== undefined) {
+    const clause = renderPermissions(surreal.permissions, ["select", "create", "update"]);
+    if (clause) parts.push(clause);
+  }
   lines.push(`${parts.join(" ")};`);
 
   for (const child of info.children) {
@@ -244,6 +313,11 @@ export function defineTable(t: TableDef<string, Shape>, opts?: DefineOptions): s
   if (t.config.drop) head.push("DROP");
   head.push(t.config.schemafull ? "SCHEMAFULL" : "SCHEMALESS");
   if (t.config.comment) head.push(`COMMENT ${JSON.stringify(t.config.comment)}`);
+  // Fold permissions into the single DEFINE TABLE head (no separate OVERWRITE … PERMISSIONS).
+  if (t.config.permissions !== undefined) {
+    const clause = renderPermissions(t.config.permissions, ["select", "create", "update", "delete"]);
+    if (clause) head.push(clause);
+  }
 
   const lines = [`${head.join(" ")};`];
   for (const [name, field] of Object.entries(t.fields)) {
