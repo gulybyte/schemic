@@ -34,24 +34,70 @@ function tsFiles(dir: string): string[] {
   return out;
 }
 
+/** The schema module file(s) for a path: the file itself, or every module under the directory. */
+function schemaFiles(path: string): string[] {
+  return statSync(path).isFile() ? [path] : tsFiles(path);
+}
+
+/** Import a schema module file and yield its exported tables/relations, paired with the file. */
+async function* tablesIn(
+  jiti: ReturnType<typeof makeJiti>,
+  file: string,
+): AsyncGenerator<AnyTable> {
+  const mod = (await jiti.import(file)) as Record<string, unknown>;
+  for (const value of Object.values(mod)) if (isTableDef(value)) yield value;
+}
+
 /**
- * Load every schema module under `schemaDir` and return its tables/relations, ordered with
- * normal tables before relations (and by name) for stable, dependency-friendly DDL.
+ * Load every schema from `schemaPath` (a single `.ts` module, or a directory of them) and return
+ * its tables/relations, ordered with normal tables before relations (and by name) for stable,
+ * dependency-friendly DDL.
  */
-export async function loadSchemas(schemaDir: string): Promise<AnyTable[]> {
-  if (!existsSync(schemaDir)) {
-    throw new Error(`Schema directory not found: ${schemaDir}`);
+export async function loadSchemas(schemaPath: string): Promise<AnyTable[]> {
+  if (!existsSync(schemaPath)) {
+    throw new Error(`Schema path not found: ${schemaPath}`);
   }
   const jiti = makeJiti();
   const defs = new Map<string, AnyTable>();
-  for (const file of tsFiles(schemaDir)) {
-    const mod = (await jiti.import(file)) as Record<string, unknown>;
-    for (const value of Object.values(mod)) {
-      if (isTableDef(value)) defs.set(value.name, value); // last definition of a name wins
-    }
+  for (const file of schemaFiles(schemaPath)) {
+    for await (const t of tablesIn(jiti, file)) defs.set(t.name, t); // last def of a name wins
   }
   const rank = (t: AnyTable) => (t.config.relation ? 1 : 0);
   return [...defs.values()].sort(
     (a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name),
   );
+}
+
+/** Map of table name → the file that defines it (for `pull`'s duplicate-definition check). */
+export async function existingTables(
+  schemaPath: string,
+): Promise<Map<string, string>> {
+  if (!existsSync(schemaPath)) return new Map();
+  const jiti = makeJiti();
+  const out = new Map<string, string>();
+  for (const file of schemaFiles(schemaPath)) {
+    for await (const t of tablesIn(jiti, file)) out.set(t.name, file);
+  }
+  return out;
+}
+
+/**
+ * Names defined in more than one place, mapped to the files that define them (a file repeats if it
+ * defines the same name twice). `loadSchemas` silently lets the last definition win, so this is how
+ * `doctor` surfaces the otherwise-invisible conflict.
+ */
+export async function duplicateTables(
+  schemaPath: string,
+): Promise<Map<string, string[]>> {
+  if (!existsSync(schemaPath)) return new Map();
+  const jiti = makeJiti();
+  const seen = new Map<string, string[]>();
+  for (const file of schemaFiles(schemaPath)) {
+    for await (const t of tablesIn(jiti, file)) {
+      const files = seen.get(t.name);
+      if (files) files.push(file);
+      else seen.set(t.name, [file]);
+    }
+  }
+  return new Map([...seen].filter(([, files]) => files.length > 1));
 }

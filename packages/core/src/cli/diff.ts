@@ -6,7 +6,7 @@ import {
 } from "surreal-zod";
 import type { Snapshot } from "./meta";
 import type { AnyTable } from "./schema";
-import { plural, style } from "./style";
+import { colorEnabled, plural, style } from "./style";
 
 const keyOf = (s: Pick<DefineStatement, "kind" | "name" | "table">) =>
   `${s.kind}:${s.table ?? ""}:${s.name}`;
@@ -20,10 +20,19 @@ export function buildSnapshot(defs: AnyTable[]): Snapshot {
   return { version: 1, statements };
 }
 
-/** One object's change, for display: `add`/`remove` carry the DDL; `change` pairs old↔new. */
-export type DiffItem = { key: string; table: string } & (
+/**
+ * One object's change, for display. `kind` is the object kind, `table` its owner (a table name,
+ * or the object's own name for db-level objects). `add` carries the new DDL; `remove` carries the
+ * `REMOVE` statement (`ddl`) plus the dropped object's prior DDL (`old`, for the unified patch);
+ * `change` pairs old↔new.
+ */
+export type DiffItem = {
+  key: string;
+  table: string;
+  kind: DefineStatement["kind"];
+} & (
   | { op: "add"; ddl: string }
-  | { op: "remove"; ddl: string }
+  | { op: "remove"; ddl: string; old: string }
   | { op: "change"; before: string; after: string }
 );
 
@@ -124,16 +133,24 @@ export function diffSnapshots(prev: Snapshot, next: Snapshot): Diff {
       sort: at(s),
       item: {
         op: "remove",
+        kind: s.kind,
         key: keyOf(s),
         table: tableOf(s),
         ddl: removeStatement(s),
+        old: s.ddl,
       },
     });
   }
   for (const s of added) {
     tagged.push({
       sort: at(s),
-      item: { op: "add", key: keyOf(s), table: tableOf(s), ddl: s.ddl },
+      item: {
+        op: "add",
+        kind: s.kind,
+        key: keyOf(s),
+        table: tableOf(s),
+        ddl: s.ddl,
+      },
     });
   }
   for (let i = 0; i < changedNew.length; i++) {
@@ -142,6 +159,7 @@ export function diffSnapshots(prev: Snapshot, next: Snapshot): Diff {
       sort: at(s),
       item: {
         op: "change",
+        kind: s.kind,
         key: keyOf(s),
         table: tableOf(s),
         before: changedOld[i].ddl,
@@ -220,22 +238,28 @@ export function tokenDiff(before: string, after: string): string {
           : Math.max(dp[i + 1][j], dp[i][j + 1]);
     }
   }
+  // With color: red/green/dim. Without (pipe / CI / NO_COLOR): git `--word-diff=plain` markers
+  // `[-removed-]`/`{+added+}` so removed-vs-added is unambiguous and assertable.
+  const colored = colorEnabled();
+  const del = (t: string) => (colored ? style.red(t) : `[-${t}-]`);
+  const ins = (t: string) => (colored ? style.green(t) : `{+${t}+}`);
+  const eq = (t: string) => (colored ? style.dim(t) : t);
   const out: string[] = [];
   let i = 0;
   let j = 0;
   while (i < m && j < n) {
     if (a[i] === b[j]) {
-      out.push(style.dim(a[i]));
+      out.push(eq(a[i]));
       i++;
       j++;
     } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      out.push(style.red(a[i++]));
+      out.push(del(a[i++]));
     } else {
-      out.push(style.green(b[j++]));
+      out.push(ins(b[j++]));
     }
   }
-  while (i < m) out.push(style.red(a[i++]));
-  while (j < n) out.push(style.green(b[j++]));
+  while (i < m) out.push(del(a[i++]));
+  while (j < n) out.push(ins(b[j++]));
   return out.join(" ");
 }
 
@@ -256,6 +280,70 @@ export function formatItems(items: DiffItem[]): string {
     prev = it.table;
   }
   return out.join("\n");
+}
+
+/**
+ * The diff-header label for a group, by the owner kind: table-scoped objects (table/field/index/
+ * event) → `Table: <name>`; db-level objects → `Function: …` / `Access: …` / etc. (capitalized
+ * kind). New object kinds slot in automatically.
+ */
+function groupLabel(kind: string, name: string): string {
+  const owner =
+    kind === "field" || kind === "index" || kind === "table" || kind === "event"
+      ? "Table"
+      : kind.charAt(0).toUpperCase() + kind.slice(1);
+  return `${owner}: ${name}`;
+}
+
+/**
+ * A standard **unified diff** of the change, grouped one section per object owner (a table, or a
+ * db-level function/access/…). Sections are labelled `Table: <name>` etc. — for piping through a
+ * diff viewer (git's pager / delta). Each object is a single-line DDL statement, so hunks are
+ * line-for-line.
+ */
+export function formatPatch(diff: Diff): string {
+  const items = diff.items ?? [];
+  if (!items.length) return "";
+  const order: string[] = [];
+  const byTable = new Map<string, DiffItem[]>();
+  for (const it of items) {
+    let group = byTable.get(it.table);
+    if (!group) {
+      group = [];
+      byTable.set(it.table, group);
+      order.push(it.table);
+    }
+    group.push(it);
+  }
+  const out: string[] = [];
+  for (const table of order) {
+    const group = byTable.get(table) ?? [];
+    const lines: string[] = [];
+    let dels = 0;
+    let adds = 0;
+    for (const it of group) {
+      if (it.op === "add") {
+        lines.push(`+${it.ddl}`);
+        adds++;
+      } else if (it.op === "remove") {
+        lines.push(`-${it.old}`);
+        dels++;
+      } else {
+        lines.push(`-${it.before}`, `+${it.after}`);
+        dels++;
+        adds++;
+      }
+    }
+    const label = groupLabel(group[0].kind, table);
+    out.push(
+      `diff --git a/${label} b/${label}`,
+      `--- a/${label}`,
+      `+++ b/${label}`,
+      `@@ -${dels ? 1 : 0},${dels} +${adds ? 1 : 0},${adds} @@`,
+      ...lines,
+    );
+  }
+  return `${out.join("\n")}\n`;
 }
 
 /** `--full`: the whole desired schema — unchanged dim, additions green, changes word-diffed. */

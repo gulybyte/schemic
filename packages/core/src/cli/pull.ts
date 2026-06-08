@@ -1,10 +1,13 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import type { Surreal } from "surrealdb";
 import type { ResolvedConfig } from "./config";
+import { existingTables } from "./schema";
 import {
   introspectStructured,
   type StructField,
+  type StructPerm,
+  type StructPermissions,
   type StructTable,
 } from "./structure";
 
@@ -18,6 +21,37 @@ interface ParsedField {
   readonly?: boolean;
   comment?: string;
   flexible?: boolean;
+  permissions?: StructPermissions;
+}
+
+/** A single permission op as a `.permissions()` argument value (`true`/`false`/a `surql` WHERE). */
+function permValue(v: StructPerm | undefined): string {
+  if (v === true) return "true";
+  if (v === false || v === undefined) return "false";
+  return `surql\`${v}\``;
+}
+
+/**
+ * The `.permissions(...)` / `.$permissions(...)` argument for a structured permission set, or null
+ * to omit it (when it matches the default: FULL for fields, NONE for tables). Collapses all-FULL →
+ * `true`, all-NONE → `false`, and one shared `WHERE` across every op → a single `surql` expr.
+ */
+function renderPerms(
+  perms: StructPermissions | undefined,
+  ops: (keyof StructPermissions)[],
+  defaultFull: boolean,
+): string | null {
+  if (!perms) return null;
+  const vals = ops.map((op) => perms[op]);
+  const allTrue = vals.every((v) => v === true);
+  const allFalse = vals.every((v) => v === false || v === undefined);
+  if (defaultFull ? allTrue : allFalse) return null; // matches the default
+  if (allTrue) return "true";
+  if (allFalse) return "false";
+  if (vals.every((v) => typeof v === "string") && new Set(vals).size === 1) {
+    return `surql\`${vals[0]}\``; // one WHERE shared by every op
+  }
+  return `{ ${ops.map((op) => `${op}: ${permValue(perms[op])}`).join(", ")} }`;
 }
 
 /**
@@ -43,6 +77,7 @@ function toParsed(f: StructField): ParsedField {
     readonly: f.readonly,
     comment: f.comment,
     flexible: f.flexible,
+    permissions: f.permissions,
   };
 }
 
@@ -80,7 +115,10 @@ function tableRefs(t: StructTable, pulled: Set<string>): Set<string> {
 }
 
 /** Everything reachable from `start` in the reference graph (excluding `start` itself). */
-function reachable(graph: Map<string, Set<string>>, start: string): Set<string> {
+function reachable(
+  graph: Map<string, Set<string>>,
+  start: string,
+): Set<string> {
   const seen = new Set<string>();
   const stack = [...(graph.get(start) ?? [])];
   while (stack.length) {
@@ -332,6 +370,12 @@ function renderField(node: FieldNode, indent: string, ctx?: RenderCtx): string {
     if (p.assert !== undefined) expr += `.$assert(surql\`${p.assert}\`)`;
     if (p.readonly) expr += ".$readonly()";
     if (p.comment) expr += `.$comment(${JSON.stringify(p.comment)})`;
+    const perm = renderPerms(
+      p.permissions,
+      ["select", "create", "update"],
+      true,
+    );
+    if (perm) expr += `.$permissions(${perm})`;
   }
   return expr;
 }
@@ -359,8 +403,11 @@ function wireEndpoints(names: string[], ctx: RenderCtx): string | null {
     : `[${resolved.join(", ")}]`;
 }
 
-/** Generate the TypeScript source of a single table's schema module from its structure. */
-function renderTable(t: StructTable, ctx: RenderCtx): string {
+/** Render just the `export const … = define…(…);` for one table (no import lines). */
+function renderTableConst(
+  t: StructTable,
+  ctx: RenderCtx,
+): { code: string; factory: string } {
   const isRelation = t.kind.kind === "RELATION";
   const fields = t.fields.map((f) => ({
     name: unescapeName(f.name),
@@ -396,6 +443,12 @@ function renderTable(t: StructTable, ctx: RenderCtx): string {
   // Common table config (applies to tables and relations alike).
   if (!t.schemafull) close += `\n  .schemaless()`;
   if (t.comment) close += `\n  .comment(${JSON.stringify(t.comment)})`;
+  const tperm = renderPerms(
+    t.permissions,
+    ["select", "create", "update", "delete"],
+    false,
+  );
+  if (tperm) close += `\n  .permissions(${tperm})`;
   for (const idx of t.indexes) {
     const cols = idx.cols.map((c) => JSON.stringify(c)).join(", ");
     const unique = idx.index === "UNIQUE" ? ", { unique: true }" : "";
@@ -403,7 +456,12 @@ function renderTable(t: StructTable, ctx: RenderCtx): string {
   }
   body.push(`${close};`);
 
-  const code = body.join("\n");
+  return { code: body.join("\n"), factory };
+}
+
+/** A full single-table module — cross-file imports + the const — for the directory layout. */
+function renderTableModule(t: StructTable, ctx: RenderCtx): string {
+  const { code, factory } = renderTableConst(t, ctx);
   const imports = [`import { sz, ${factory} } from "surreal-zod";`];
   // Cross-table value imports (one per referenced table, sorted, self excluded).
   for (const dep of [...ctx.imports].filter((d) => d !== t.name).sort()) {
@@ -414,12 +472,37 @@ function renderTable(t: StructTable, ctx: RenderCtx): string {
   return `${imports.join("\n")}\n\n${code}\n`;
 }
 
+/** Topologically sort so a table comes after every same-file table it references (deps first). */
+function topoSort<T extends { name: string; deps: string[] }>(items: T[]): T[] {
+  const byName = new Map(items.map((it) => [it.name, it]));
+  const out: T[] = [];
+  const done = new Set<string>();
+  const onStack = new Set<string>();
+  const visit = (it: T) => {
+    if (done.has(it.name) || onStack.has(it.name)) return;
+    onStack.add(it.name);
+    for (const dep of it.deps) {
+      const d = byName.get(dep);
+      if (d) visit(d);
+    }
+    onStack.delete(it.name);
+    done.add(it.name);
+    out.push(it);
+  };
+  for (const it of items) visit(it);
+  return out;
+}
+
 export interface PullResult {
   files: string[];
   skipped: string[];
 }
 
-/** Introspect the live database (via `INFO … STRUCTURE`) and write one `sz.*` file per table. */
+/**
+ * Introspect the live database (via `INFO … STRUCTURE`) and regenerate the `sz.*` schema. Writes
+ * one combined module when `config.schema` is a file, or one `<table>.ts` per table when it's a
+ * directory. Refuses (without `--force`) to overwrite existing files or duplicate definitions.
+ */
 export async function pull(
   db: Surreal,
   config: ResolvedConfig,
@@ -430,31 +513,117 @@ export async function pull(
     new Set([config.migrationsTable, `${config.migrationsTable}_lock`]),
   );
 
-  // Build the reference graph (record<…> targets + relation endpoints) for cycle-aware imports.
+  // Reference graph (record<…> targets + relation endpoints) → cycle-aware imports / ordering.
   const pulled = new Set(tables.map((t) => t.name));
   const graph = new Map(tables.map((t) => [t.name, tableRefs(t, pulled)]));
   const resolve = makeResolver(graph, pulled);
   const constOf = (n: string) => pascal(n) || n;
+  const makeCtx = (t: StructTable): RenderCtx => ({
+    table: t.name,
+    imports: new Set(),
+    usesSelf: false,
+    allowSelf: t.kind.kind !== "RELATION", // only defineTable takes the `self` callback
+    constOf,
+    resolve: (target) => resolve(t.name, target),
+  });
 
-  mkdirSync(config.schemaDir, { recursive: true });
+  return config.schemaIsFile
+    ? pullToFile(tables, config, opts, makeCtx)
+    : pullToDir(tables, config, opts, makeCtx);
+}
+
+/** Directory layout: one `<table>.ts` per table, refusing to duplicate tables defined elsewhere. */
+async function pullToDir(
+  tables: StructTable[],
+  config: ResolvedConfig,
+  opts: { force?: boolean },
+  makeCtx: (t: StructTable) => RenderCtx,
+): Promise<PullResult> {
+  const dir = config.schemaPath;
+  // A table already defined in some OTHER file (e.g. a multi-table `schema.ts`) would become a
+  // duplicate once we also write `<table>.ts` — refuse rather than create a silent "last wins".
+  const existing = await existingTables(dir);
+  const conflicts = tables
+    .map((t) => ({ name: t.name, file: existing.get(t.name) }))
+    .filter((c) => c.file && c.file !== join(dir, `${c.name}.ts`));
+  if (conflicts.length && !opts.force) {
+    // Group the offending tables by the file they're already defined in, so the message reads
+    // "schema.ts → a, b, c" once instead of repeating "(in schema.ts)" per table.
+    const byFile = new Map<string, string[]>();
+    for (const c of conflicts) {
+      const file = relative(dir, c.file as string);
+      const names = byFile.get(file);
+      if (names) names.push(c.name);
+      else byFile.set(file, [c.name]);
+    }
+    const lines = [...byFile]
+      .map(([file, names]) => `    ${file} → ${names.sort().join(", ")}`)
+      .join("\n");
+    const single = byFile.size === 1 ? [...byFile.keys()][0] : null;
+    const remedies = [
+      single
+        ? `    • point \`schema\` at ${single} (single-file layout) in surreal-zod.config.ts`
+        : "    • point `schema` at a single file (single-file layout) in surreal-zod.config.ts",
+      "    • clear those files and re-run pull into an empty directory",
+      "    • re-run with --force to overwrite",
+    ].join("\n");
+    throw new Error(
+      `pull would duplicate tables already defined elsewhere:\n${lines}\n\n` +
+        `  Directory mode writes one file per table. To resolve, either:\n${remedies}`,
+    );
+  }
+
+  mkdirSync(dir, { recursive: true });
   const files: string[] = [];
   const skipped: string[] = [];
   for (const t of tables) {
-    const file = join(config.schemaDir, `${t.name}.ts`);
+    const file = join(dir, `${t.name}.ts`);
     if (existsSync(file) && !opts.force) {
       skipped.push(`${t.name}.ts`);
       continue;
     }
-    const ctx: RenderCtx = {
-      table: t.name,
-      imports: new Set(),
-      usesSelf: false,
-      allowSelf: t.kind.kind !== "RELATION", // only defineTable takes the `self` callback
-      constOf,
-      resolve: (target) => resolve(t.name, target),
-    };
-    writeFileSync(file, renderTable(t, ctx));
+    writeFileSync(file, renderTableModule(t, makeCtx(t)));
     files.push(`${t.name}.ts`);
   }
   return { files, skipped };
+}
+
+/** Single-file layout: one combined module (tables ordered so same-file refs resolve). */
+async function pullToFile(
+  tables: StructTable[],
+  config: ResolvedConfig,
+  opts: { force?: boolean },
+  makeCtx: (t: StructTable) => RenderCtx,
+): Promise<PullResult> {
+  const target = config.schemaPath;
+  if (existsSync(target) && !opts.force) {
+    throw new Error(
+      `${relative(config.root, target)} already exists — use --force to overwrite it.`,
+    );
+  }
+  // Render each const (collecting its same-file direct deps via ctx.imports), then order so deps
+  // come first — same-file `Target.record()` refs need `Target` defined above them.
+  const rendered = tables.map((t) => {
+    const ctx = makeCtx(t);
+    const { code, factory } = renderTableConst(t, ctx);
+    return {
+      name: t.name,
+      code,
+      factory,
+      usesSurql: code.includes("surql`"),
+      deps: [...ctx.imports].filter((d) => d !== t.name),
+    };
+  });
+  const ordered = topoSort(rendered);
+  const factories = [...new Set(ordered.map((r) => r.factory))].sort();
+  const imports = [
+    `import { sz, ${factories.join(", ")} } from "surreal-zod";`,
+  ];
+  if (ordered.some((r) => r.usesSurql))
+    imports.push('import { surql } from "surrealdb";');
+  const out = `${imports.join("\n")}\n\n${ordered.map((r) => r.code).join("\n\n")}\n`;
+
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, out);
+  return { files: [relative(config.root, target)], skipped: [] };
 }

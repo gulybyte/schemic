@@ -1,7 +1,9 @@
 // Tiny ANSI styling, gated on a TTY and honoring NO_COLOR. No dependency.
-const useColor = () => Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+/** Whether colored output is enabled (a TTY and `NO_COLOR` unset). */
+export const colorEnabled = () =>
+  Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
 const paint = (code: number, s: string) =>
-  useColor() ? `\x1b[${code}m${s}\x1b[0m` : s;
+  colorEnabled() ? `\x1b[${code}m${s}\x1b[0m` : s;
 
 export const style = {
   green: (s: string) => paint(32, s),

@@ -5,6 +5,7 @@ import { defineTable, emitTable, sz } from "surreal-zod";
 import {
   buildSnapshot,
   diffSnapshots,
+  formatPatch,
   renderMigration,
   summarizeKinds,
   tokenDiff,
@@ -125,22 +126,55 @@ describe("display items", () => {
 });
 
 describe("tokenDiff", () => {
-  test("highlights only the changed tokens (NO_COLOR → plain tokens, order preserved)", () => {
-    // NO_COLOR strips ANSI, so we can assert the token order: shared + removed + added.
+  test("colorless output marks removed/added tokens git-style ([-…-]{+…+})", () => {
+    // NO_COLOR → git `--word-diff=plain` markers, so removed-vs-added is unambiguous + assertable.
     const prev = process.env.NO_COLOR;
     process.env.NO_COLOR = "1";
     try {
-      const out = tokenDiff(
-        "DEFINE FIELD x ON TABLE t TYPE string;",
-        "DEFINE FIELD x ON TABLE t TYPE option<string>;",
-      );
-      expect(out).toBe(
-        "DEFINE FIELD x ON TABLE t TYPE string; option<string>;",
-      );
+      expect(
+        tokenDiff(
+          "DEFINE FIELD x ON TABLE t TYPE string;",
+          "DEFINE FIELD x ON TABLE t TYPE option<string>;",
+        ),
+      ).toBe("DEFINE FIELD x ON TABLE t TYPE [-string;-] {+option<string>;+}");
     } finally {
       if (prev === undefined) delete process.env.NO_COLOR;
       else process.env.NO_COLOR = prev;
     }
+  });
+});
+
+describe("formatPatch (unified diff)", () => {
+  test("emits per-table .sql hunks with -/+ lines (removes show the old DEFINE)", () => {
+    const before = defineTable("user", {
+      id: sz.string(),
+      name: sz.string(),
+      legacy: sz.string(),
+    });
+    const after = defineTable("user", {
+      id: sz.string(),
+      name: sz.string().optional(),
+      email: sz.email(),
+    });
+    const patch = formatPatch(
+      diffSnapshots(buildSnapshot([before]), buildSnapshot([after])),
+    );
+    expect(patch).toContain("diff --git a/Table: user b/Table: user");
+    expect(patch).toContain("--- a/Table: user");
+    expect(patch).toContain("+++ b/Table: user");
+    expect(patch).toContain("-DEFINE FIELD name ON TABLE user TYPE string;");
+    expect(patch).toContain(
+      "+DEFINE FIELD name ON TABLE user TYPE option<string>;",
+    );
+    // a removed field shows the dropped DEFINE, not the `REMOVE` statement
+    expect(patch).toContain("-DEFINE FIELD legacy ON TABLE user TYPE string;");
+    expect(patch).not.toContain("REMOVE FIELD");
+    expect(patch).toContain("+DEFINE FIELD email ON TABLE user");
+  });
+
+  test("no changes → empty patch", () => {
+    const snap = buildSnapshot([defineTable("u", { id: sz.string() })]);
+    expect(formatPatch(diffSnapshots(snap, snap))).toBe("");
   });
 });
 

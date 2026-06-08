@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createJiti } from "jiti";
 import type { AuthLevel, SurrealZodConfig } from "surreal-zod/config";
@@ -14,6 +14,16 @@ const DEFAULT_SCHEMA = "./database/schemas";
 const DEFAULT_MIGRATIONS = "./database/migrations";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Is the schema path a single file (vs a directory of schema modules)? Determined by `stat` when
+ * it exists, else inferred from a `.ts`/`.js`-ish extension (so a fresh `schema: "./src/x.ts"`
+ * still resolves to file mode before any pull has written it).
+ */
+function schemaIsFilePath(path: string): boolean {
+  if (existsSync(path)) return statSync(path).isFile();
+  return /\.[mc]?[jt]s$/.test(path);
+}
 
 const CONNECT_TIMEOUT_MS = 5_000;
 
@@ -64,8 +74,10 @@ function loadDotEnv(dir: string): void {
 export interface ResolvedConfig extends SurrealZodConfig {
   /** Project root (the directory containing the config file). */
   root: string;
-  /** Absolute schema directory. */
-  schemaDir: string;
+  /** Absolute schema path — a single `.ts` module, or a directory of them. */
+  schemaPath: string;
+  /** Whether `schemaPath` is a single file (vs a directory of schema modules). */
+  schemaIsFile: boolean;
   /** Absolute migrations directory. */
   migrationsDir: string;
   /** Absolute migration meta directory (the snapshot). */
@@ -115,6 +127,7 @@ export async function loadConfig(opts?: {
   }
 
   const schema = config.schema ?? DEFAULT_SCHEMA;
+  const schemaPath = resolve(root, schema);
   const migrations = config.migrations ?? DEFAULT_MIGRATIONS;
   const migrationsDir = resolve(root, migrations);
   return {
@@ -132,7 +145,8 @@ export async function loadConfig(opts?: {
         config.db.authLevel,
     },
     root,
-    schemaDir: resolve(root, schema),
+    schemaPath,
+    schemaIsFile: schemaIsFilePath(schemaPath),
     migrationsDir,
     metaDir: resolve(migrationsDir, "meta"),
     migrationsTable: config.migrationsTable ?? "_migrations",

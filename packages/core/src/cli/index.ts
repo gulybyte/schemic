@@ -1,4 +1,5 @@
 import { watch as fsWatch } from "node:fs";
+import { relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Command, Option } from "commander";
 import type { Surreal } from "surrealdb";
@@ -14,6 +15,7 @@ import {
   type DiffItem,
   formatDiff,
   formatItems,
+  formatPatch,
   isEmptyDiff,
   summarizeKinds,
 } from "./diff";
@@ -29,8 +31,9 @@ import {
   unlock,
   writeMigration,
 } from "./migrate";
+import { pipeThroughPager, resolvePager } from "./pager";
 import { pull } from "./pull";
-import { loadSchemas } from "./schema";
+import { duplicateTables, loadSchemas } from "./schema";
 import { fail, ok, plural, style } from "./style";
 
 interface CommonOpts extends ConnectionOverrides {
@@ -53,6 +56,27 @@ async function withDb(
 
 const errMsg = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
+
+/**
+ * Render duplicate-table conflicts as `name — file, file` lines (files relative to `root`, a file
+ * repeated `×N` when it defines the same name more than once). Shared by `check` and `doctor`.
+ */
+function formatDuplicates(dups: Map<string, string[]>, root: string): string[] {
+  return [...dups].map(([name, files]) => {
+    const counts = new Map<string, number>();
+    for (const f of files) counts.set(f, (counts.get(f) ?? 0) + 1);
+    const label = [...counts]
+      .map(([f, n]) => {
+        const rel = relative(root, f);
+        return n > 1 ? `${rel} (×${n})` : rel;
+      })
+      .join(", ");
+    return `${name} — ${label}`;
+  });
+}
+
+const duplicateHeader = (n: number) =>
+  `${plural(n, "table")} defined more than once (last definition silently wins):`;
 
 /**
  * Run a command action, then exit. We force `process.exit` once it settles so a lingering
@@ -81,13 +105,12 @@ async function promptTitle(): Promise<string | undefined> {
   }
 }
 
-/** Print a diff plus a short summary (with per-kind counts and an optional pending count). */
-function reportDiff(
+/** The short dimmed summary under a diff (per-kind counts + optional pending count). */
+function diffSummary(
   diff: Diff,
-  opts: { down?: boolean; live?: boolean; full?: boolean },
+  opts: { live?: boolean },
   pending?: number,
-): void {
-  console.log(formatDiff(diff, { down: opts.down, full: opts.full }));
+): string {
   const summary: string[] = [];
   if (!isEmptyDiff(diff)) {
     const kinds = summarizeKinds(diff.up);
@@ -97,7 +120,18 @@ function reportDiff(
   }
   if (pending !== undefined)
     summary.push(`${plural(pending, "migration")} pending.`);
-  if (summary.length) console.log(`\n${style.dim(summary.join("\n"))}`);
+  return summary.length ? `\n${style.dim(summary.join("\n"))}` : "";
+}
+
+/** Print a diff (inline word-diff) plus its summary. */
+function reportDiff(
+  diff: Diff,
+  opts: { down?: boolean; live?: boolean; full?: boolean },
+  pending?: number,
+): void {
+  console.log(formatDiff(diff, { down: opts.down, full: opts.full }));
+  const summary = diffSummary(diff, opts, pending);
+  if (summary) console.log(summary);
 }
 
 /**
@@ -131,10 +165,14 @@ function watchLoop(
         void fire();
       }
     };
-    const watcher = fsWatch(config.schemaDir, { recursive: true }, () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => void fire(), 150);
-    });
+    const watcher = fsWatch(
+      config.schemaPath,
+      { recursive: !config.schemaIsFile },
+      () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => void fire(), 150);
+      },
+    );
     console.log(
       style.dim(`Watching ${config.schema} for changes — ctrl-c to stop.`),
     );
@@ -211,6 +249,15 @@ dbFlags(
   .option("--live", "diff against the live database instead of the snapshot")
   .option("--watch", "re-run on schema changes")
   .option("--full", "show the full schema SQL, not just the changed parts")
+  .option(
+    "-p, --patch",
+    "output a unified diff (e.g. to pipe to a diff viewer)",
+  )
+  .option(
+    "--pager <cmd>",
+    "page output through <cmd> (overrides your git diff viewer)",
+  )
+  .option("--no-pager", "don't page output through a diff viewer")
   .option("--json", "output the diff as JSON")
   .action(
     (
@@ -219,16 +266,35 @@ dbFlags(
         live?: boolean;
         watch?: boolean;
         full?: boolean;
+        patch?: boolean;
+        pager?: string | boolean;
         json?: boolean;
       },
     ) => {
       run(async () => {
         const config = await loadConfig({ config: opts.config });
-        const emit = (diff: Diff, pending?: number) => {
+        // Seamlessly route through the user's git diff viewer (e.g. delta) when interactive:
+        // a TTY, not watching, paging not disabled, and a pager resolves. `--patch` forces the
+        // unified-diff format (to the pager, or to stdout when piped / `--no-pager`).
+        // `--pager <cmd>` overrides; `--no-pager` (pager === false) disables; otherwise resolve the
+        // git diff viewer. Only paginate when interactive (TTY, not watching).
+        const pager =
+          opts.pager === false || opts.watch || !process.stdout.isTTY
+            ? undefined
+            : typeof opts.pager === "string"
+              ? opts.pager
+              : resolvePager();
+        const emit = async (diff: Diff, pending?: number) => {
           if (opts.json) {
             console.log(
               JSON.stringify({ up: diff.up, down: diff.down, pending }),
             );
+          } else if ((opts.patch || pager) && !isEmptyDiff(diff)) {
+            const patch = formatPatch(diff);
+            if (pager) await pipeThroughPager(pager, patch);
+            else process.stdout.write(patch);
+            const summary = diffSummary(diff, opts, pending);
+            if (summary) console.log(summary);
           } else {
             reportDiff(diff, opts, pending);
           }
@@ -244,12 +310,12 @@ dbFlags(
               const pending = (await status(db, config)).filter(
                 (r) => !r.applied,
               ).length;
-              emit(diff, pending);
+              await emit(diff, pending);
             } finally {
               if (!persistent) await db.close();
             }
           } else {
-            emit((await planMigration(config)).diff);
+            await emit((await planMigration(config)).diff);
           }
         };
         if (!opts.watch) return once();
@@ -356,7 +422,12 @@ configFlag(
 ).action((opts: CommonOpts) => {
   run(async () => {
     const config = await loadConfig({ config: opts.config });
-    const defs = await loadSchemas(config.schemaDir);
+    const dups = await duplicateTables(config.schemaPath);
+    if (dups.size) {
+      const lines = formatDuplicates(dups, config.root).map((l) => `  ${l}`);
+      throw new Error(`${duplicateHeader(dups.size)}\n${lines.join("\n")}`);
+    }
+    const defs = await loadSchemas(config.schemaPath);
     const kinds = summarizeKinds(
       Object.values(buildSnapshot(defs).statements).map((s) => s.ddl),
     );
@@ -376,8 +447,30 @@ dbFlags(
       console.log(style.dim(`  ${k.padEnd(11)} ${v}`));
     console.log(style.bold("Project"));
     row("root", config.root);
-    row("schema", config.schema ?? "");
     row("migrations", config.migrations ?? "");
+    console.log(style.bold("\nSchema"));
+    row(
+      "source",
+      `${config.schema} (${config.schemaIsFile ? "file" : "directory"})`,
+    );
+    try {
+      const defs = await loadSchemas(config.schemaPath);
+      row(
+        "tables",
+        defs.length
+          ? `${plural(defs.length, "table")} — ${defs.map((t) => t.name).join(", ")}`
+          : "(none found)",
+      );
+      const dups = await duplicateTables(config.schemaPath);
+      if (dups.size) {
+        console.log(`  ${fail(duplicateHeader(dups.size))}`);
+        for (const line of formatDuplicates(dups, config.root))
+          console.log(style.dim(`    ${line}`));
+        process.exitCode = 1;
+      }
+    } catch (e) {
+      console.log(`  ${fail(e instanceof Error ? e.message : String(e))}`);
+    }
     console.log(style.bold("\nConnection"));
     row("url", d.url);
     row("namespace", d.namespace);

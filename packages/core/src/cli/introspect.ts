@@ -40,9 +40,14 @@ export async function diffAgainstDb(
   config: ResolvedConfig,
 ): Promise<Diff> {
   const { namespace, database } = config.db;
-  const target = await introspect(db, new Set([config.migrationsTable]));
+  // Exclude the CLI's own bookkeeping tables — they're not part of the schema (pull excludes
+  // them too); otherwise `diff --live`/`sync` always report dropping `_migrations_lock`.
+  const target = await introspect(
+    db,
+    new Set([config.migrationsTable, `${config.migrationsTable}_lock`]),
+  );
 
-  const defs = await loadSchemas(config.schemaDir);
+  const defs = await loadSchemas(config.schemaPath);
   const ddl = Object.values(buildSnapshot(defs).statements)
     .sort(byCreate)
     .map((s) => s.ddl)
