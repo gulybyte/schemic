@@ -1,0 +1,78 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+
+const CONFIG = `import { defineConfig } from "surreal-zod/config";
+
+export default defineConfig({
+  // schema and migrations default to ./database/schemas and ./database/migrations
+  // schema: "./database/schemas",
+  // migrations: "./database/migrations",
+  db: {
+    url: process.env.SURREAL_URL ?? "ws://localhost:8000",
+    namespace: process.env.SURREAL_NAMESPACE ?? "app",
+    database: process.env.SURREAL_DATABASE ?? "app",
+    username: process.env.SURREAL_USER,
+    password: process.env.SURREAL_PASS,
+    authLevel: "root", // "root" | "namespace" | "database"
+  },
+});
+`;
+
+const SAMPLE_SCHEMA = `import { surql } from "surrealdb";
+import { sz, defineTable } from "surreal-zod";
+
+export const User = defineTable("user", {
+  id: sz.string(),
+  name: sz.string(),
+  email: sz.email(),
+  createdAt: sz.datetime().$default(surql\`time::now()\`).$readonly(),
+});
+`;
+
+const SEED = `import type { Surreal } from "surrealdb";
+
+/** Run with \`surreal-zod seed\`. Receives a connected client. */
+export default async function seed(db: Surreal) {
+  // await db.create("user", { name: "Ada", email: "ada@example.com" });
+}
+`;
+
+const ENV_EXAMPLE = `SURREAL_URL=ws://localhost:8000
+SURREAL_NAMESPACE=app
+SURREAL_DATABASE=app
+SURREAL_USER=root
+SURREAL_PASS=root
+SURREAL_AUTH_LEVEL=root
+`;
+
+const INITIAL_SNAPSHOT = `${JSON.stringify({ version: 1, statements: {} }, null, 2)}\n`;
+
+export interface InitResult {
+  created: string[];
+  skipped: string[];
+}
+
+/** Scaffold the `database/` layout + config + sample schema. Never overwrites existing files. */
+export function init(cwd: string): InitResult {
+  const files: Record<string, string> = {
+    "surreal-zod.config.ts": CONFIG,
+    "database/schemas/user.ts": SAMPLE_SCHEMA,
+    "database/seed.ts": SEED,
+    "database/migrations/meta/_snapshot.json": INITIAL_SNAPSHOT,
+    ".env.example": ENV_EXAMPLE,
+  };
+
+  const created: string[] = [];
+  const skipped: string[] = [];
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = resolve(cwd, rel);
+    if (existsSync(abs)) {
+      skipped.push(rel);
+      continue;
+    }
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, content);
+    created.push(rel);
+  }
+  return { created, skipped };
+}

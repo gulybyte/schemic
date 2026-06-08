@@ -1,17 +1,17 @@
 import { describe, expectTypeOf, test } from "bun:test";
+import { type DateTime, RecordId, type RecordIdValue, surql } from "surrealdb";
 import { z } from "zod";
-import { RecordId, surql, type DateTime, type RecordIdValue } from "surrealdb";
 import {
-  relation,
-  sz,
-  table,
   type App,
   type Create,
+  defineRelation,
+  defineTable,
+  sz,
   type Update,
   type Wire,
 } from "../../src/pure";
 
-const User = table("user", {
+const User = defineTable("user", {
   id: z.string(), // -> record<user, string>
   name: sz.string(),
   email: sz.email(),
@@ -33,7 +33,9 @@ describe("Create<>", () => {
   });
 
   test("a payload with only required fields satisfies the type", () => {
-    expectTypeOf<{ name: string; email: string }>().toExtend<Create<typeof User>>();
+    expectTypeOf<{ name: string; email: string }>().toExtend<
+      Create<typeof User>
+    >();
   });
 
   test("missing a required field is a type error", () => {
@@ -66,14 +68,35 @@ describe("App<> / Wire<>", () => {
   test("app side decodes codecs; wire side keeps DB types", () => {
     expectTypeOf<App<typeof User>["createdAt"]>().toEqualTypeOf<Date>();
     expectTypeOf<Wire<typeof User>["createdAt"]>().toEqualTypeOf<DateTime>();
-    expectTypeOf<App<typeof User>["id"]>().toEqualTypeOf<RecordId<"user", string>>();
+    expectTypeOf<App<typeof User>["id"]>().toEqualTypeOf<
+      RecordId<"user", string>
+    >();
   });
 
   test("relations expose typed in/out endpoints", () => {
-    const Post = table("post", { id: z.string() });
-    const Liked = relation("liked").from(User).to(Post);
-    expectTypeOf<App<typeof Liked>["in"]>().toEqualTypeOf<RecordId<"user", RecordIdValue>>();
-    expectTypeOf<App<typeof Liked>["out"]>().toEqualTypeOf<RecordId<"post", RecordIdValue>>();
+    const Post = defineTable("post", { id: z.string() });
+    const Liked = defineRelation("liked").from(User).to(Post);
+    expectTypeOf<App<typeof Liked>["in"]>().toEqualTypeOf<
+      RecordId<"user", RecordIdValue>
+    >();
+    expectTypeOf<App<typeof Liked>["out"]>().toEqualTypeOf<
+      RecordId<"post", RecordIdValue>
+    >();
+  });
+
+  test("callback shape: `self` self-ref is typed (no `any` collapse)", () => {
+    // The callback receives `self` (a record<thisTable> field) typed from the name arg, so a
+    // self-reference doesn't create the `typeof X`-in-its-own-initializer cycle (→ `any`).
+    const Node = defineTable("node", (self) => ({
+      id: z.string(),
+      label: sz.string(),
+      parent: self.optional(),
+    }));
+    expectTypeOf<App<typeof Node>["parent"]>().toEqualTypeOf<
+      RecordId<"node", RecordIdValue> | undefined
+    >();
+    // the rest of the table keeps its precise types (not `any`)
+    expectTypeOf<App<typeof Node>["label"]>().toEqualTypeOf<string>();
   });
 });
 
@@ -87,17 +110,23 @@ describe("encode / safeEncode return types (#6, #7)", () => {
   });
 
   test("encodePartial returns the same Partial<Wire<>>", () => {
-    expectTypeOf(User.encodePartial({ name: "x" })).toEqualTypeOf<Partial<Wire<typeof User>>>();
+    expectTypeOf(User.encodePartial({ name: "x" })).toEqualTypeOf<
+      Partial<Wire<typeof User>>
+    >();
   });
 
   test("safeEncode's result is the Zod success|error union; data is the wire partial", () => {
     const res = User.safeEncode({ name: "Alice", email: "alice@example.com" });
-    expectTypeOf(res).toEqualTypeOf<z.ZodSafeParseResult<Partial<Wire<typeof User>>>>();
+    expectTypeOf(res).toEqualTypeOf<
+      z.ZodSafeParseResult<Partial<Wire<typeof User>>>
+    >();
     if (res.success) {
       expectTypeOf(res.data).toEqualTypeOf<Partial<Wire<typeof User>>>();
       expectTypeOf(res.data.createdAt).toEqualTypeOf<DateTime | undefined>();
     } else {
-      expectTypeOf(res.error).toEqualTypeOf<z.ZodError<Partial<Wire<typeof User>>>>();
+      expectTypeOf(res.error).toEqualTypeOf<
+        z.ZodError<Partial<Wire<typeof User>>>
+      >();
     }
   });
 
@@ -108,10 +137,12 @@ describe("encode / safeEncode return types (#6, #7)", () => {
   });
 
   test("encodeAsync returns Promise<Partial<Wire<>>>", () => {
-    expectTypeOf(User.encodeAsync({ name: "x", email: "a@b.co" })).toEqualTypeOf<
-      Promise<Partial<Wire<typeof User>>>
-    >();
-    expectTypeOf(User.safeEncodeAsync({ name: "x", email: "a@b.co" })).toEqualTypeOf<
+    expectTypeOf(
+      User.encodeAsync({ name: "x", email: "a@b.co" }),
+    ).toEqualTypeOf<Promise<Partial<Wire<typeof User>>>>();
+    expectTypeOf(
+      User.safeEncodeAsync({ name: "x", email: "a@b.co" }),
+    ).toEqualTypeOf<
       Promise<z.ZodSafeParseResult<Partial<Wire<typeof User>>>>
     >();
   });
@@ -119,7 +150,9 @@ describe("encode / safeEncode return types (#6, #7)", () => {
 
 describe("field method types", () => {
   test("unwrap peels the wrapper type", () => {
-    expectTypeOf(sz.string().optional().unwrap().schema).toExtend<z.ZodString>();
+    expectTypeOf(
+      sz.string().optional().unwrap().schema,
+    ).toExtend<z.ZodString>();
     expectTypeOf(sz.string().array().unwrap().schema).toExtend<z.ZodString>();
   });
 
@@ -133,7 +166,7 @@ describe("field method types", () => {
 });
 
 describe("$internal fields", () => {
-  const Account = table("account", {
+  const Account = defineTable("account", {
     id: z.string(), // -> record<account, string>
     email: sz.email(),
     passhash: sz.string().$internal(),
@@ -166,7 +199,7 @@ describe("$internal fields", () => {
 describe("nested create-optionality", () => {
   // settings is create-REQUIRED (no $default on the object itself), but its nested `theme`
   // has a DB $default, so `theme` is create-optional while `tz` stays required.
-  const T = table("nested", {
+  const T = defineTable("nested", {
     id: z.string(),
     settings: sz.object({
       theme: sz.string().$default(surql`"x"`),
@@ -175,7 +208,10 @@ describe("nested create-optionality", () => {
   });
 
   test("a nested $default field is create-optional; its siblings stay required", () => {
-    expectTypeOf<Create<typeof T>["settings"]>().toEqualTypeOf<{ tz: string; theme?: string }>();
+    expectTypeOf<Create<typeof T>["settings"]>().toEqualTypeOf<{
+      tz: string;
+      theme?: string;
+    }>();
     expectTypeOf<{ tz: string }>().toExtend<Create<typeof T>["settings"]>();
   });
 
@@ -189,13 +225,17 @@ describe("nested create-optionality", () => {
       { theme?: string; tz?: string } | undefined
     >();
     // a single nested key is a valid patch (deep-partial)
-    expectTypeOf<{ settings: { theme: string } }>().toExtend<Update<typeof T>>();
-    expectTypeOf<{ settings: Record<string, never> }>().toExtend<Update<typeof T>>();
+    expectTypeOf<{ settings: { theme: string } }>().toExtend<
+      Update<typeof T>
+    >();
+    expectTypeOf<{ settings: Record<string, never> }>().toExtend<
+      Update<typeof T>
+    >();
     T.encodePartial({ settings: { theme: "x" } });
   });
 
   // The object field itself is $default (create-optional) AND its nested field is too.
-  const T2 = table("nested2", {
+  const T2 = defineTable("nested2", {
     id: z.string(),
     settings: sz
       .object({ theme: sz.string().$default(surql`"x"`), tz: sz.string() })
@@ -213,19 +253,25 @@ describe("nested create-optionality", () => {
   });
 
   // Array-of-object: nested defaults are create-optional per element.
-  const T3 = table("nested3", {
+  const T3 = defineTable("nested3", {
     id: z.string(),
-    tags: sz.object({ name: sz.string(), color: sz.string().$default("#fff") }).array(),
+    tags: sz
+      .object({ name: sz.string(), color: sz.string().$default("#fff") })
+      .array(),
   });
 
   test("array<object> recurses: a nested default is optional per element", () => {
-    expectTypeOf<Create<typeof T3>["tags"]>().toEqualTypeOf<{ name: string; color?: string }[]>();
-    expectTypeOf<App<typeof T3>["tags"][number]["color"]>().toEqualTypeOf<string>();
+    expectTypeOf<Create<typeof T3>["tags"]>().toEqualTypeOf<
+      { name: string; color?: string }[]
+    >();
+    expectTypeOf<
+      App<typeof T3>["tags"][number]["color"]
+    >().toEqualTypeOf<string>();
   });
 });
 
 describe("$value create-optionality", () => {
-  const T = table("t", {
+  const T = defineTable("t", {
     id: z.string(),
     slug: sz.string().$value(surql`string::slug($value)`), // create-required (consumes $value)
     updatedAt: sz.datetime().$value(surql`time::now()`, { optional: true }), // create-optional

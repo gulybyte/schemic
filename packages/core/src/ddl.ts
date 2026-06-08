@@ -1,13 +1,13 @@
-import { z } from "zod";
 import { BoundQuery, escapeIdent, toSurqlString } from "surrealdb";
+import type { z } from "zod";
 import {
-  objectFieldsRegistry,
-  surrealTypeRegistry,
   type FieldPermissions,
+  objectFieldsRegistry,
   type PermOp,
   type SField,
   type Shape,
   type SurrealMeta,
+  surrealTypeRegistry,
   type TableDef,
   type TablePermissions,
 } from "./pure";
@@ -45,7 +45,11 @@ function zdef(schema: z.ZodType): { type: string; [k: string]: unknown } {
 /** Format a literal value as a SurrealQL literal type (e.g. `'admin'`, `42`). */
 function surqlLiteral(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
     return String(value);
   }
   return toSurqlString(value).replace(/^s"/, '"');
@@ -60,10 +64,17 @@ interface FieldInfo {
   flexible: boolean;
   children: { suffix: string; info: FieldInfo; surreal?: SurrealMeta }[];
 }
-const leaf = (type: string): FieldInfo => ({ type, flexible: false, children: [] });
+const leaf = (type: string): FieldInfo => ({
+  type,
+  flexible: false,
+  children: [],
+});
 
 /** Infer a field's SurrealQL type + nested structure from a Zod schema. */
-function inferField(schema: z.ZodType, seen: Set<z.ZodType> = new Set()): FieldInfo {
+function inferField(
+  schema: z.ZodType,
+  seen: Set<z.ZodType> = new Set(),
+): FieldInfo {
   // Surreal-native schemas (datetime, recordId) carry their type explicitly.
   const explicit = surrealTypeRegistry.get(schema);
   if (explicit) return leaf(explicit);
@@ -95,10 +106,13 @@ function inferField(schema: z.ZodType, seen: Set<z.ZodType> = new Set()): FieldI
     case "default":
     case "prefault": {
       const inner = inferField(def.innerType as z.ZodType, seen);
+      // `any` already admits NONE/NULL, so `option<any>` is invalid SurrealQL — leave it as `any`.
+      if (inner.type === "any") return inner;
       return { ...inner, type: `option<${inner.type}>` };
     }
     case "nullable": {
       const inner = inferField(def.innerType as z.ZodType, seen);
+      if (inner.type === "any") return inner; // `any` already includes null
       // Fold null INTO an existing option<X> so .optional().nullable() matches
       // .nullish()/.nullable().optional(): option<X> | null -> option<X | null>.
       if (inner.type.startsWith("option<") && inner.type.endsWith(">")) {
@@ -142,14 +156,21 @@ function inferField(schema: z.ZodType, seen: Set<z.ZodType> = new Set()): FieldI
       if (left.type === "object" && right.type === "object") {
         const merged = new Map(left.children.map((c) => [c.suffix, c]));
         for (const c of right.children) merged.set(c.suffix, c); // right wins on overlap
-        return { type: "object", flexible: left.flexible || right.flexible, children: [...merged.values()] };
+        return {
+          type: "object",
+          flexible: left.flexible || right.flexible,
+          children: [...merged.values()],
+        };
       }
       return leaf("any");
     }
 
     case "array":
     case "set": {
-      const elem = inferField((def.element ?? def.valueType) as z.ZodType, seen);
+      const elem = inferField(
+        (def.element ?? def.valueType) as z.ZodType,
+        seen,
+      );
       // Element subfields live under `path.*`, but only when the element is structured.
       const children =
         elem.children.length > 0 || elem.type === "object"
@@ -161,18 +182,38 @@ function inferField(schema: z.ZodType, seen: Set<z.ZodType> = new Set()): FieldI
     case "record":
     case "map": {
       const value = inferField(def.valueType as z.ZodType, seen);
-      return { type: "object", flexible: false, children: [{ suffix: ".*", info: value }] };
+      return {
+        type: "object",
+        flexible: false,
+        children: [{ suffix: ".*", info: value }],
+      };
     }
 
     case "union": {
       const opts = (def.options ?? []) as z.ZodType[];
-      const types = [...new Set(opts.map((o) => inferField(o, seen).type))];
-      return leaf(types.join(" | ") || "any");
+      // A `none`-ish member (z.undefined()/z.void()) makes the union optional: `T | none` -> `option<T>`.
+      const noneish = (o: z.ZodType) => {
+        const t = zdef(o).type;
+        return t === "undefined" || t === "void";
+      };
+      const hasNone = opts.some(noneish);
+      const types = [
+        ...new Set(
+          opts.filter((o) => !noneish(o)).map((o) => inferField(o, seen).type),
+        ),
+      ];
+      // `any` absorbs every other member (including none) — `any | string` is invalid → `any`.
+      if (types.includes("any")) return leaf("any");
+      const joined = types.join(" | ") || "any";
+      if (hasNone) return leaf(joined === "any" ? "any" : `option<${joined}>`);
+      return leaf(joined);
     }
     case "enum": {
       const entries = (def.entries ?? {}) as Record<string, string | number>;
       // Drop TS numeric-enum reverse mappings (name->number); keep the real values.
-      const values = Object.values(entries).filter((v) => typeof entries[v as string] !== "number");
+      const values = Object.values(entries).filter(
+        (v) => typeof entries[v as string] !== "number",
+      );
       const types = [...new Set(values.map(surqlLiteral))];
       return leaf(types.join(" | ") || "any");
     }
@@ -226,7 +267,8 @@ export function renderPermissions(
 ): string {
   if (spec === true) return "PERMISSIONS FULL";
   if (spec === false) return "PERMISSIONS NONE";
-  if (spec instanceof BoundQuery) return `PERMISSIONS FOR ${ops.join(", ")} WHERE ${inline(spec)}`;
+  if (spec instanceof BoundQuery)
+    return `PERMISSIONS FOR ${ops.join(", ")} WHERE ${inline(spec)}`;
 
   const rules = spec as Partial<Record<PermOp, boolean | BoundQuery | string>>;
   const present = ops.filter((op) => rules[op] !== undefined);
@@ -238,14 +280,21 @@ export function renderPermissions(
     if (cached !== undefined) return cached;
     const rule = rules[op];
     if (rule === undefined) {
-      throw new Error(`PERMISSIONS: "same as ${op}" references op "${op}", which is not in the spec`);
+      throw new Error(
+        `PERMISSIONS: "same as ${op}" references op "${op}", which is not in the spec`,
+      );
     }
     if (chain.includes(op)) {
-      throw new Error(`PERMISSIONS: "same as" reference cycle: ${[...chain, op].join(" -> ")}`);
+      throw new Error(
+        `PERMISSIONS: "same as" reference cycle: ${[...chain, op].join(" -> ")}`,
+      );
     }
     const value =
       typeof rule === "string"
-        ? resolve(rule.slice("same as ".length).trim() as PermOp, [...chain, op])
+        ? resolve(rule.slice("same as ".length).trim() as PermOp, [
+            ...chain,
+            op,
+          ])
         : rule;
     resolved.set(op, value);
     return value;
@@ -255,91 +304,246 @@ export function renderPermissions(
   const groups = new Map<string, PermOp[]>();
   for (const op of present) {
     const rule = resolve(op, []);
-    const body = rule === true ? "FULL" : rule === false ? "NONE" : `WHERE ${inline(rule)}`;
+    const body =
+      rule === true
+        ? "FULL"
+        : rule === false
+          ? "NONE"
+          : `WHERE ${inline(rule)}`;
     const group = groups.get(body);
     if (group) group.push(op);
     else groups.set(body, [op]);
   }
-  const clauses = [...groups].map(([body, group]) => `FOR ${group.join(", ")} ${body}`);
+  const clauses = [...groups].map(
+    ([body, group]) => `FOR ${group.join(", ")} ${body}`,
+  );
   return clauses.length ? `PERMISSIONS ${clauses.join(" ")}` : "";
 }
 
+/**
+ * One generated DDL statement, tied to the schema object it defines. `kind` is the object
+ * kind; `name` identifies it within its scope (a table name, or a field path like
+ * `settings.theme` / `tags.*`, already escaped as it appears in the DDL); `table` is the
+ * owning table for fields. Used by the CLI's migration diff to add/change/remove objects
+ * individually. `emitTable`/`emitField` are the string-joined views of these.
+ */
+export interface DefineStatement {
+  kind: "table" | "field" | "index";
+  name: string;
+  table?: string;
+  ddl: string;
+}
+
 /** Emit `DEFINE FIELD path ...` for a node, then recurse into its children. */
+/** A trivial array element is the plain auto-created form — no FLEXIBLE and no `$`-clauses. */
+function isTrivialElement(info: FieldInfo, surreal?: SurrealMeta): boolean {
+  if (info.flexible) return false;
+  if (!surreal) return true;
+  return (
+    !surreal.permissions &&
+    !surreal.readonly &&
+    !surreal.default &&
+    !surreal.value &&
+    !surreal.asserts?.length &&
+    !surreal.comment &&
+    !surreal.internal &&
+    !surreal.index
+  );
+}
+
 function emit(
   path: string,
   table: string,
   info: FieldInfo,
   surreal: SurrealMeta | undefined,
   opts: DefineOptions | undefined,
-  lines: string[],
+  out: DefineStatement[],
+  forceOverwrite = false,
 ): void {
   let type = info.type;
   // A DB-side DEFAULT/VALUE means the column is always populated -> drop a leading option<>.
   if ((surreal?.default || surreal?.value) && type.startsWith("option<")) {
     type = type.slice("option<".length, -1);
   }
+  // An array element is auto-created by SurrealDB, so a (kept) element DEFINE must OVERWRITE it.
+  const prefix = forceOverwrite ? "OVERWRITE " : existsPrefix(opts);
   const parts = [
-    `DEFINE FIELD ${existsPrefix(opts)}${path} ON TABLE ${escapeIdent(table)} TYPE ${type}`,
+    `DEFINE FIELD ${prefix}${path} ON TABLE ${escapeIdent(table)} TYPE ${type}`,
   ];
   if (info.flexible) parts.push("FLEXIBLE");
   if (surreal?.default) {
-    parts.push(`DEFAULT ${surreal.defaultAlways ? "ALWAYS " : ""}${inline(surreal.default)}`);
+    parts.push(
+      `DEFAULT ${surreal.defaultAlways ? "ALWAYS " : ""}${inline(surreal.default)}`,
+    );
   }
   if (surreal?.value) parts.push(`VALUE ${inline(surreal.value)}`);
   const assertClause = renderAsserts(surreal?.asserts);
   if (assertClause) parts.push(assertClause);
   if (surreal?.readonly) parts.push("READONLY");
-  if (surreal?.comment) parts.push(`COMMENT ${JSON.stringify(surreal.comment)}`);
+  if (surreal?.comment)
+    parts.push(`COMMENT ${JSON.stringify(surreal.comment)}`);
   // Internal fields still exist on the table (so SCHEMAFULL writes succeed) but grant
   // no record-user access — internal wins over any `$permissions` on the same field.
   if (surreal?.internal) {
     parts.push("PERMISSIONS NONE");
   } else if (surreal?.permissions !== undefined) {
-    const clause = renderPermissions(surreal.permissions, ["select", "create", "update"]);
+    const clause = renderPermissions(surreal.permissions, [
+      "select",
+      "create",
+      "update",
+    ]);
     if (clause) parts.push(clause);
   }
-  lines.push(`${parts.join(" ")};`);
+  out.push({ kind: "field", name: path, table, ddl: `${parts.join(" ")};` });
 
+  // A single-field index defined via `.index()` / `.unique()`.
+  if (surreal?.index) {
+    const idxName = `${table}_${path.replace(/[`]/g, "").replace(/[^a-zA-Z0-9]+/g, "_")}_idx`;
+    const unique = surreal.index.unique ? " UNIQUE" : "";
+    out.push({
+      kind: "index",
+      name: idxName,
+      table,
+      ddl: `DEFINE INDEX ${existsPrefix(opts)}${escapeIdent(idxName)} ON TABLE ${escapeIdent(table)} FIELDS ${path}${unique};`,
+    });
+  }
+
+  // SurrealDB auto-creates an array's `.*` element from the `array<…>` type. A TRIVIAL element is
+  // that exact form, so we skip its DEFINE (a plain one errors "already exists") and emit only its
+  // sub-fields. A CUSTOMIZED element (FLEXIBLE / permissions / …) is emitted with OVERWRITE. Other
+  // parents (an `object` map's `.*` value) are emitted normally.
+  const isArray = /^(?:array|set)\b/.test(info.type);
   for (const child of info.children) {
-    emit(`${path}${child.suffix}`, table, child.info, child.surreal, opts, lines);
+    const childPath = `${path}${child.suffix}`;
+    if (isArray && child.suffix === ".*") {
+      if (isTrivialElement(child.info, child.surreal)) {
+        for (const sub of child.info.children) {
+          emit(`${childPath}${sub.suffix}`, table, sub.info, sub.surreal, opts, out);
+        }
+      } else {
+        emit(childPath, table, child.info, child.surreal, opts, out, true);
+      }
+    } else {
+      emit(childPath, table, child.info, child.surreal, opts, out);
+    }
   }
 }
 
+/** Structured `DEFINE FIELD` statements for a field (and its nested subfields). */
+export function emitFieldStatements(
+  name: string,
+  table: string,
+  field: SField,
+  opts?: DefineOptions,
+): DefineStatement[] {
+  const out: DefineStatement[] = [];
+  emit(
+    escapeIdent(name),
+    table,
+    inferField(field.schema),
+    field.surreal,
+    opts,
+    out,
+  );
+  return out;
+}
+
 /** `DEFINE FIELD ...` for a field (and any nested object/array/record subfields). */
-export function defineField(
+export function emitField(
   name: string,
   table: string,
   field: SField,
   opts?: DefineOptions,
 ): string {
-  const lines: string[] = [];
-  emit(escapeIdent(name), table, inferField(field.schema), field.surreal, opts, lines);
-  return lines.join("\n");
+  return emitFieldStatements(name, table, field, opts)
+    .map((s) => s.ddl)
+    .join("\n");
 }
 
-/** `DEFINE TABLE ...` plus a `DEFINE FIELD` per field. */
-export function defineTable(t: TableDef<string, Shape>, opts?: DefineOptions): string {
+/** Structured statements for a table: its `DEFINE TABLE` head, then one per (nested) field. */
+export function emitStatements(
+  t: TableDef<string, Shape>,
+  opts?: DefineOptions,
+): DefineStatement[] {
   const rel = t.config.relation;
   // Surreal manages id (and in/out for relations) implicitly.
   const implicit = rel ? new Set(["id", "in", "out"]) : new Set(["id"]);
-  const type = rel
-    ? `RELATION FROM ${rel.from.map(escapeIdent).join(" | ")} TO ${rel.to.map(escapeIdent).join(" | ")}`
-    : "NORMAL";
+  let type: string;
+  if (rel) {
+    // Endpoints are optional: omit FROM/TO when unrestricted (`TYPE RELATION`).
+    type = "RELATION";
+    if (rel.from.length)
+      type += ` FROM ${rel.from.map(escapeIdent).join(" | ")}`;
+    if (rel.to.length) type += ` TO ${rel.to.map(escapeIdent).join(" | ")}`;
+  } else {
+    type = t.config.type === "any" ? "ANY" : "NORMAL";
+  }
 
-  const head = [`DEFINE TABLE ${existsPrefix(opts)}${escapeIdent(t.name)}`, `TYPE ${type}`];
+  const head = [
+    `DEFINE TABLE ${existsPrefix(opts)}${escapeIdent(t.name)}`,
+    `TYPE ${type}`,
+  ];
   if (t.config.drop) head.push("DROP");
   head.push(t.config.schemafull ? "SCHEMAFULL" : "SCHEMALESS");
-  if (t.config.comment) head.push(`COMMENT ${JSON.stringify(t.config.comment)}`);
+  if (t.config.comment)
+    head.push(`COMMENT ${JSON.stringify(t.config.comment)}`);
   // Fold permissions into the single DEFINE TABLE head (no separate OVERWRITE … PERMISSIONS).
   if (t.config.permissions !== undefined) {
-    const clause = renderPermissions(t.config.permissions, ["select", "create", "update", "delete"]);
+    const clause = renderPermissions(t.config.permissions, [
+      "select",
+      "create",
+      "update",
+      "delete",
+    ]);
     if (clause) head.push(clause);
   }
 
-  const lines = [`${head.join(" ")};`];
+  const out: DefineStatement[] = [
+    { kind: "table", name: t.name, ddl: `${head.join(" ")};` },
+  ];
   for (const [name, field] of Object.entries(t.fields)) {
     if (implicit.has(name)) continue;
-    lines.push(defineField(name, t.name, field as SField, opts));
+    out.push(...emitFieldStatements(name, t.name, field as SField, opts));
   }
-  return lines.join("\n");
+  // Composite indexes declared via `.index(name, fields, …)`.
+  for (const idx of t.config.indexes ?? []) {
+    const unique = idx.unique ? " UNIQUE" : "";
+    out.push({
+      kind: "index",
+      name: idx.name,
+      table: t.name,
+      ddl: `DEFINE INDEX ${existsPrefix(opts)}${escapeIdent(idx.name)} ON TABLE ${escapeIdent(t.name)} FIELDS ${idx.fields.map(escapeIdent).join(", ")}${unique};`,
+    });
+  }
+  return out;
+}
+
+/** `DEFINE TABLE ...` plus a `DEFINE FIELD` per field. */
+export function emitTable(
+  t: TableDef<string, Shape>,
+  opts?: DefineOptions,
+): string {
+  return emitStatements(t, opts)
+    .map((s) => s.ddl)
+    .join("\n");
+}
+
+/** The `REMOVE ...` statement that drops the object a `DefineStatement` defines. */
+export function removeStatement(
+  s: Pick<DefineStatement, "kind" | "name" | "table">,
+): string {
+  if (s.kind === "table")
+    return `REMOVE TABLE IF EXISTS ${escapeIdent(s.name)};`;
+  if (s.kind === "index") {
+    return `REMOVE INDEX IF EXISTS ${escapeIdent(s.name)} ON TABLE ${escapeIdent(s.table ?? "")};`;
+  }
+  return `REMOVE FIELD IF EXISTS ${s.name} ON TABLE ${escapeIdent(s.table ?? "")};`;
+}
+
+/** Inject `OVERWRITE` into a plain `DEFINE <kind> …` statement (idempotent re-definition). */
+export function overwriteStatement(ddl: string): string {
+  return ddl.replace(
+    /^DEFINE (TABLE|FIELD|INDEX|EVENT|ANALYZER|ACCESS|PARAM|FUNCTION) (?!OVERWRITE\b)/,
+    "DEFINE $1 OVERWRITE ",
+  );
 }

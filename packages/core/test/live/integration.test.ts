@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { RecordId, surql } from "surrealdb";
-import { defineTable } from "../../src/ddl";
-import { relation, sz, table } from "../../src/pure";
+import { emitTable } from "../../src/ddl";
+import { defineRelation, sz, defineTable } from "../../src/pure";
 import { tryConnect } from "../helpers";
 
 /**
@@ -13,7 +13,7 @@ const db = await tryConnect();
 const live = describe.skipIf(!db);
 if (!db) console.warn("[live] SurrealDB unreachable — skipping integration tests");
 
-const User = table("it_user", {
+const User = defineTable("it_user", {
   id: z.string(),
   name: sz.string(),
   status: sz.string().$default(surql`"pending"`),
@@ -21,19 +21,19 @@ const User = table("it_user", {
   createdAt: sz.datetime().$default(surql`time::now()`).$readonly(),
 });
 
-const Native = table("it_native", {
+const Native = defineTable("it_native", {
   id: z.string(),
   tag: sz.uuid(),
   data: sz.bytes(),
   when: sz.datetime(),
 });
 
-const Friend = relation("it_friend", { strength: sz.number() }).from(User).to(User);
+const Friend = defineRelation("it_friend", { strength: sz.number() }).from(User).to(User);
 
 live("CRUD + codecs against a live DB", () => {
   beforeAll(async () => {
     const ddl = [User, Native, Friend]
-      .map((t) => defineTable(t, { exists: "overwrite" }))
+      .map((t) => emitTable(t, { exists: "overwrite" }))
       .join("\n");
     await db!.query(ddl);
     await db!.query(surql`DELETE it_friend; DELETE it_user; DELETE it_native;`);

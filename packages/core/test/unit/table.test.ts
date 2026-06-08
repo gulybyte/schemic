@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { z } from "zod";
 import { DateTime, RecordId, surql } from "surrealdb";
-import { relation, RecordIdField, sz, table } from "../../src/pure";
+import { z } from "zod";
+import { emitTable } from "../../src/ddl";
+import { defineRelation, defineTable, RecordIdField, sz } from "../../src/pure";
 
 const defType = (s: z.ZodType) => (s._zod.def as { type: string }).type;
 
 describe("smart id", () => {
   test("a plain id schema becomes record<self, idType>", () => {
-    const T = table("widget", { id: z.string(), name: sz.string() });
+    const T = defineTable("widget", { id: z.string(), name: sz.string() });
     const id = T.fields.id as RecordIdField<"widget">;
     expect(id).toBeInstanceOf(RecordIdField);
     expect(id.tables).toEqual(["widget"]);
@@ -16,31 +17,59 @@ describe("smart id", () => {
   });
 
   test("an omitted id defaults to record<self>", () => {
-    const T = table("widget", { name: sz.string() });
+    const T = defineTable("widget", { name: sz.string() });
     const id = T.fields.id as RecordIdField<"widget">;
     expect(id).toBeInstanceOf(RecordIdField);
     expect(id.tables).toEqual(["widget"]);
   });
+
+  test("callback shape: `self` is a record<thisTable> self-link", () => {
+    const Node = defineTable("node", (self) => ({
+      id: z.string(),
+      parent: self,
+      reports: self.optional(),
+    }));
+    // bare `self` is a RecordIdField restricted to this table
+    const parent = Node.fields.parent as RecordIdField<"node">;
+    expect(parent).toBeInstanceOf(RecordIdField);
+    expect(parent.tables).toEqual(["node"]);
+    // and the whole table emits self record links (incl. the wrapped, optional one)
+    const ddl = emitTable(Node);
+    expect(ddl).toContain(
+      "DEFINE FIELD parent ON TABLE node TYPE record<node>;",
+    );
+    expect(ddl).toContain(
+      "DEFINE FIELD reports ON TABLE node TYPE option<record<node>>;",
+    );
+  });
 });
 
 describe("encode / encodePartial", () => {
-  const User = table("user", {
+  const User = defineTable("user", {
     id: z.string(),
     name: sz.string(),
     role: sz.enum(["admin", "member"]).$default(surql`"member"`),
-    settings: sz.object({ theme: sz.string(), lastSeen: sz.datetime().optional() }),
+    settings: sz.object({
+      theme: sz.string(),
+      lastSeen: sz.datetime().optional(),
+    }),
     createdAt: sz.datetime().$default(surql`time::now()`).$readonly(),
   });
 
   test("encode omits absent fields and encodes the present ones", () => {
     const payload = User.encode({
       name: "Alice",
-      settings: { theme: "dark", lastSeen: new Date("2022-01-01T00:00:00.000Z") },
+      settings: {
+        theme: "dark",
+        lastSeen: new Date("2022-01-01T00:00:00.000Z"),
+      },
     });
     expect(Object.keys(payload).sort()).toEqual(["name", "settings"]);
     expect(payload.name).toBe("Alice");
     // nested datetime encoded to DateTime
-    expect((payload.settings as { lastSeen: unknown }).lastSeen).toBeInstanceOf(DateTime);
+    expect((payload.settings as { lastSeen: unknown }).lastSeen).toBeInstanceOf(
+      DateTime,
+    );
   });
 
   test("encode accepts a full App object and a partial create input alike", () => {
@@ -49,7 +78,10 @@ describe("encode / encodePartial", () => {
       id: new RecordId("user", "alice"),
       name: "Alice",
       role: "admin",
-      settings: { theme: "dark", lastSeen: new Date("2022-01-01T00:00:00.000Z") },
+      settings: {
+        theme: "dark",
+        lastSeen: new Date("2022-01-01T00:00:00.000Z"),
+      },
       createdAt: new Date("2022-01-01T00:00:00.000Z"),
     });
     expect(full.role).toBe("admin");
@@ -67,7 +99,7 @@ describe("encode / encodePartial", () => {
 });
 
 describe("nested create-optionality (runtime)", () => {
-  const Widget = table("widget", {
+  const Widget = defineTable("widget", {
     id: z.string(),
     settings: sz.object({
       theme: sz.string().$default(surql`"x"`),
@@ -87,7 +119,11 @@ describe("nested create-optionality (runtime)", () => {
 
   test("encode includes a provided nested field and encodes nested codecs", () => {
     const payload = Widget.encode({
-      settings: { tz: "utc", theme: "dark", lastSeen: new Date("2022-01-01T00:00:00.000Z") },
+      settings: {
+        tz: "utc",
+        theme: "dark",
+        lastSeen: new Date("2022-01-01T00:00:00.000Z"),
+      },
     });
     const settings = payload.settings as Record<string, unknown>;
     expect(Object.keys(settings).sort()).toEqual(["lastSeen", "theme", "tz"]);
@@ -97,7 +133,9 @@ describe("nested create-optionality (runtime)", () => {
   });
 
   test("encodePartial encodes the full nested object (no sibling dropped)", () => {
-    const patch = Widget.encodePartial({ settings: { theme: "dark", tz: "utc" } });
+    const patch = Widget.encodePartial({
+      settings: { theme: "dark", tz: "utc" },
+    });
     const settings = patch.settings as Record<string, unknown>;
     expect(Object.keys(settings).sort()).toEqual(["theme", "tz"]);
     expect(settings.theme).toBe("dark");
@@ -105,11 +143,15 @@ describe("nested create-optionality (runtime)", () => {
   });
 
   test("array<object>: absent nested defaults are omitted per element", () => {
-    const List = table("list", {
+    const List = defineTable("list", {
       id: z.string(),
-      tags: sz.object({ name: sz.string(), color: sz.string().$default("#fff") }).array(),
+      tags: sz
+        .object({ name: sz.string(), color: sz.string().$default("#fff") })
+        .array(),
     });
-    const payload = List.encode({ tags: [{ name: "a" }, { name: "b", color: "#000" }] });
+    const payload = List.encode({
+      tags: [{ name: "a" }, { name: "b", color: "#000" }],
+    });
     const tags = payload.tags as Record<string, unknown>[];
     expect(tags[0]).not.toHaveProperty("color");
     expect(Object.keys(tags[0]!)).toEqual(["name"]);
@@ -120,14 +162,19 @@ describe("nested create-optionality (runtime)", () => {
     // MERGE deep-merges, so a single nested key is a valid patch — and only it is emitted.
     const patch = Widget.encodePartial({ settings: { theme: "dark" } });
     expect(Object.keys(patch)).toEqual(["settings"]);
-    expect(patch.settings as Record<string, unknown>).toEqual({ theme: "dark" });
+    expect(patch.settings as Record<string, unknown>).toEqual({
+      theme: "dark",
+    });
   });
 });
 
 describe("encode / safeEncode agreement on nested input (Fix 1)", () => {
-  const T = table("nested", {
+  const T = defineTable("nested", {
     id: z.string(),
-    settings: sz.object({ theme: sz.string().$default(surql`"x"`), tz: sz.string() }),
+    settings: sz.object({
+      theme: sz.string().$default(surql`"x"`),
+      tz: sz.string(),
+    }),
   });
   // Mirror helper: did `encode` throw for this input?
   const encodeThrew = (input: Parameters<typeof T.encode>[0]) => {
@@ -144,24 +191,31 @@ describe("encode / safeEncode agreement on nested input (Fix 1)", () => {
     expect(encodeThrew(input)).toBe(false);
     const res = T.safeEncode(input);
     expect(res.success).toBe(true);
-    if (res.success) expect(res.data as Record<string, unknown>).toEqual({ settings: { tz: "utc" } });
+    if (res.success)
+      expect(res.data as Record<string, unknown>).toEqual({
+        settings: { tz: "utc" },
+      });
   });
 
   test("an invalid nested field: encode throws and safeEncode agrees (rejects, correct path)", () => {
     // tz must be a string — both paths must reject.
-    const input = { settings: { tz: 123 } } as unknown as Parameters<typeof T.encode>[0];
+    const input = { settings: { tz: 123 } } as unknown as Parameters<
+      typeof T.encode
+    >[0];
     expect(encodeThrew(input)).toBe(true);
     const res = T.safeEncode(input);
     expect(res.success).toBe(false);
     if (!res.success) {
       expect(res.error).toBeInstanceOf(z.ZodError);
-      expect(res.error.issues.map((i) => i.path.join("."))).toContain("settings.tz");
+      expect(res.error.issues.map((i) => i.path.join("."))).toContain(
+        "settings.tz",
+      );
     }
   });
 });
 
 describe("safeEncode / encode validation (#6, #7)", () => {
-  const User = table("user", {
+  const User = defineTable("user", {
     id: z.string(),
     name: sz.string().$min(1),
     email: sz.email(),
@@ -196,7 +250,9 @@ describe("safeEncode / encode validation (#6, #7)", () => {
   });
 
   test("encode throws a ZodError on invalid input", () => {
-    expect(() => User.encode({ name: "", email: "alice@example.com" })).toThrow();
+    expect(() =>
+      User.encode({ name: "", email: "alice@example.com" }),
+    ).toThrow();
     expect(() => User.encode({ name: "Alice", email: "nope" })).toThrow();
   });
 
@@ -206,37 +262,57 @@ describe("safeEncode / encode validation (#6, #7)", () => {
   });
 
   test("SystemView.safeEncode validates internal fields too", () => {
-    const ok = User.system.safeEncode({ name: "Alice", email: "a@b.co", passhash: "secret" });
+    const ok = User.system.safeEncode({
+      name: "Alice",
+      email: "a@b.co",
+      passhash: "secret",
+    });
     expect(ok.success).toBe(true);
     if (ok.success) expect(ok.data.passhash).toBe("secret");
 
-    const bad = User.system.safeEncode({ name: "", email: "a@b.co", passhash: "secret" });
+    const bad = User.system.safeEncode({
+      name: "",
+      email: "a@b.co",
+      passhash: "secret",
+    });
     expect(bad.success).toBe(false);
   });
 });
 
 describe("async encode (recursive encoder)", () => {
-  const User = table("user", {
+  const User = defineTable("user", {
     id: z.string(),
     name: sz.string().$min(1),
-    settings: sz.object({ theme: sz.string(), lastSeen: sz.datetime().optional() }),
+    settings: sz.object({
+      theme: sz.string(),
+      lastSeen: sz.datetime().optional(),
+    }),
     createdAt: sz.datetime().$default(surql`time::now()`).$readonly(),
   });
 
   test("encodeAsync round-trips nested codecs and omits absent defaults", async () => {
     const payload = await User.encodeAsync({
       name: "Alice",
-      settings: { theme: "dark", lastSeen: new Date("2022-01-01T00:00:00.000Z") },
+      settings: {
+        theme: "dark",
+        lastSeen: new Date("2022-01-01T00:00:00.000Z"),
+      },
     });
     expect(Object.keys(payload).sort()).toEqual(["name", "settings"]);
-    expect((payload.settings as { lastSeen: unknown }).lastSeen).toBeInstanceOf(DateTime);
+    expect((payload.settings as { lastSeen: unknown }).lastSeen).toBeInstanceOf(
+      DateTime,
+    );
     expect(payload).not.toHaveProperty("createdAt");
   });
 
   test("safeEncodeAsync aggregates leaf errors with correct paths", async () => {
-    const res = await User.safeEncodeAsync({ name: "", settings: { theme: "x" } });
+    const res = await User.safeEncodeAsync({
+      name: "",
+      settings: { theme: "x" },
+    });
     expect(res.success).toBe(false);
-    if (!res.success) expect(res.error.issues.map((i) => i.path.join("."))).toContain("name");
+    if (!res.success)
+      expect(res.error.issues.map((i) => i.path.join("."))).toContain("name");
   });
 
   test("encodePartialAsync encodes only the given keys", async () => {
@@ -246,19 +322,25 @@ describe("async encode (recursive encoder)", () => {
   });
 
   test("encodeAsync throws the aggregated ZodError on invalid input", async () => {
-    await expect(User.encodeAsync({ name: "", settings: { theme: "x" } })).rejects.toThrow();
+    await expect(
+      User.encodeAsync({ name: "", settings: { theme: "x" } }),
+    ).rejects.toThrow();
   });
 });
 
 describe("$internal fields (runtime)", () => {
-  const Account = table("account", {
+  const Account = defineTable("account", {
     id: z.string(),
     email: sz.email(),
     passhash: sz.string().$internal(),
   });
 
   test("decode strips the internal field; the system view keeps it", () => {
-    const row = { id: new RecordId("account", "1"), email: "alice@example.com", passhash: "secret" };
+    const row = {
+      id: new RecordId("account", "1"),
+      email: "alice@example.com",
+      passhash: "secret",
+    };
     const app = Account.decode(row);
     expect(app).not.toHaveProperty("passhash");
     expect(app.email).toBe("alice@example.com");
@@ -273,13 +355,16 @@ describe("$internal fields (runtime)", () => {
     expect(payload).not.toHaveProperty("passhash");
     expect(payload.email).toBe("alice@example.com");
 
-    const sysPayload = Account.system.encode({ email: "alice@example.com", passhash: "secret" });
+    const sysPayload = Account.system.encode({
+      email: "alice@example.com",
+      passhash: "secret",
+    });
     expect(sysPayload.passhash).toBe("secret");
   });
 });
 
 describe("shape ops", () => {
-  const User = table("user", {
+  const User = defineTable("user", {
     id: z.string(),
     name: sz.string(),
     email: sz.email(),
@@ -287,13 +372,21 @@ describe("shape ops", () => {
   });
 
   test("pick / omit", () => {
-    expect(Object.keys(User.pick("name", "email").fields).sort()).toEqual(["email", "name"]);
-    expect(Object.keys(User.omit("email").fields).sort()).toEqual(["bio", "id", "name"]);
+    expect(Object.keys(User.pick("name", "email").fields).sort()).toEqual([
+      "email",
+      "name",
+    ]);
+    expect(Object.keys(User.omit("email").fields).sort()).toEqual([
+      "bio",
+      "id",
+      "name",
+    ]);
   });
 
   test("partial makes every field optional", () => {
     const p = User.partial();
-    for (const f of Object.values(p.fields)) expect(defType(f.schema)).toBe("optional");
+    for (const f of Object.values(p.fields))
+      expect(defType(f.schema)).toBe("optional");
   });
 
   test("required unwraps optional fields", () => {
@@ -309,7 +402,7 @@ describe("shape ops", () => {
 });
 
 describe("config chain (immutable)", () => {
-  const User = table("user", { id: z.string() });
+  const User = defineTable("user", { id: z.string() });
 
   test("schemaless / schemafull / drop / comment return new defs", () => {
     expect(User.schemaless().config.schemafull).toBe(false);
@@ -323,23 +416,30 @@ describe("config chain (immutable)", () => {
 });
 
 describe("relation builder", () => {
-  const User = table("user", { id: z.string() });
-  const Post = table("post", { id: z.string() });
-  const Tag = table("tag", { id: z.string() });
+  const User = defineTable("user", { id: z.string() });
+  const Post = defineTable("post", { id: z.string() });
+  const Tag = defineTable("tag", { id: z.string() });
 
   test("from().to() sets endpoints, in/out fields, and relation config", () => {
-    const Liked = relation("liked", { strength: sz.number() }).from(User).to(Post);
+    const Liked = defineRelation("liked", { strength: sz.number() })
+      .from(User)
+      .to(Post);
     expect(Liked.kind).toBe("relation");
     expect(Liked.config.relation).toEqual({ from: ["user"], to: ["post"] });
     expect(Liked.fields.in).toBeInstanceOf(RecordIdField);
     expect(Liked.fields.out).toBeInstanceOf(RecordIdField);
     expect((Liked.fields.in as RecordIdField<"user">).tables).toEqual(["user"]);
-    expect((Liked.fields.out as RecordIdField<"post">).tables).toEqual(["post"]);
+    expect((Liked.fields.out as RecordIdField<"post">).tables).toEqual([
+      "post",
+    ]);
   });
 
   test("multi-endpoint relation collects all table names", () => {
-    const Rel = relation("rel").from([User, Tag]).to(Post);
-    expect(Rel.config.relation).toEqual({ from: ["user", "tag"], to: ["post"] });
+    const Rel = defineRelation("rel").from([User, Tag]).to(Post);
+    expect(Rel.config.relation).toEqual({
+      from: ["user", "tag"],
+      to: ["post"],
+    });
   });
 
   test("a normal table has no relation config", () => {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { surql } from "surrealdb";
-import { sz, table, relation, type App, type Wire } from "../src";
+import { sz, defineTable, defineRelation, type App, type Wire } from "../src";
 
 /**
  * Showcase data model for a tiny blog / social app. Demonstrates: smart record
@@ -9,7 +9,7 @@ import { sz, table, relation, type App, type Wire } from "../src";
  */
 
 /** Users — schemafull, with DB-managed timestamps and status. */
-export const User = table("user", {
+export const User = defineTable("user", {
   id: z.string(), // -> record<user> with a string id
   name: sz.string(),
   email: sz.email(),
@@ -26,14 +26,14 @@ export const User = table("user", {
 }).comment("Application users");
 
 /** Tags — a simple lookup table with string ids. */
-export const Tag = table("tag", {
+export const Tag = defineTable("tag", {
   id: z.string(),
   label: sz.string(),
   slug: sz.string(),
 });
 
 /** Posts — id omitted (defaults to record<post>); link to one author and many tags. */
-export const Post = table("post", {
+export const Post = defineTable("post", {
   author: User.record(), // record<user>
   title: sz.string(),
   body: sz.string(),
@@ -45,7 +45,7 @@ export const Post = table("post", {
 }).comment("Blog posts");
 
 /** Comments — link a post and its author. */
-export const Comment = table("comment", {
+export const Comment = defineTable("comment", {
   post: Post.record(),
   author: User.record(),
   body: sz.string(),
@@ -53,7 +53,7 @@ export const Comment = table("comment", {
 });
 
 /** Graph relation: user ->friend-> user. */
-export const Friend = relation("friend", {
+export const Friend = defineRelation("friend", {
   since: sz.datetime().$default(surql`time::now()`),
   strength: sz.number().$assert(surql`$value >= 0 AND $value <= 1`),
 })
@@ -61,7 +61,7 @@ export const Friend = relation("friend", {
   .to(User);
 
 /** Graph relation: user ->liked-> post. */
-export const Liked = relation("liked", {
+export const Liked = defineRelation("liked", {
   at: sz.datetime().$default(surql`time::now()`),
 })
   .from(User)

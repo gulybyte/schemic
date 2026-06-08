@@ -1,0 +1,312 @@
+import type { DefineStatement } from "surreal-zod";
+import {
+  emitStatements,
+  overwriteStatement,
+  removeStatement,
+} from "surreal-zod";
+import type { Snapshot } from "./meta";
+import type { AnyTable } from "./schema";
+import { plural, style } from "./style";
+
+const keyOf = (s: Pick<DefineStatement, "kind" | "name" | "table">) =>
+  `${s.kind}:${s.table ?? ""}:${s.name}`;
+
+/** Build the canonical snapshot (keyed `DEFINE` statements) for the current schemas. */
+export function buildSnapshot(defs: AnyTable[]): Snapshot {
+  const statements: Record<string, DefineStatement> = {};
+  for (const t of defs) {
+    for (const s of emitStatements(t)) statements[keyOf(s)] = s;
+  }
+  return { version: 1, statements };
+}
+
+/** One object's change, for display: `add`/`remove` carry the DDL; `change` pairs old↔new. */
+export type DiffItem = { key: string; table: string } & (
+  | { op: "add"; ddl: string }
+  | { op: "remove"; ddl: string }
+  | { op: "change"; before: string; after: string }
+);
+
+export interface Diff {
+  up: string[];
+  down: string[];
+  /** Structured per-object changes for the human display (word-level diff). */
+  items?: DiffItem[];
+  /** Every desired statement (the `next` schema), for the `--full` context view. */
+  full?: { key: string; table: string; ddl: string }[];
+}
+
+/** `true` if the two snapshots define the same objects with identical DDL. */
+export function isEmptyDiff(diff: Diff): boolean {
+  return diff.up.length === 0;
+}
+
+// Within a table, create order is table -> field -> index (each depends on the prior); drop
+// order is the reverse. Statements are grouped by table (see `diffSnapshots`).
+const RANK: Record<DefineStatement["kind"], number> = {
+  table: 0,
+  field: 1,
+  index: 2,
+};
+const tableOf = (s: DefineStatement) => s.table ?? s.name;
+
+/**
+ * Diff two snapshots into `up`/`down` SurrealQL. Added/changed objects → `DEFINE` (with
+ * `OVERWRITE` when changed); dropped objects → `REMOVE`. `down` is the exact inverse, so a
+ * migration can be rolled back. Fields of a dropped/added table are skipped (the `TABLE`
+ * statement covers them).
+ */
+export function diffSnapshots(prev: Snapshot, next: Snapshot): Diff {
+  const prevS = prev.statements;
+  const nextS = next.statements;
+
+  // Group output by table: tables in snapshot order, each followed by its own fields/indexes.
+  const tableOrder = new Map<string, number>();
+  for (const s of [...Object.values(nextS), ...Object.values(prevS)]) {
+    const t = tableOf(s);
+    if (!tableOrder.has(t)) tableOrder.set(t, tableOrder.size);
+  }
+  const ord = (s: DefineStatement) => tableOrder.get(tableOf(s)) ?? 0;
+  const byCreate = (a: DefineStatement, b: DefineStatement) =>
+    ord(a) - ord(b) || RANK[a.kind] - RANK[b.kind];
+  const byDrop = (a: DefineStatement, b: DefineStatement) =>
+    ord(b) - ord(a) || RANK[b.kind] - RANK[a.kind];
+
+  const removed = Object.keys(prevS)
+    .filter((k) => !(k in nextS))
+    .map((k) => prevS[k]);
+  const removedTables = new Set(
+    removed.filter((s) => s.kind === "table").map((s) => s.name),
+  );
+
+  const added: DefineStatement[] = [];
+  const changedNew: DefineStatement[] = [];
+  const changedOld: DefineStatement[] = [];
+  for (const k of Object.keys(nextS)) {
+    const s = nextS[k];
+    if (!(k in prevS)) added.push(s);
+    else if (prevS[k].ddl !== s.ddl) {
+      changedNew.push(s);
+      changedOld.push(prevS[k]);
+    }
+  }
+  const addedTables = new Set(
+    added.filter((s) => s.kind === "table").map((s) => s.name),
+  );
+
+  // A field/index whose owning table is dropped (or added) is covered by the TABLE statement.
+  const isOrphan = (s: DefineStatement, droppedTables: Set<string>) =>
+    s.kind !== "table" && droppedTables.has(s.table ?? "");
+
+  const up: string[] = [];
+  for (const s of removed
+    .filter((s) => !isOrphan(s, removedTables))
+    .sort(byDrop)) {
+    up.push(removeStatement(s));
+  }
+  for (const s of [...added].sort(byCreate)) up.push(s.ddl);
+  for (const s of [...changedNew].sort(byCreate))
+    up.push(overwriteStatement(s.ddl));
+
+  const down: string[] = [];
+  for (const s of added.filter((s) => !isOrphan(s, addedTables)).sort(byDrop)) {
+    down.push(removeStatement(s));
+  }
+  for (const s of [...removed].sort(byCreate)) down.push(s.ddl);
+  for (const s of [...changedOld].sort(byCreate))
+    down.push(overwriteStatement(s.ddl));
+
+  // Structured display items, grouped by table (table → its fields → its indexes).
+  const tagged: { sort: [number, number]; item: DiffItem }[] = [];
+  const at = (s: DefineStatement): [number, number] => [ord(s), RANK[s.kind]];
+  for (const s of removed.filter((s) => !isOrphan(s, removedTables))) {
+    tagged.push({
+      sort: at(s),
+      item: {
+        op: "remove",
+        key: keyOf(s),
+        table: tableOf(s),
+        ddl: removeStatement(s),
+      },
+    });
+  }
+  for (const s of added) {
+    tagged.push({
+      sort: at(s),
+      item: { op: "add", key: keyOf(s), table: tableOf(s), ddl: s.ddl },
+    });
+  }
+  for (let i = 0; i < changedNew.length; i++) {
+    const s = changedNew[i];
+    tagged.push({
+      sort: at(s),
+      item: {
+        op: "change",
+        key: keyOf(s),
+        table: tableOf(s),
+        before: changedOld[i].ddl,
+        after: s.ddl,
+      },
+    });
+  }
+  tagged.sort((a, b) => a.sort[0] - b.sort[0] || a.sort[1] - b.sort[1]);
+  const items = tagged.map((t) => t.item);
+
+  const full = Object.values(nextS)
+    .sort(byCreate)
+    .map((s) => ({ key: keyOf(s), table: tableOf(s), ddl: s.ddl }));
+
+  return { up, down, items, full };
+}
+
+/** The table a statement targets (for grouping the migration body). */
+function stmtTable(s: string): string {
+  const on = /\bON (?:TABLE )?`?([^\s`;]+)`?/.exec(s);
+  if (on) return on[1];
+  const t = /\bTABLE (?:OVERWRITE |IF (?:NOT )?EXISTS )?`?([^\s`;]+)`?/.exec(s);
+  return t ? t[1] : "";
+}
+
+/** Indent statements, with a blank line between consecutive table groups. */
+const indent = (stmts: string[]): string => {
+  const out: string[] = [];
+  let prev: string | undefined;
+  for (const s of stmts) {
+    const t = stmtTable(s);
+    if (prev !== undefined && t !== prev) out.push("");
+    out.push(`    ${s}`);
+    prev = t;
+  }
+  return out.join("\n");
+};
+
+/**
+ * Render a migration as a single self-contained SurrealQL program. Applied with the
+ * `$direction` parameter bound to `"up"` or `"down"` — verified to support `DEFINE`/`REMOVE`
+ * inside `IF` blocks on SurrealDB 3.x.
+ */
+export function renderMigration(tag: string, diff: Diff): string {
+  return [
+    `-- ${tag}`,
+    "-- Generated by surreal-zod. Review before applying.",
+    "",
+    'IF $direction = "up" {',
+    indent(diff.up),
+    "} ELSE {",
+    indent(diff.down),
+    "};",
+    "",
+  ].join("\n");
+}
+
+/**
+ * Inline word-level diff of two statements: shared tokens dim, removed tokens red, added tokens
+ * green (LCS over space-separated tokens). So a changed field shows the whole statement with only
+ * the changed words highlighted.
+ */
+export function tokenDiff(before: string, after: string): string {
+  const a = before.split(" ");
+  const b = after.split(" ");
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array(n + 1).fill(0),
+  );
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] =
+        a[i] === b[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      out.push(style.dim(a[i]));
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out.push(style.red(a[i++]));
+    } else {
+      out.push(style.green(b[j++]));
+    }
+  }
+  while (i < m) out.push(style.red(a[i++]));
+  while (j < n) out.push(style.green(b[j++]));
+  return out.join(" ");
+}
+
+/** Render one display item: `+`/`-` line for add/remove, inline word-diff for a change. */
+function renderItem(it: DiffItem): string {
+  if (it.op === "add") return style.green(`  + ${it.ddl}`);
+  if (it.op === "remove") return style.red(`  - ${it.ddl}`);
+  return `    ${tokenDiff(it.before, it.after)}`;
+}
+
+/** Render display items grouped by table (blank line between table groups). */
+export function formatItems(items: DiffItem[]): string {
+  const out: string[] = [];
+  let prev: string | undefined;
+  for (const it of items) {
+    if (prev !== undefined && it.table !== prev) out.push("");
+    out.push(renderItem(it));
+    prev = it.table;
+  }
+  return out.join("\n");
+}
+
+/** `--full`: the whole desired schema — unchanged dim, additions green, changes word-diffed. */
+function formatFull(diff: Diff): string {
+  const byKey = new Map((diff.items ?? []).map((it) => [it.key, it]));
+  const out: string[] = [];
+  let prev: string | undefined;
+  for (const f of diff.full ?? []) {
+    if (prev !== undefined && f.table !== prev) out.push("");
+    const it = byKey.get(f.key);
+    if (it?.op === "change") out.push(`    ${tokenDiff(it.before, it.after)}`);
+    else if (it?.op === "add") out.push(style.green(`  + ${f.ddl}`));
+    else out.push(style.dim(`    ${f.ddl}`));
+    prev = f.table;
+  }
+  const removed = (diff.items ?? []).filter((it) => it.op === "remove");
+  if (removed.length) {
+    out.push("");
+    for (const it of removed) out.push(renderItem(it));
+  }
+  return out.join("\n");
+}
+
+/** A human-readable view of a diff's forward (and optionally reverse) changes. */
+export function formatDiff(
+  diff: Diff,
+  opts: { down?: boolean; full?: boolean } = {},
+): string {
+  if (!diff.up.length) return "No changes.";
+  let out = opts.full ? formatFull(diff) : formatItems(diff.items ?? []);
+  if (opts.down) {
+    out += `\n\n${style.dim("  rollback (down):")}\n${diff.down.map((s) => style.dim(`  ${s}`)).join("\n")}`;
+  }
+  return out;
+}
+
+/** The kind of object a statement targets, for count summaries. */
+function kindOf(stmt: string): "table" | "field" | "index" | "other" {
+  const m = /^(?:DEFINE|REMOVE)\s+(TABLE|FIELD|INDEX)\b/.exec(stmt);
+  return m ? (m[1].toLowerCase() as "table" | "field" | "index") : "other";
+}
+
+/** A per-kind breakdown of a set of statements, e.g. `1 table, 2 fields`. */
+export function summarizeKinds(stmts: string[]): string {
+  const counts = { table: 0, field: 0, index: 0, other: 0 };
+  for (const s of stmts) counts[kindOf(s)]++;
+  const parts: string[] = [];
+  if (counts.table) parts.push(plural(counts.table, "table"));
+  if (counts.field) parts.push(plural(counts.field, "field"));
+  if (counts.index)
+    parts.push(plural(counts.index, "index").replace("indexs", "indexes"));
+  if (counts.other) parts.push(plural(counts.other, "object"));
+  return parts.join(", ");
+}

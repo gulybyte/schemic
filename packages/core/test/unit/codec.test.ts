@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { DateTime, RecordId, Uuid } from "surrealdb";
-import { sz, table } from "../../src/pure";
+import { sz, defineTable } from "../../src/pure";
 
 const UUID = "0190b6e0-1234-7890-abcd-ef0123456789";
 
@@ -88,7 +88,7 @@ describe("field-level codec (SField.decode / encode)", () => {
 });
 
 describe("table decode/encode", () => {
-  const T = table("t", {
+  const T = defineTable("t", {
     id: z.string(),
     when: sz.datetime(),
     tag: sz.uuid(),

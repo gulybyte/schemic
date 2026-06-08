@@ -5,7 +5,7 @@
  * Run: SURREAL_PASS=... bun demo.ts
  */
 import { surql } from "surrealdb";
-import { defineTable } from "../src";
+import { emitTable } from "../src";
 import { connect } from "./db";
 import { Comment, Friend, Liked, Post, PublicUser, Tag, User } from "./schema";
 
@@ -13,7 +13,7 @@ const rule = (t: string) => console.log(`\n─── ${t} ${"─".repeat(Math.ma
 
 rule("Generated schema (DDL)");
 const ddl = [User, Tag, Post, Comment, Friend, Liked]
-  .map((t) => defineTable(t, { exists: "overwrite" }))
+  .map((t) => emitTable(t, { exists: "overwrite" }))
   .join("\n");
 console.log(ddl);
 

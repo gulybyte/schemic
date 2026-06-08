@@ -13,7 +13,7 @@
  * Compile with:  bunx tsc --noEmit -p tsconfig.json   (from this directory)
  */
 
-import { type App, type Shape, sz, table, type TableDef } from "../../src/index.ts";
+import { type App, type Shape, sz, defineTable, type TableDef } from "../../src/index.ts";
 import type { RecordId } from "surrealdb";
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ type Expect<T extends true> = T;
 // 1. The schema — a real `sz` table. `id`/`createdAt`/`uid`/`manager` exercise
 //    the codecs and smart-id machinery we want to flow into query results.
 // ---------------------------------------------------------------------------
-const User = table("user", {
+const User = defineTable("user", {
   name: sz.string(),
   age: sz.number(),
   email: sz.email(),

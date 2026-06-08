@@ -5,14 +5,14 @@
  * Run: SURREAL_PASS=... bun server.ts
  */
 import { RecordId, surql } from "surrealdb";
-import { defineTable } from "../src";
+import { emitTable } from "../src";
 import { connect } from "./db";
 import { Friend, User } from "./schema";
 
 const db = await connect();
 // Ensure the schema exists (idempotent).
 await db.query(
-  [defineTable(User, { exists: "overwrite" }), defineTable(Friend, { exists: "overwrite" })].join("\n"),
+  [emitTable(User, { exists: "overwrite" }), emitTable(Friend, { exists: "overwrite" })].join("\n"),
 );
 
 const json = (data: unknown, status = 200) =>
