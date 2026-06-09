@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { EventDef, Shape, TableDef } from "surreal-zod";
+import type { Shape, StandaloneDef, TableDef } from "surreal-zod";
 import { makeJiti } from "./config";
 
 export type AnyTable = TableDef<string, Shape>;
@@ -23,15 +23,12 @@ function isTableDef(v: unknown): v is AnyTable {
   );
 }
 
-/** Duck-typed `EventDef` check (a standalone `defineEvent(…)`) — see `isTableDef` on why not `instanceof`. */
-function isEventDef(v: unknown): v is EventDef {
+/** Duck-typed standalone-def check (`defineEvent`/`defineFunction`) — see `isTableDef` on why not `instanceof`. */
+function isStandaloneDef(v: unknown): v is StandaloneDef {
   if (!v || typeof v !== "object") return false;
-  const e = v as Record<string, unknown>;
+  const d = v as Record<string, unknown>;
   return (
-    e.kind === "event" &&
-    typeof e.name === "string" &&
-    typeof e.table === "string" &&
-    "then" in e
+    (d.kind === "event" || d.kind === "function") && typeof d.name === "string"
   );
 }
 
@@ -63,29 +60,30 @@ async function* tablesIn(
 /**
  * Load every schema object from `schemaPath` (a single `.ts` module, or a directory of them): the
  * tables/relations (ordered normal-before-relation, then by name, for stable DDL) and the standalone
- * `defineEvent(…)` events. One pass over the files.
+ * defs (`defineEvent`/`defineFunction`). One pass over the files.
  */
 export async function loadDefs(
   schemaPath: string,
-): Promise<{ tables: AnyTable[]; events: EventDef[] }> {
+): Promise<{ tables: AnyTable[]; defs: StandaloneDef[] }> {
   if (!existsSync(schemaPath)) {
     throw new Error(`Schema path not found: ${schemaPath}`);
   }
   const jiti = makeJiti();
   const tables = new Map<string, AnyTable>();
-  const events: EventDef[] = [];
+  const defs: StandaloneDef[] = [];
   for (const file of schemaFiles(schemaPath)) {
     const mod = (await jiti.import(file)) as Record<string, unknown>;
     for (const value of Object.values(mod)) {
-      if (isTableDef(value)) tables.set(value.name, value); // last def of a name wins
-      else if (isEventDef(value)) events.push(value);
+      if (isTableDef(value))
+        tables.set(value.name, value); // last def of a name wins
+      else if (isStandaloneDef(value)) defs.push(value);
     }
   }
   const rank = (t: AnyTable) => (t.config.relation ? 1 : 0);
   const sorted = [...tables.values()].sort(
     (a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name),
   );
-  return { tables: sorted, events };
+  return { tables: sorted, defs };
 }
 
 /** The tables/relations from `schemaPath` (standalone events excluded — see {@link loadDefs}). */

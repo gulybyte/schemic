@@ -1861,6 +1861,64 @@ export function defineEvent(
   return new EventDef(tableName, name, spec.when, spec.then);
 }
 
+interface FunctionConfig {
+  /** Return type (an sz schema, inferred to a SurrealQL type — like a field). */
+  returns?: AnyField;
+  /** Function body: a `surql\`…\`` block (or raw string). Required to emit. */
+  body?: Expr;
+  /** `PERMISSIONS FULL` (true) / `NONE` (false) / a `surql` condition. */
+  permissions?: boolean | Expr;
+  comment?: string;
+}
+
+/**
+ * A custom function — `DEFINE FUNCTION fn::<name>(<args>) [-> <returns>] { <body> }`. Built with a
+ * chainable, immutable API (like {@link TableDef}): `defineFunction(name, args).returns(…).body(…)`.
+ * Args and the return type are sz schemas (inferred to SurrealQL types, same as table fields).
+ */
+export class FunctionDef {
+  readonly kind = "function" as const;
+  constructor(
+    readonly name: string,
+    /** Ordered named args, each an sz schema. */
+    readonly args: Record<string, AnyField>,
+    readonly config: FunctionConfig = {},
+  ) {}
+  private withConfig(c: Partial<FunctionConfig>): FunctionDef {
+    return new FunctionDef(this.name, this.args, { ...this.config, ...c });
+  }
+  /** Declare the return type (an sz schema). */
+  returns(type: AnyField): FunctionDef {
+    return this.withConfig({ returns: type });
+  }
+  /** The function body — a `surql\`…\`` block (braces optional) or a raw string. */
+  body(body: Expr): FunctionDef {
+    return this.withConfig({ body });
+  }
+  /** `PERMISSIONS`: `FULL` (true, the default), `NONE` (false), or a `surql` condition. */
+  permissions(p: boolean | Expr): FunctionDef {
+    return this.withConfig({ permissions: p });
+  }
+  comment(comment: string): FunctionDef {
+    return this.withConfig({ comment });
+  }
+}
+
+/**
+ * Declare a custom function as a standalone, exportable object:
+ * `export const greet = defineFunction("greet", { name: sz.string() }).returns(sz.string()).body(surql\`…\`)`.
+ * Emitted as `DEFINE FUNCTION fn::greet(...)`. Args are sz schemas (inferred to SurrealQL types).
+ */
+export function defineFunction(name: string, args: Shape = {}): FunctionDef {
+  return new FunctionDef(
+    name,
+    normalizeFields(args) as unknown as Record<string, AnyField>,
+  );
+}
+
+/** A schema object declared apart from a table (collected by the CLI loader and emitted on its own). */
+export type StandaloneDef = EventDef | FunctionDef;
+
 /** The app-facing type (what your code reads). */
 export type App<T extends { object: z.ZodType }> = z.output<T["object"]>;
 /** The DB wire type (what crosses the wire). */

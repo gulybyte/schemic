@@ -5,8 +5,8 @@ import {
   introspectStructured,
   structuredSnapshot,
 } from "../../src/cli/structure";
-import { emitTable } from "../../src/ddl";
-import { defineRelation, sz, defineTable } from "../../src/pure";
+import { emitDefStatement, emitTable } from "../../src/ddl";
+import { defineFunction, defineRelation, sz, defineTable } from "../../src/pure";
 import { tryConnect } from "../helpers";
 
 /**
@@ -123,13 +123,13 @@ live("event DDL introspects + round-trips", () => {
   });
 
   test("INFO … STRUCTURE reports the event; the snapshot canonicalizes it", async () => {
-    const tables = await introspectStructured(db!);
+    const { tables } = await introspectStructured(db!);
     const t = tables.find((t) => t.name === "it_evented");
     const ev = t?.events.find((e) => e.name === "it_reverify");
     expect(ev?.when).toBe("$before.email != $after.email");
     expect(ev?.then).toEqual(["UPDATE $after.id SET verified = false"]);
 
-    const ddl = structuredSnapshot([t!]).statements[
+    const ddl = structuredSnapshot({ tables: [t!], functions: [] }).statements[
       "event:it_evented:it_reverify"
     ]?.ddl;
     expect(ddl).toBe(
@@ -141,6 +141,40 @@ live("event DDL introspects + round-trips", () => {
     const key = "event:it_evented:it_reverify";
     const before = structuredSnapshot(await introspectStructured(db!));
     await db!.query(emitTable(Evented, { exists: "overwrite" }));
+    const after = structuredSnapshot(await introspectStructured(db!));
+    expect(after.statements[key].ddl).toBe(before.statements[key].ddl);
+  });
+});
+
+const Greeter = defineFunction("it_greet", { name: sz.string() })
+  .returns(sz.string())
+  .body(surql`RETURN "Hi " + $name`);
+
+live("function DDL introspects + round-trips", () => {
+  beforeAll(async () => {
+    await db!.query(emitDefStatement(Greeter, { exists: "overwrite" }).ddl);
+  });
+  afterAll(async () => {
+    await db?.query("REMOVE FUNCTION IF EXISTS fn::it_greet;");
+  });
+
+  test("INFO FOR DB STRUCTURE reports the function; the snapshot canonicalizes it", async () => {
+    const { functions } = await introspectStructured(db!);
+    const fn = functions.find((f) => f.name === "it_greet");
+    expect(fn?.args).toEqual([["name", "string"]]);
+    expect(fn?.returns).toBe("string");
+
+    const ddl = structuredSnapshot({ tables: [], functions: fn ? [fn] : [] })
+      .statements["function::it_greet"]?.ddl;
+    expect(ddl).toContain(
+      "DEFINE FUNCTION fn::it_greet($name: string) -> string {",
+    );
+  });
+
+  test("re-applying the emitted DDL is idempotent (no diff --live drift)", async () => {
+    const key = "function::it_greet";
+    const before = structuredSnapshot(await introspectStructured(db!));
+    await db!.query(emitDefStatement(Greeter, { exists: "overwrite" }).ddl);
     const after = structuredSnapshot(await introspectStructured(db!));
     expect(after.statements[key].ddl).toBe(before.statements[key].ddl);
   });

@@ -14,6 +14,7 @@ const RANK: Record<DefineStatement["kind"], number> = {
   field: 1,
   index: 2,
   event: 3,
+  function: 4,
 };
 const byCreate = (a: DefineStatement, b: DefineStatement) =>
   RANK[a.kind] - RANK[b.kind];
@@ -48,8 +49,8 @@ export async function diffAgainstDb(
     new Set([config.migrationsTable, `${config.migrationsTable}_lock`]),
   );
 
-  const { tables, events } = await loadDefs(config.schemaPath);
-  const ddl = Object.values(buildSnapshot(tables, events).statements)
+  const { tables, defs } = await loadDefs(config.schemaPath);
+  const ddl = Object.values(buildSnapshot(tables, defs).statements)
     .sort(byCreate)
     .map((s) => s.ddl)
     .join("\n");

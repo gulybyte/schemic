@@ -54,6 +54,19 @@ export interface StructEvent {
   then: string[];
 }
 
+export interface StructFunction {
+  name: string;
+  /** Ordered `[argName, surqlType]` pairs. */
+  args: [string, string][];
+  /** The body block, e.g. `{ RETURN $a + $b }`. */
+  block: string;
+  /** Declared return type, if any. */
+  returns?: string;
+  /** Execute permission: `true` (FULL, the default) / `false` (NONE) / a WHERE expression. */
+  permissions?: boolean | string;
+  comment?: string;
+}
+
 export interface StructTableKind {
   kind: "NORMAL" | "ANY" | "RELATION";
   in?: string[];
@@ -78,6 +91,13 @@ interface DbStructure {
     kind: { kind: StructTableKind["kind"]; in?: unknown[]; out?: unknown[] };
     id?: number;
   })[];
+  functions?: StructFunction[];
+}
+
+/** The structured database: tables (with their fields/indexes/events) and db-level functions. */
+export interface DbStructured {
+  tables: StructTable[];
+  functions: StructFunction[];
 }
 interface TableStructure {
   fields?: StructField[];
@@ -218,6 +238,24 @@ function canonicalEvent(t: StructTable, ev: StructEvent): string {
 }
 
 /**
+ * Canonical `DEFINE FUNCTION …`. The `block` is taken verbatim (already `{ … }`); a `true`
+ * (FULL — SurrealDB's default) permission is dropped so an unspecified `PERMISSIONS` compares equal
+ * across the live DB and the shadow-applied schema.
+ */
+function canonicalFunction(fn: StructFunction): string {
+  const args = fn.args.map(([n, t]) => `$${n}: ${t}`).join(", ");
+  const parts = [`DEFINE FUNCTION fn::${fn.name}(${args})`];
+  if (fn.returns !== undefined) parts.push(`-> ${fn.returns}`);
+  parts.push(fn.block);
+  if (fn.permissions === false) parts.push("PERMISSIONS NONE");
+  else if (typeof fn.permissions === "string")
+    parts.push(`PERMISSIONS ${fn.permissions}`);
+  if (fn.comment !== undefined)
+    parts.push(`COMMENT ${JSON.stringify(fn.comment)}`);
+  return `${parts.join(" ")};`;
+}
+
+/**
  * Fold an array element type into a BARE `array`/`set` kind, so a field stored as `array` with an
  * `array.* TYPE object` element compares equal to `array<object>` (the typed form surreal-zod
  * emits). Typed kinds (`array<X>`) and the `.*` itself are left alone — the element is in the type.
@@ -259,11 +297,15 @@ const keyOf = (s: Pick<DefineStatement, "kind" | "name" | "table">) =>
   `${s.kind}:${s.table ?? ""}:${s.name}`;
 
 /**
- * Build a canonical-DDL {@link Snapshot} from structured tables. Skips implicit `id` (and
- * `in`/`out` on relations) and childless `*` array-element fields — surreal-zod's emit doesn't
- * produce them, so the snapshot must not either (else diff would try to drop/add them).
+ * Build a canonical-DDL {@link Snapshot} from the structured database (tables + db-level functions).
+ * Skips implicit `id` (and `in`/`out` on relations) and childless `*` array-element fields —
+ * surreal-zod's emit doesn't produce them, so the snapshot must not either (else diff would
+ * try to drop/add them).
  */
-export function structuredSnapshot(tables: StructTable[]): Snapshot {
+export function structuredSnapshot({
+  tables,
+  functions,
+}: DbStructured): Snapshot {
   const statements: Record<string, DefineStatement> = {};
   for (const t of tables) {
     const tableStmt: DefineStatement = {
@@ -325,25 +367,34 @@ export function structuredSnapshot(tables: StructTable[]): Snapshot {
       statements[keyOf(s)] = s;
     }
   }
+  for (const fn of functions) {
+    const s: DefineStatement = {
+      kind: "function",
+      name: fn.name,
+      ddl: canonicalFunction(fn),
+    };
+    statements[keyOf(s)] = s;
+  }
   return { version: 1, statements };
 }
 
 /**
- * Read the live database as structured tables via `INFO FOR DB STRUCTURE` (table heads) plus one
- * `INFO FOR TABLE … STRUCTURE` per table (its fields + indexes), skipping `exclude`d tables.
+ * Read the live database structure via `INFO FOR DB STRUCTURE` (table heads + db-level functions)
+ * plus one `INFO FOR TABLE … STRUCTURE` per table (its fields/indexes/events), skipping `exclude`d
+ * tables. Functions are db-level and not excludable.
  */
 export async function introspectStructured(
   db: Surreal,
   exclude: Set<string> = new Set(),
-): Promise<StructTable[]> {
+): Promise<DbStructured> {
   const [dbInfo] = await db.query<[DbStructure]>("INFO FOR DB STRUCTURE");
-  const out: StructTable[] = [];
+  const tables: StructTable[] = [];
   for (const t of dbInfo.tables ?? []) {
     if (exclude.has(t.name)) continue;
     const [tinfo] = await db.query<[TableStructure]>(
       `INFO FOR TABLE ${escapeIdent(t.name)} STRUCTURE`,
     );
-    out.push({
+    tables.push({
       name: t.name,
       kind: {
         kind: t.kind.kind,
@@ -359,5 +410,5 @@ export async function introspectStructured(
       events: tinfo.events ?? [],
     });
   }
-  return out;
+  return { tables, functions: dbInfo.functions ?? [] };
 }

@@ -9,7 +9,7 @@
 export { surql } from "surrealdb";
 export type { DefineOptions, DefineStatement } from "./ddl";
 export {
-  emitEventStatement,
+  emitDefStatement,
   emitField,
   emitFieldStatements,
   emitStatements,
@@ -22,6 +22,7 @@ export type {
   Create,
   Expr,
   Shape,
+  StandaloneDef,
   SurrealMeta,
   TableConfig,
   TableEvent,
@@ -31,9 +32,11 @@ export type {
 } from "./pure";
 export {
   defineEvent,
+  defineFunction,
   defineRelation,
   defineTable,
   EventDef,
+  FunctionDef,
   objectFieldsRegistry,
   RecordIdField,
   RelationDef,

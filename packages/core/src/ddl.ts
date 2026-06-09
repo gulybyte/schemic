@@ -1,13 +1,14 @@
 import { BoundQuery, escapeIdent, toSurqlString } from "surrealdb";
 import type { z } from "zod";
 import {
-  type EventDef,
   type Expr,
   type FieldPermissions,
+  type FunctionDef,
   objectFieldsRegistry,
   type PermOp,
   type SField,
   type Shape,
+  type StandaloneDef,
   type SurrealMeta,
   surrealTypeRegistry,
   type TableDef,
@@ -331,10 +332,15 @@ export function renderPermissions(
  * individually. `emitTable`/`emitField` are the string-joined views of these.
  */
 export interface DefineStatement {
-  kind: "table" | "field" | "index" | "event";
+  kind: "table" | "field" | "index" | "event" | "function";
   name: string;
   table?: string;
   ddl: string;
+}
+
+/** The SurrealQL type of a field schema (e.g. `string`, `option<int>`, `record<user>`). */
+export function fieldType(field: SField): string {
+  return inferField(field.schema).type;
 }
 
 /** Inline a single event clause (`when`/one `then`): a `BoundQuery` is inlined, a string passes through. */
@@ -360,17 +366,52 @@ function emitEvent(
   return `${parts.join(" ")};`;
 }
 
-/** The `DefineStatement` for a standalone {@link EventDef} (the `defineEvent(…)` form). */
-export function emitEventStatement(
-  ev: EventDef,
+/** `DEFINE FUNCTION fn::<name>(<args>) [-> <returns>] { <body> } [PERMISSIONS …] [COMMENT …]`. */
+function emitFunction(fn: FunctionDef, opts?: DefineOptions): string {
+  if (fn.config.body === undefined) {
+    throw new Error(
+      `function fn::${fn.name} has no body — call .body(surql\`…\`)`,
+    );
+  }
+  const args = Object.entries(fn.args)
+    .map(([n, f]) => `$${n}: ${fieldType(f)}`)
+    .join(", ");
+  const parts = [
+    `DEFINE FUNCTION ${existsPrefix(opts)}fn::${escapeIdent(fn.name)}(${args})`,
+  ];
+  if (fn.config.returns) parts.push(`-> ${fieldType(fn.config.returns)}`);
+  // Body is a block; wrap a bare statement list in braces (a `surql\`{ … }\`` passes through).
+  const body = eventClause(fn.config.body).trim();
+  parts.push(body.startsWith("{") ? body : `{ ${body} }`);
+  const p = fn.config.permissions;
+  if (p !== undefined) {
+    parts.push(
+      p === true
+        ? "PERMISSIONS FULL"
+        : p === false
+          ? "PERMISSIONS NONE"
+          : `PERMISSIONS ${eventClause(p)}`,
+    );
+  }
+  if (fn.config.comment)
+    parts.push(`COMMENT ${JSON.stringify(fn.config.comment)}`);
+  return `${parts.join(" ")};`;
+}
+
+/** The `DefineStatement` for a standalone def — `defineEvent(…)` or `defineFunction(…)`. */
+export function emitDefStatement(
+  def: StandaloneDef,
   opts?: DefineOptions,
 ): DefineStatement {
-  return {
-    kind: "event",
-    name: ev.name,
-    table: ev.table,
-    ddl: emitEvent(ev.table, ev, opts),
-  };
+  if (def.kind === "event") {
+    return {
+      kind: "event",
+      name: def.name,
+      table: def.table,
+      ddl: emitEvent(def.table, def, opts),
+    };
+  }
+  return { kind: "function", name: def.name, ddl: emitFunction(def, opts) };
 }
 
 /** Emit `DEFINE FIELD path ...` for a node, then recurse into its children. */
@@ -594,6 +635,9 @@ export function removeStatement(
   }
   if (s.kind === "event") {
     return `REMOVE EVENT IF EXISTS ${escapeIdent(s.name)} ON TABLE ${escapeIdent(s.table ?? "")};`;
+  }
+  if (s.kind === "function") {
+    return `REMOVE FUNCTION IF EXISTS fn::${escapeIdent(s.name)};`;
   }
   return `REMOVE FIELD IF EXISTS ${s.name} ON TABLE ${escapeIdent(s.table ?? "")};`;
 }

@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 // Import `sz`/`table` by package name (like the CLI does) so the table types line up with the
 // `surreal-zod`-typed signatures in cli/diff (avoids src-vs-lib duplicate-declaration errors).
-import { defineEvent, defineTable, emitTable, surql, sz } from "surreal-zod";
+import {
+  defineEvent,
+  defineFunction,
+  defineTable,
+  emitTable,
+  surql,
+  sz,
+} from "surreal-zod";
 import {
   buildSnapshot,
   diffSnapshots,
@@ -311,5 +318,58 @@ describe("events", () => {
     expect(up).toContain(
       "DEFINE EVENT on_n ON TABLE user THEN UPDATE $after.id SET touched = true;",
     );
+  });
+});
+
+describe("functions", () => {
+  const User = defineTable("user", { id: sz.string() });
+  const ddlOf = (fn: ReturnType<typeof defineFunction>) =>
+    diffSnapshots(EMPTY_SNAPSHOT, buildSnapshot([], [fn])).up[0];
+
+  test("emits DEFINE FUNCTION with sz-typed args + returns, permissions, comment", () => {
+    const greet = defineFunction("greet", { name: sz.string() })
+      .returns(sz.string())
+      .body(surql`RETURN "Hi " + $name`)
+      .permissions(false)
+      .comment("greeter");
+    expect(ddlOf(greet)).toBe(
+      `DEFINE FUNCTION fn::greet($name: string) -> string { RETURN "Hi " + $name } PERMISSIONS NONE COMMENT "greeter";`,
+    );
+  });
+
+  test("sz-typed args infer SurrealQL types (record/int), bare body is braced", () => {
+    const fn = defineFunction("touch", { who: User.record(), n: sz.int() }).body(
+      surql`UPDATE $who SET hits = $n`,
+    );
+    expect(ddlOf(fn)).toBe(
+      "DEFINE FUNCTION fn::touch($who: record<user>, $n: int) { UPDATE $who SET hits = $n };",
+    );
+  });
+
+  test("a surql`{ … }` block body is not double-braced", () => {
+    const fn = defineFunction("noop", {}).body(surql`{ RETURN NONE }`);
+    expect(ddlOf(fn)).toBe("DEFINE FUNCTION fn::noop() { RETURN NONE };");
+  });
+
+  test("adding a function → DEFINE FUNCTION up / REMOVE FUNCTION down", () => {
+    const fn = defineFunction("add", { a: sz.int(), b: sz.int() })
+      .returns(sz.int())
+      .body(surql`RETURN $a + $b`);
+    const diff = diffSnapshots(EMPTY_SNAPSHOT, buildSnapshot([], [fn]));
+    expect(diff.up).toEqual([
+      "DEFINE FUNCTION fn::add($a: int, $b: int) -> int { RETURN $a + $b };",
+    ]);
+    expect(diff.down).toEqual(["REMOVE FUNCTION IF EXISTS fn::add;"]);
+  });
+
+  test("a function with no body throws on emit", () => {
+    const fn = defineFunction("bad", {});
+    expect(() => buildSnapshot([], [fn])).toThrow(/has no body/);
+  });
+
+  test("summarizeKinds counts functions", () => {
+    const fn = defineFunction("f", {}).body(surql`RETURN 1`);
+    const up = diffSnapshots(EMPTY_SNAPSHOT, buildSnapshot([], [fn])).up;
+    expect(summarizeKinds(up)).toBe("1 function");
   });
 });

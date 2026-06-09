@@ -1,6 +1,6 @@
-import type { DefineStatement, EventDef } from "surreal-zod";
+import type { DefineStatement, StandaloneDef } from "surreal-zod";
 import {
-  emitEventStatement,
+  emitDefStatement,
   emitStatements,
   overwriteStatement,
   removeStatement,
@@ -14,18 +14,18 @@ const keyOf = (s: Pick<DefineStatement, "kind" | "name" | "table">) =>
 
 /**
  * Build the canonical snapshot (keyed `DEFINE` statements) for the current schemas: every table's
- * statements, plus any standalone `defineEvent(…)` events (keyed by table+name like inline ones).
+ * statements, plus any standalone defs (`defineEvent`/`defineFunction`), keyed by kind+table+name.
  */
 export function buildSnapshot(
-  defs: AnyTable[],
-  events: EventDef[] = [],
+  tables: AnyTable[],
+  defs: StandaloneDef[] = [],
 ): Snapshot {
   const statements: Record<string, DefineStatement> = {};
-  for (const t of defs) {
+  for (const t of tables) {
     for (const s of emitStatements(t)) statements[keyOf(s)] = s;
   }
-  for (const ev of events) {
-    const s = emitEventStatement(ev);
+  for (const d of defs) {
+    const s = emitDefStatement(d);
     statements[keyOf(s)] = s;
   }
   return { version: 1, statements };
@@ -68,6 +68,7 @@ const RANK: Record<DefineStatement["kind"], number> = {
   field: 1,
   index: 2,
   event: 3,
+  function: 4,
 };
 const tableOf = (s: DefineStatement) => s.table ?? s.name;
 
@@ -393,16 +394,24 @@ export function formatDiff(
 }
 
 /** The kind of object a statement targets, for count summaries. */
-function kindOf(stmt: string): "table" | "field" | "index" | "event" | "other" {
-  const m = /^(?:DEFINE|REMOVE)\s+(TABLE|FIELD|INDEX|EVENT)\b/.exec(stmt);
-  return m
-    ? (m[1].toLowerCase() as "table" | "field" | "index" | "event")
-    : "other";
+type CountKind = "table" | "field" | "index" | "event" | "function" | "other";
+function kindOf(stmt: string): CountKind {
+  const m = /^(?:DEFINE|REMOVE)\s+(TABLE|FIELD|INDEX|EVENT|FUNCTION)\b/.exec(
+    stmt,
+  );
+  return m ? (m[1].toLowerCase() as CountKind) : "other";
 }
 
 /** A per-kind breakdown of a set of statements, e.g. `1 table, 2 fields`. */
 export function summarizeKinds(stmts: string[]): string {
-  const counts = { table: 0, field: 0, index: 0, event: 0, other: 0 };
+  const counts = {
+    table: 0,
+    field: 0,
+    index: 0,
+    event: 0,
+    function: 0,
+    other: 0,
+  };
   for (const s of stmts) counts[kindOf(s)]++;
   const parts: string[] = [];
   if (counts.table) parts.push(plural(counts.table, "table"));
@@ -410,6 +419,7 @@ export function summarizeKinds(stmts: string[]): string {
   if (counts.index)
     parts.push(plural(counts.index, "index").replace("indexs", "indexes"));
   if (counts.event) parts.push(plural(counts.event, "event"));
+  if (counts.function) parts.push(plural(counts.function, "function"));
   if (counts.other) parts.push(plural(counts.other, "object"));
   return parts.join(", ");
 }

@@ -4,8 +4,10 @@ import type { Surreal } from "surrealdb";
 import type { ResolvedConfig } from "./config";
 import { existingTables } from "./schema";
 import {
+  type DbStructured,
   introspectStructured,
   type StructField,
+  type StructFunction,
   type StructPerm,
   type StructPermissions,
   type StructTable,
@@ -483,6 +485,26 @@ function renderTableModule(t: StructTable, ctx: RenderCtx): string {
   return `${imports.join("\n")}\n\n${code}\n`;
 }
 
+/** A const name for a function — `fn.name` sanitized to an identifier (`math::add` → `math_add`). */
+function fnConst(name: string): string {
+  const id = name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return /^[A-Za-z]/.test(id) ? id : `fn_${id}`;
+}
+
+/** Reverse a `StructFunction` into a `defineFunction(name, args).returns(…).body(…)…` const. */
+function renderFunctionConst(fn: StructFunction): string {
+  const args = fn.args.map(([n, t]) => `${ident(n)}: ${szType(t)}`).join(", ");
+  let code = `export const ${fnConst(fn.name)} = defineFunction(${JSON.stringify(fn.name)}, { ${args} })`;
+  if (fn.returns !== undefined) code += `\n  .returns(${szType(fn.returns)})`;
+  code += `\n  .body(surql\`${fn.block}\`)`;
+  if (fn.permissions === false) code += `\n  .permissions(false)`;
+  else if (typeof fn.permissions === "string")
+    code += `\n  .permissions(surql\`${fn.permissions}\`)`;
+  if (fn.comment !== undefined)
+    code += `\n  .comment(${JSON.stringify(fn.comment)})`;
+  return `${code};`;
+}
+
 /** Topologically sort so a table comes after every same-file table it references (deps first). */
 function topoSort<T extends { name: string; deps: string[] }>(items: T[]): T[] {
   const byName = new Map(items.map((it) => [it.name, it]));
@@ -519,7 +541,7 @@ export async function pull(
   config: ResolvedConfig,
   opts: { force?: boolean } = {},
 ): Promise<PullResult> {
-  const tables = await introspectStructured(
+  const { tables, functions } = await introspectStructured(
     db,
     new Set([config.migrationsTable, `${config.migrationsTable}_lock`]),
   );
@@ -539,13 +561,13 @@ export async function pull(
   });
 
   return config.schemaIsFile
-    ? pullToFile(tables, config, opts, makeCtx)
-    : pullToDir(tables, config, opts, makeCtx);
+    ? pullToFile({ tables, functions }, config, opts, makeCtx)
+    : pullToDir({ tables, functions }, config, opts, makeCtx);
 }
 
 /** Directory layout: one `<table>.ts` per table, refusing to duplicate tables defined elsewhere. */
 async function pullToDir(
-  tables: StructTable[],
+  { tables, functions }: DbStructured,
   config: ResolvedConfig,
   opts: { force?: boolean },
   makeCtx: (t: StructTable) => RenderCtx,
@@ -596,12 +618,28 @@ async function pullToDir(
     writeFileSync(file, renderTableModule(t, makeCtx(t)));
     files.push(`${t.name}.ts`);
   }
+  // Db-level functions live together in one `functions.ts` (they have no owning table).
+  if (functions.length) {
+    const file = join(dir, "functions.ts");
+    if (existsSync(file) && !opts.force) {
+      skipped.push("functions.ts");
+    } else {
+      writeFileSync(file, renderFunctionsModule(functions));
+      files.push("functions.ts");
+    }
+  }
   return { files, skipped };
+}
+
+/** The `functions.ts` module for the directory layout (all db-level functions + their imports). */
+function renderFunctionsModule(functions: StructFunction[]): string {
+  const body = functions.map(renderFunctionConst).join("\n\n");
+  return `import { defineFunction, sz, surql } from "surreal-zod";\n\n${body}\n`;
 }
 
 /** Single-file layout: one combined module (tables ordered so same-file refs resolve). */
 async function pullToFile(
-  tables: StructTable[],
+  { tables, functions }: DbStructured,
   config: ResolvedConfig,
   opts: { force?: boolean },
   makeCtx: (t: StructTable) => RenderCtx,
@@ -626,11 +664,15 @@ async function pullToFile(
     };
   });
   const ordered = topoSort(rendered);
-  const factories = [...new Set(ordered.map((r) => r.factory))].sort();
-  const usesSurql = ordered.some((r) => r.usesSurql);
+  const fnCode = functions.map(renderFunctionConst);
+  const factories = [...new Set(ordered.map((r) => r.factory))];
+  if (functions.length) factories.push("defineFunction");
+  factories.sort();
+  const usesSurql = functions.length > 0 || ordered.some((r) => r.usesSurql);
   const names = ["sz", ...(usesSurql ? ["surql"] : []), ...factories];
   const imports = [`import { ${names.join(", ")} } from "surreal-zod";`];
-  const out = `${imports.join("\n")}\n\n${ordered.map((r) => r.code).join("\n\n")}\n`;
+  const body = [...ordered.map((r) => r.code), ...fnCode].join("\n\n");
+  const out = `${imports.join("\n")}\n\n${body}\n`;
 
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, out);

@@ -427,9 +427,9 @@ configFlag(
       const lines = formatDuplicates(dups, config.root).map((l) => `  ${l}`);
       throw new Error(`${duplicateHeader(dups.size)}\n${lines.join("\n")}`);
     }
-    const { tables, events } = await loadDefs(config.schemaPath);
+    const { tables, defs } = await loadDefs(config.schemaPath);
     const kinds = summarizeKinds(
-      Object.values(buildSnapshot(tables, events).statements).map((s) => s.ddl),
+      Object.values(buildSnapshot(tables, defs).statements).map((s) => s.ddl),
     );
     console.log(ok(`Schemas valid${kinds ? ` — ${kinds}` : " (no objects)"}.`));
   });

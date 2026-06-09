@@ -41,8 +41,8 @@ export interface MigrationPlan {
 export async function planMigration(
   config: ResolvedConfig,
 ): Promise<MigrationPlan> {
-  const { tables, events } = await loadDefs(config.schemaPath);
-  const next = buildSnapshot(tables, events);
+  const { tables, defs } = await loadDefs(config.schemaPath);
+  const next = buildSnapshot(tables, defs);
   const diff = diffSnapshots(readSnapshot(config.metaDir), next);
   return { diff, next };
 }
