@@ -107,6 +107,23 @@ function inferField(
     case "null":
       return leaf("null");
 
+    // No SurrealQL mapping — these exist on `sz.*` only for drop-in `z.*` parity, and are
+    // rejected when used as a table field. (Registered native types — datetime/uuid/record/…
+    // — are caught by the `surrealTypeRegistry` check at the top, so they never reach here.)
+    case "symbol":
+    case "undefined":
+    case "void":
+    case "never":
+    case "nan":
+    case "function":
+    case "promise":
+    case "custom":
+      throw new Error(
+        `sz.${def.type}() has no SurrealQL type and can't be used as a table field. ` +
+          `Use a Surreal-native builder (e.g. sz.string / sz.int / sz.datetime / sz.uuid / ` +
+          `sz.recordId) instead, or keep this schema out of your table definitions.`,
+      );
+
     case "optional":
     case "default":
     case "prefault": {
@@ -183,7 +200,23 @@ function inferField(
           : [];
       // `set<T>` is distinct from `array<T>` in SurrealDB (dedup) and round-trips — preserve it.
       const kw = def.type === "set" ? "set" : "array";
-      return { type: `${kw}<${elem.type}>`, flexible: false, children };
+      // `array<T, N>` / `set<T, N>` — N is a MAX size from a Zod `.max()` check
+      // (`max_length` on arrays, `max_size` on sets). No min in the SurrealQL form.
+      const checks =
+        (
+          def as {
+            checks?: {
+              _zod?: { def?: { check?: string; maximum?: number } };
+            }[];
+          }
+        ).checks ?? [];
+      const maximum = checks
+        .map((c) => c._zod?.def)
+        .find(
+          (d) => d?.check === "max_length" || d?.check === "max_size",
+        )?.maximum;
+      const size = typeof maximum === "number" ? `, ${maximum}` : "";
+      return { type: `${kw}<${elem.type}${size}>`, flexible: false, children };
     }
 
     case "record":
