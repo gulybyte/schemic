@@ -177,29 +177,42 @@ function canonicalKind(kind: string): string {
   return [...parts].sort().join(" | ");
 }
 
-/** Canonical `PERMISSIONS …` clause from structured perms (`""` when none apply). */
+/**
+ * Canonical `PERMISSIONS …` clause from structured perms (`""` when it matches the kind default).
+ * `defaultFull` is the kind's default: FULL for fields/functions, NONE for tables. INFO materializes
+ * the default explicitly; the generator omits it — so we drop the clause when all ops are the
+ * default, making an unspecified `PERMISSIONS` compare equal across the two emitters.
+ */
 function canonicalPerms(
   perms: StructPermissions | undefined,
   ops: (keyof StructPermissions)[],
+  defaultFull: boolean,
 ): string {
   if (!perms) return "";
   const vals = ops.map((op) => perms[op]);
-  if (vals.every((v) => v === true)) return "PERMISSIONS FULL";
-  if (vals.every((v) => v === false || v === undefined))
-    return "PERMISSIONS NONE";
-  const clauses = ops.map((op) => {
-    const v = perms[op];
-    if (v === true) return `FOR ${op} FULL`;
-    if (v === false || v === undefined) return `FOR ${op} NONE`;
-    return `FOR ${op} WHERE ${v}`;
-  });
-  return `PERMISSIONS ${clauses.join(" ")}`;
+  const allFull = vals.every((v) => v === true);
+  const allNone = vals.every((v) => v === false || v === undefined);
+  if (defaultFull ? allFull : allNone) return "";
+  if (allFull) return "PERMISSIONS FULL";
+  if (allNone) return "PERMISSIONS NONE";
+  // Mixed: emit only the ops that differ from the kind default (the generator omits default ops).
+  const isDefault = (v: StructPermissions[keyof StructPermissions]) =>
+    defaultFull ? v === true : v === false || v === undefined;
+  const clauses = ops
+    .filter((op) => !isDefault(perms[op]))
+    .map((op) => {
+      const v = perms[op];
+      if (v === true) return `FOR ${op} FULL`;
+      if (v === false || v === undefined) return `FOR ${op} NONE`;
+      return `FOR ${op} WHERE ${v}`;
+    });
+  return clauses.length ? `PERMISSIONS ${clauses.join(" ")}` : "";
 }
 
 /** Canonical `DEFINE FIELD …`. The name is taken as-is (STRUCTURE already escapes reserved words). */
 function canonicalField(f: StructField): string {
   const parts = [
-    `DEFINE FIELD ${f.name} ON ${f.table} TYPE ${canonicalKind(f.kind)}`,
+    `DEFINE FIELD ${f.name} ON TABLE ${f.table} TYPE ${canonicalKind(f.kind)}`,
   ];
   if (f.flexible) parts.push("FLEXIBLE");
   if (f.default !== undefined)
@@ -210,7 +223,11 @@ function canonicalField(f: StructField): string {
   if (f.readonly) parts.push("READONLY");
   if (f.comment !== undefined)
     parts.push(`COMMENT ${JSON.stringify(f.comment)}`);
-  const perms = canonicalPerms(f.permissions, ["select", "create", "update"]);
+  const perms = canonicalPerms(
+    f.permissions,
+    ["select", "create", "update"],
+    true,
+  );
   if (perms) parts.push(perms);
   return `${parts.join(" ")};`;
 }
@@ -220,10 +237,11 @@ function canonicalTableHead(t: StructTable): string {
   const k = t.kind;
   let type: string;
   if (k.kind === "RELATION") {
-    // Endpoints optional — omit IN/OUT when unrestricted (matches `emit`).
+    // Endpoints optional — omit FROM/TO when unrestricted (matches `emit`). INFO stores them as
+    // IN/OUT; the generator (and our canonical form) use the FROM/TO alias.
     type = "RELATION";
-    if (k.in?.length) type += ` IN ${k.in.join(" | ")}`;
-    if (k.out?.length) type += ` OUT ${k.out.join(" | ")}`;
+    if (k.in?.length) type += ` FROM ${k.in.join(" | ")}`;
+    if (k.out?.length) type += ` TO ${k.out.join(" | ")}`;
   } else {
     type = k.kind;
   }
@@ -238,12 +256,11 @@ function canonicalTableHead(t: StructTable): string {
   }
   if (t.comment !== undefined)
     parts.push(`COMMENT ${JSON.stringify(t.comment)}`);
-  const perms = canonicalPerms(t.permissions, [
-    "select",
-    "create",
-    "update",
-    "delete",
-  ]);
+  const perms = canonicalPerms(
+    t.permissions,
+    ["select", "create", "update", "delete"],
+    false,
+  );
   if (perms) parts.push(perms);
   return `${parts.join(" ")};`;
 }
@@ -253,7 +270,7 @@ function canonicalIndex(t: StructTable, idx: StructIndex): string {
   // A COUNT index has no columns → no `FIELDS` clause (`idx.index` carries `COUNT`).
   const fields = idx.cols.length ? ` FIELDS ${idx.cols.join(", ")}` : "";
   const spec = idx.index ? ` ${idx.index}` : "";
-  return `DEFINE INDEX ${idx.name} ON ${t.name}${fields}${spec};`;
+  return `DEFINE INDEX ${idx.name} ON TABLE ${t.name}${fields}${spec};`;
 }
 
 /**
@@ -262,7 +279,7 @@ function canonicalIndex(t: StructTable, idx: StructIndex): string {
  * `THEN` formatting compares equal across the live DB and the shadow-applied schema.
  */
 function canonicalEvent(t: StructTable, ev: StructEvent): string {
-  const parts = [`DEFINE EVENT ${ev.name} ON ${t.name}`];
+  const parts = [`DEFINE EVENT ${ev.name} ON TABLE ${t.name}`];
   if (ev.when !== undefined && ev.when !== "true")
     parts.push(`WHEN ${ev.when}`);
   parts.push(`THEN ${ev.then.join(", ")}`);

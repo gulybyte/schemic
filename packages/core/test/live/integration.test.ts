@@ -53,7 +53,7 @@ live("CRUD + codecs against a live DB", () => {
   });
 
   test("CREATE fills DB-side defaults; decode yields app types", async () => {
-    const id = User.record().make("alice");
+    const id = User.record().for("alice");
     await db!.query(
       surql`CREATE ${id} CONTENT ${User.encode({ name: "Alice" })}`,
     );
@@ -68,7 +68,7 @@ live("CRUD + codecs against a live DB", () => {
   });
 
   test("encodePartial MERGE updates a field", async () => {
-    const id = User.record().make("alice");
+    const id = User.record().for("alice");
     await db!.query(
       surql`UPDATE ${id} MERGE ${User.encodePartial({ role: "admin" })}`,
     );
@@ -78,7 +78,7 @@ live("CRUD + codecs against a live DB", () => {
   });
 
   test("native round-trip: uuid + bytes + datetime through the DB", async () => {
-    const id = Native.record().make("n1");
+    const id = Native.record().for("n1");
     const tag = "0190b6e0-1234-7890-abcd-ef0123456789";
     await db!.query(
       surql`CREATE ${id} CONTENT ${Native.encode({
@@ -98,8 +98,8 @@ live("CRUD + codecs against a live DB", () => {
   });
 
   test("RELATE + decode of an edge record", async () => {
-    const alice = User.record().make("alice");
-    const bob = User.record().make("bob");
+    const alice = User.record().for("alice");
+    const bob = User.record().for("bob");
     await db!.query(
       surql`CREATE ${bob} CONTENT ${User.encode({ name: "Bob" })}`,
     );
@@ -116,7 +116,7 @@ live("CRUD + codecs against a live DB", () => {
   });
 
   test("graph traversal", async () => {
-    const alice = User.record().make("alice");
+    const alice = User.record().for("alice");
     const [res] = await db!.query<[{ friends: string[] }[]]>(
       surql`SELECT ->it_friend->it_user.name AS friends FROM ${alice}`,
     );
@@ -154,7 +154,7 @@ live("event DDL introspects + round-trips", () => {
       accesses: [],
     }).statements["event:it_evented:it_reverify"]?.ddl;
     expect(ddl).toBe(
-      "DEFINE EVENT it_reverify ON it_evented WHEN $before.email != $after.email THEN UPDATE $after.id SET verified = false;",
+      "DEFINE EVENT it_reverify ON TABLE it_evented WHEN $before.email != $after.email THEN UPDATE $after.id SET verified = false;",
     );
   });
 
