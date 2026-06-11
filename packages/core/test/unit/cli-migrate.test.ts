@@ -13,6 +13,7 @@ function tmpConfig(): ResolvedConfig {
     schema: "schemas",
     migrations: "migrations",
     db: { url: "", namespace: "", database: "" },
+    checkDb: { url: "", namespace: "", database: "" },
     root,
     schemaPath: join(root, "schemas"),
     schemaIsFile: false,

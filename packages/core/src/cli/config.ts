@@ -1,7 +1,11 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createJiti } from "jiti";
-import type { AuthLevel, SurrealZodConfig } from "surreal-zod/config";
+import type {
+  AuthLevel,
+  SurrealZodConfig,
+  SurrealZodConnection,
+} from "surreal-zod/config";
 import { escapeIdent, Surreal } from "surrealdb";
 
 const CONFIG_NAMES = [
@@ -84,6 +88,8 @@ export interface ResolvedConfig extends SurrealZodConfig {
   metaDir: string;
   /** Name of the table that records applied migrations. */
   migrationsTable: string;
+  /** Connection for `sz check`'s migration replay (`config.check.db` merged over `db`). */
+  checkDb: SurrealZodConnection;
 }
 
 /**
@@ -130,20 +136,24 @@ export async function loadConfig(opts?: {
   const schemaPath = resolve(root, schema);
   const migrations = config.migrations ?? DEFAULT_MIGRATIONS;
   const migrationsDir = resolve(root, migrations);
+  const db: SurrealZodConnection = {
+    url: process.env.SURREAL_URL ?? config.db.url,
+    namespace: process.env.SURREAL_NAMESPACE ?? config.db.namespace,
+    database: process.env.SURREAL_DATABASE ?? config.db.database,
+    username: process.env.SURREAL_USER ?? config.db.username,
+    password: process.env.SURREAL_PASS ?? config.db.password,
+    authLevel:
+      (process.env.SURREAL_AUTH_LEVEL as AuthLevel | undefined) ??
+      config.db.authLevel,
+  };
+  // `check.db` overrides only the fields it sets (e.g. just `url`/`namespace`), falling back to `db`.
+  const checkDb: SurrealZodConnection = { ...db, ...config.check?.db };
   return {
     ...config,
     schema,
     migrations,
-    db: {
-      url: process.env.SURREAL_URL ?? config.db.url,
-      namespace: process.env.SURREAL_NAMESPACE ?? config.db.namespace,
-      database: process.env.SURREAL_DATABASE ?? config.db.database,
-      username: process.env.SURREAL_USER ?? config.db.username,
-      password: process.env.SURREAL_PASS ?? config.db.password,
-      authLevel:
-        (process.env.SURREAL_AUTH_LEVEL as AuthLevel | undefined) ??
-        config.db.authLevel,
-    },
+    db,
+    checkDb,
     root,
     schemaPath,
     schemaIsFile: schemaIsFilePath(schemaPath),

@@ -42,6 +42,23 @@ export interface SurrealZodConnection {
   authLevel?: AuthLevel;
 }
 
+/** `sz check` options. */
+export interface SurrealZodCheck {
+  /**
+   * Connection used for `sz check`'s migration replay, merged field-by-field over `db`. The replay
+   * spins up throwaway scratch databases and drops them — it NEVER reads or writes your real database
+   * — but it DOES reach the server and needs database-create privileges. Point this at a local or
+   * scratch SurrealDB (the same major version you deploy to) so `sz check` never touches production:
+   *
+   * ```ts
+   * check: { db: { url: "ws://localhost:8000", namespace: "scratch" } }
+   * ```
+   *
+   * Falls back to `db` for any field you omit. (`sz check --schema` skips the replay entirely.)
+   */
+  db?: Partial<SurrealZodConnection>;
+}
+
 export interface SurrealZodConfig {
   /** Directory holding your Zod schema modules (loaded recursively). Default `./database/schemas`. */
   schema?: string;
@@ -53,6 +70,8 @@ export interface SurrealZodConfig {
   migrationsTable?: string;
   /** Optional seed script run by `surreal-zod seed`. */
   seed?: string;
+  /** `sz check` overrides — e.g. a dedicated connection for its migration replay. */
+  check?: SurrealZodCheck;
 }
 
 /** Identity helper that types a `surreal-zod.config.ts` default export. */

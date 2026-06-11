@@ -15,6 +15,10 @@ export default defineConfig({
     password: process.env.SURREAL_PASS,
     authLevel: "root", // "root" | "namespace" | "database"
   },
+  // \`sz check\` replays your migrations on a server to confirm they reproduce the schema. It uses
+  // throwaway scratch databases (your real database is never touched), but it does reach the server
+  // above. To keep it off production, point its replay at a local/scratch SurrealDB here:
+  // check: { db: { url: "ws://localhost:8000", namespace: "scratch" } },
 });
 `;
 

@@ -486,19 +486,29 @@ dbFlags(
     console.log(ok(`Schemas valid${kinds ? ` — ${kinds}` : " (no objects)"}.`));
     if (opts.schema) return;
 
-    // 2. Deep check: replay every migration on a throwaway database and confirm the result
-    //    matches the schema. Needs a database; `--schema` skips this half.
+    // 2. Deep check: replay every migration into throwaway scratch databases and confirm the result
+    //    matches the schema. Runs on `check.db` (or `db`) — it creates and drops isolated databases
+    //    and NEVER reads or writes your real database. `--schema` skips this half.
+    const checkCfg = { ...config, db: config.checkDb };
     let db: Surreal;
     try {
-      db = await connect(config, opts);
+      db = await connect(checkCfg, opts);
     } catch (e) {
       throw new Error(
-        `${errMsg(e)}\n  (run \`sz check --schema\` to validate the schema without a database)`,
+        `${errMsg(e)}\n  (run \`sz check --schema\` to validate the schema without a database, or set \`check.db\` in your config to point the replay at a scratch server)`,
       );
     }
+    console.log(
+      style.dim(
+        `  replaying on ${config.checkDb.url} (${config.checkDb.namespace}) — isolated scratch databases; your data is untouched`,
+      ),
+    );
     try {
-      const diff = await verifyMigrations(db, config, parseFilter({}), (tag) =>
-        console.log(style.dim(`  replaying ${tag}`)),
+      const diff = await verifyMigrations(
+        db,
+        checkCfg,
+        parseFilter({}),
+        (tag) => console.log(style.dim(`  ${tag}`)),
       );
       if (isEmptyDiff(diff)) {
         console.log(ok("Migrations reproduce the schema."));
