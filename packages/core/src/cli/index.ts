@@ -32,6 +32,7 @@ import {
   syncPlan,
   verifyMigrations,
 } from "./introspect";
+import { listMigrations } from "./meta";
 import {
   baseline,
   commitMigration,
@@ -391,11 +392,23 @@ kindFlags(
 // command so help shows only `gen`, not `gen|generate`). Both share one action.
 const genAction = (
   name: string | undefined,
-  opts: CommonOpts & FilterOpts & { yes?: boolean },
+  opts: CommonOpts & FilterOpts & { yes?: boolean; baseline?: boolean },
 ) => {
   run(async () => {
     const config = await loadConfig({ config: opts.config });
-    const plan = await planMigration(config, parseFilter(opts));
+    if (opts.baseline) {
+      // A baseline re-DEFINEs the whole schema; alongside earlier migrations it would clash with
+      // objects they already created. Require a clean slate (the "removed all migrations" flow).
+      const existing = listMigrations(config.migrationsDir);
+      if (existing.length) {
+        throw new Error(
+          `--baseline regenerates a full baseline from an empty snapshot, but ${plural(existing.length, "migration")} already exist in ${config.migrations}.\n  Remove them first — a baseline alongside earlier migrations would re-define objects they already created.`,
+        );
+      }
+    }
+    const plan = await planMigration(config, parseFilter(opts), {
+      baseline: opts.baseline,
+    });
     if (isEmptyDiff(plan.diff)) {
       console.log(ok("No schema changes — nothing to generate."));
       return;
@@ -404,7 +417,9 @@ const genAction = (
     console.log(
       `${plural(plan.diff.up.length, "change")} to migrate${kinds ? ` — ${kinds}` : ""}.`,
     );
-    const title = name ?? (opts.yes ? undefined : await promptTitle());
+    const title =
+      name ??
+      (opts.baseline ? "baseline" : opts.yes ? undefined : await promptTitle());
     const prepared = prepareMigration(config, plan, title);
     if (!prepared) {
       console.log(ok("No schema changes — nothing to generate."));
@@ -421,6 +436,10 @@ const genAction = (
 const addGenCommand = (cmd: Command): void => {
   kindFlags(configFlag(cmd))
     .option("-y, --yes", "use the given/default name without prompting")
+    .option(
+      "--baseline",
+      "regenerate a full baseline from an empty snapshot (after removing all migrations)",
+    )
     .action(genAction);
 };
 addGenCommand(

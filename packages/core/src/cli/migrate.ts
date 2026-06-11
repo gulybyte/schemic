@@ -20,6 +20,7 @@ import {
 import { introspect } from "./introspect";
 import {
   checksum,
+  EMPTY_SNAPSHOT,
   listMigrations,
   type Migration,
   readSnapshot,
@@ -45,14 +46,19 @@ export interface MigrationPlan {
   next: Snapshot;
 }
 
-/** Compute the pending diff (schemas vs snapshot) WITHOUT writing anything. */
+/**
+ * Compute the pending diff (schemas vs snapshot) WITHOUT writing anything. With `baseline`, the
+ * stored snapshot is ignored and the schema is diffed against an EMPTY snapshot — so the resulting
+ * migration is the full schema, for regenerating a fresh baseline after removing all migrations.
+ */
 export async function planMigration(
   config: ResolvedConfig,
   filter: Filter = parseFilter({}),
+  opts: { baseline?: boolean } = {},
 ): Promise<MigrationPlan> {
   const { tables, defs } = await loadDefs(config.schemaPath);
   const next = buildSnapshot(tables, defs);
-  const prev = readSnapshot(config.metaDir);
+  const prev = opts.baseline ? EMPTY_SNAPSHOT : readSnapshot(config.metaDir);
   const diff = diffSnapshots(
     filterSnapshot(prev, filter),
     filterSnapshot(next, filter),
