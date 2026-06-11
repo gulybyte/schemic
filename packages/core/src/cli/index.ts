@@ -259,7 +259,7 @@ program
       console.log(style.dim(`  · ${f} (exists, skipped)`));
     console.log(
       created.length
-        ? `\n${ok("Initialized. Edit database/schemas, then run `sz gen`.")}`
+        ? `\n${ok("Initialized. Edit database/schema, then run `sz gen`.")}`
         : "\nNothing to do — already initialized.",
     );
   });

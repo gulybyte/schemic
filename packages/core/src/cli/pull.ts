@@ -630,7 +630,7 @@ export async function pull(
     : pullToDir({ tables, functions, accesses }, config, opts, makeCtx);
 }
 
-/** Directory layout: one `<table>.ts` per table, refusing to duplicate tables defined elsewhere. */
+/** Directory layout: one file per object under its kind folder (`tables/`, `functions/`, `access/`). */
 async function pullToDir(
   { tables, functions, accesses }: DbStructured,
   config: ResolvedConfig,
@@ -639,11 +639,12 @@ async function pullToDir(
 ): Promise<PullResult> {
   const dir = config.schemaPath;
   // A table already defined in some OTHER file (e.g. a multi-table `schema.ts`) would become a
-  // duplicate once we also write `<table>.ts` — refuse rather than create a silent "last wins".
+  // duplicate once we also write `tables/<table>.ts` — refuse rather than create a silent "last wins".
+  const tableFile = (name: string) => join(dir, "tables", `${name}.ts`);
   const existing = await existingTables(dir);
   const conflicts = tables
     .map((t) => ({ name: t.name, file: existing.get(t.name) }))
-    .filter((c) => c.file && c.file !== join(dir, `${c.name}.ts`));
+    .filter((c) => c.file && c.file !== tableFile(c.name));
   if (conflicts.length && !opts.force) {
     // Group the offending tables by the file they're already defined in, so the message reads
     // "schema.ts → a, b, c" once instead of repeating "(in schema.ts)" per table.
@@ -671,43 +672,37 @@ async function pullToDir(
     );
   }
 
-  mkdirSync(dir, { recursive: true });
   const files: string[] = [];
   const skipped: string[] = [];
-  for (const t of tables) {
-    const file = join(dir, `${t.name}.ts`);
+  // One file per object, grouped by kind: `tables/<t>.ts`, `functions/<fn>.ts`, `access/<a>.ts`.
+  const writeObject = (kind: string, name: string, content: string) => {
+    const rel = join(kind, `${name}.ts`);
+    const file = join(dir, rel);
     if (existsSync(file) && !opts.force) {
-      skipped.push(`${t.name}.ts`);
-      continue;
+      skipped.push(rel);
+      return;
     }
-    writeFileSync(file, renderTableModule(t, makeCtx(t)));
-    files.push(`${t.name}.ts`);
-  }
-  // Db-level objects live in their own module (they have no owning table).
-  const writeModule = (name: string, content: string) => {
-    const file = join(dir, name);
-    if (existsSync(file) && !opts.force) skipped.push(name);
-    else {
-      writeFileSync(file, content);
-      files.push(name);
-    }
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, content);
+    files.push(rel);
   };
-  if (functions.length)
-    writeModule("functions.ts", renderFunctionsModule(functions));
-  if (accesses.length) writeModule("access.ts", renderAccessModule(accesses));
+  for (const t of tables)
+    writeObject("tables", t.name, renderTableModule(t, makeCtx(t)));
+  for (const fn of functions)
+    writeObject("functions", fn.name, renderFunctionModule(fn));
+  for (const a of accesses)
+    writeObject("access", a.name, renderAccessModule(a));
   return { files, skipped };
 }
 
-/** The `functions.ts` module for the directory layout (all db-level functions + their imports). */
-function renderFunctionsModule(functions: StructFunction[]): string {
-  const body = functions.map(renderFunctionConst).join("\n\n");
-  return `import { defineFunction, sz, surql } from "surreal-zod";\n\n${body}\n`;
+/** The `functions/<name>.ts` module for the directory layout (one db-level function). */
+function renderFunctionModule(fn: StructFunction): string {
+  return `import { defineFunction, sz, surql } from "surreal-zod";\n\n${renderFunctionConst(fn)}\n`;
 }
 
-/** The `access.ts` module for the directory layout (all db-level access defs). */
-function renderAccessModule(accesses: StructAccess[]): string {
-  const body = accesses.map(renderAccessConst).join("\n\n");
-  return `import { defineAccess, surql } from "surreal-zod";\n\n${body}\n`;
+/** The `access/<name>.ts` module for the directory layout (one db-level access def). */
+function renderAccessModule(access: StructAccess): string {
+  return `import { defineAccess, surql } from "surreal-zod";\n\n${renderAccessConst(access)}\n`;
 }
 
 /** Single-file layout: one combined module (tables ordered so same-file refs resolve). */

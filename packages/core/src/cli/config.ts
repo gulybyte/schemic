@@ -15,7 +15,7 @@ const CONFIG_NAMES = [
   "surreal-zod.config.js",
 ];
 
-const DEFAULT_SCHEMA = "./database/schemas";
+const DEFAULT_SCHEMA = "./database/schema";
 const DEFAULT_MIGRATIONS = "./database/migrations";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));

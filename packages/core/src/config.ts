@@ -15,7 +15,7 @@
  * });
  * ```
  *
- * `schema` and `migrations` are optional — they default to `./database/schemas` and
+ * `schema` and `migrations` are optional — they default to `./database/schema` and
  * `./database/migrations` (the `init` layout).
  *
  * Connection fields fall back to env (`SURREAL_URL`/`SURREAL_NAMESPACE`/`SURREAL_DATABASE`/
@@ -109,7 +109,10 @@ export interface SurrealZodCheck {
 }
 
 export interface SurrealZodConfig {
-  /** Directory holding your Zod schema modules (loaded recursively). Default `./database/schemas`. */
+  /**
+   * Directory (or single file) holding your schema modules, loaded recursively — so you can organize
+   * by kind (`tables/`, `functions/`, `access/`, …). Default `./database/schema`.
+   */
   schema?: string;
   /** Directory holding `.surql` migrations + their `meta/` snapshot. Default `./database/migrations`. */
   migrations?: string;

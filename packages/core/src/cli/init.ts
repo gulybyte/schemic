@@ -4,8 +4,9 @@ import { dirname, resolve } from "node:path";
 const CONFIG = `import { defineConfig } from "surreal-zod/config";
 
 export default defineConfig({
-  // schema and migrations default to ./database/schemas and ./database/migrations
-  // schema: "./database/schemas",
+  // schema and migrations default to ./database/schema and ./database/migrations.
+  // schema/ is loaded recursively — organize by kind: tables/, functions/, access/, …
+  // schema: "./database/schema",
   // migrations: "./database/migrations",
   db: {
     url: process.env.SURREAL_URL ?? "ws://localhost:8000",
@@ -63,7 +64,7 @@ export interface InitResult {
 export function init(cwd: string): InitResult {
   const files: Record<string, string> = {
     "surreal-zod.config.ts": CONFIG,
-    "database/schemas/user.ts": SAMPLE_SCHEMA,
+    "database/schema/tables/user.ts": SAMPLE_SCHEMA,
     "database/seed.ts": SEED,
     "database/migrations/meta/_snapshot.json": INITIAL_SNAPSHOT,
     ".env.example": ENV_EXAMPLE,
