@@ -21,7 +21,12 @@ import {
 } from "./diff";
 import { type FilterOpts, kindFlags, parseFilter } from "./filter";
 import { init } from "./init";
-import { applyStatements, diffAgainstDb, syncPlan } from "./introspect";
+import {
+  applyStatements,
+  diffAgainstDb,
+  syncPlan,
+  verifyMigrations,
+} from "./introspect";
 import {
   baseline,
   commitMigration,
@@ -454,13 +459,21 @@ dbFlags(
     );
   });
 
-configFlag(
+dbFlags(
   program
     .command("check")
-    .description("Validate schemas without connecting to a database"),
-).action((opts: CommonOpts) => {
+    .description(
+      "Validate schemas, then replay migrations to confirm they reproduce the schema",
+    )
+    .option(
+      "--schema",
+      "validate the schema only — skip the migration replay (no database)",
+    ),
+).action((opts: CommonOpts & { schema?: boolean }) => {
   run(async () => {
     const config = await loadConfig({ config: opts.config });
+
+    // 1. Static validation (no connection): no duplicate tables, schemas parse.
     const dups = await duplicateTables(config.schemaPath);
     if (dups.size) {
       const lines = formatDuplicates(dups, config.root).map((l) => `  ${l}`);
@@ -471,6 +484,37 @@ configFlag(
       Object.values(buildSnapshot(tables, defs).statements).map((s) => s.ddl),
     );
     console.log(ok(`Schemas valid${kinds ? ` — ${kinds}` : " (no objects)"}.`));
+    if (opts.schema) return;
+
+    // 2. Deep check: replay every migration on a throwaway database and confirm the result
+    //    matches the schema. Needs a database; `--schema` skips this half.
+    let db: Surreal;
+    try {
+      db = await connect(config, opts);
+    } catch (e) {
+      throw new Error(
+        `${errMsg(e)}\n  (run \`sz check --schema\` to validate the schema without a database)`,
+      );
+    }
+    try {
+      const diff = await verifyMigrations(db, config, parseFilter({}), (tag) =>
+        console.log(style.dim(`  replaying ${tag}`)),
+      );
+      if (isEmptyDiff(diff)) {
+        console.log(ok("Migrations reproduce the schema."));
+        return;
+      }
+      console.log(
+        `\n${fail("Drift — migrations do not reproduce the schema:")}\n`,
+      );
+      console.log(formatDiff(diff, {}));
+      console.log(
+        `\n${style.dim(`${summarizeKinds(diff.up)} differ. \`sz gen\` writes a migration to reconcile.`)}`,
+      );
+      process.exitCode = 1;
+    } finally {
+      await db.close();
+    }
   });
 });
 

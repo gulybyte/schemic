@@ -1,13 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { type DefineStatement, overwriteStatement } from "surreal-zod";
 import { escapeIdent, type Surreal } from "surrealdb";
 import type { ResolvedConfig } from "./config";
 import { buildSnapshot, type Diff, diffSnapshots } from "./diff";
 import { type Filter, filterSnapshot, parseFilter } from "./filter";
-import type { Snapshot } from "./meta";
+import { listMigrations, type Snapshot } from "./meta";
 import { loadDefs } from "./schema";
 import { introspectStructured, structuredSnapshot } from "./structure";
 
 const SHADOW_DB = "__surreal_zod_shadow";
+const SHADOW_MIG_DB = "__surreal_zod_shadow_mig";
 
 // Apply order: tables, then fields, then indexes.
 const RANK: Record<DefineStatement["kind"], number> = {
@@ -34,6 +37,90 @@ export async function introspect(
 }
 
 /**
+ * Apply `ddl` to a fresh scratch database, introspect it back to a canonical snapshot, then drop it
+ * (restoring the original namespace/database). Normalizes a desired schema THROUGH SurrealDB so the
+ * comparison is free of formatting noise. Used by both `diff --live` and `verify`.
+ */
+async function applyToShadow(
+  db: Surreal,
+  config: ResolvedConfig,
+  shadowDb: string,
+  ddl: string,
+): Promise<Snapshot> {
+  const { namespace, database } = config.db;
+  await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(shadowDb)};`);
+  await db.query(`DEFINE DATABASE ${escapeIdent(shadowDb)};`);
+  try {
+    await db.use({ namespace, database: shadowDb });
+    if (ddl) await db.query(`BEGIN;\n${ddl}\nCOMMIT;`);
+    return await introspect(db);
+  } finally {
+    await db.use({ namespace, database });
+    await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(shadowDb)};`);
+  }
+}
+
+/**
+ * Replay every migration (direction `up`) from zero into a fresh scratch database, introspect the
+ * result, then drop it. Surfaces the offending migration if one fails to apply.
+ */
+async function replayMigrations(
+  db: Surreal,
+  config: ResolvedConfig,
+  shadowDb: string,
+  onApply?: (tag: string) => void,
+): Promise<Snapshot> {
+  const { namespace, database } = config.db;
+  await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(shadowDb)};`);
+  await db.query(`DEFINE DATABASE ${escapeIdent(shadowDb)};`);
+  try {
+    await db.use({ namespace, database: shadowDb });
+    for (const m of listMigrations(config.migrationsDir)) {
+      onApply?.(m.tag);
+      const sql = readFileSync(join(config.migrationsDir, m.file), "utf8");
+      try {
+        await db.query(sql, { direction: "up" });
+      } catch (e) {
+        throw new Error(
+          `migration ${m.tag} failed to replay: ${(e as Error).message.split("\n")[0]}`,
+        );
+      }
+    }
+    return await introspect(db);
+  } finally {
+    await db.use({ namespace, database });
+    await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(shadowDb)};`);
+  }
+}
+
+/**
+ * Verify that replaying every migration from zero reconstructs the declared schema — the only check
+ * that catches "the sum of the migrations no longer equals the schema" (a hand-edited migration, or
+ * a schema change someone forgot to `sz gen`). Replays the migrations into one scratch DB and applies
+ * the current schema into another, then diffs the two introspected snapshots; since BOTH sides are
+ * normalized through SurrealDB (`INFO`), only genuine drift shows up. An empty diff means they agree.
+ * `up` is what the migrations are missing relative to the schema. Needs root/namespace auth.
+ */
+export async function verifyMigrations(
+  db: Surreal,
+  config: ResolvedConfig,
+  filter: Filter = parseFilter({}),
+  onApply?: (tag: string) => void,
+): Promise<Diff> {
+  const migrated = await replayMigrations(db, config, SHADOW_MIG_DB, onApply);
+  const { tables, defs } = await loadDefs(config.schemaPath);
+  const ddl = Object.values(buildSnapshot(tables, defs).statements)
+    .sort(byCreate)
+    .map((s) => s.ddl)
+    .join("\n");
+  const desired = await applyToShadow(db, config, SHADOW_DB, ddl);
+  return diffSnapshots(
+    filterSnapshot(migrated, filter),
+    filterSnapshot(desired, filter),
+  );
+}
+
+/**
  * Diff the current schemas against the **live database**. Both sides are normalized through
  * SurrealDB — the target via `INFO`, the desired by applying the schema to a temporary shadow
  * database and reading IT back — so the comparison is free of formatting noise. The shadow
@@ -44,7 +131,6 @@ export async function diffAgainstDb(
   config: ResolvedConfig,
   filter: Filter = parseFilter({}),
 ): Promise<Diff> {
-  const { namespace, database } = config.db;
   // Exclude the CLI's own bookkeeping tables — they're not part of the schema (pull excludes
   // them too); otherwise `diff --live`/`sync` always report dropping `_migrations_lock`.
   const target = await introspect(
@@ -57,18 +143,7 @@ export async function diffAgainstDb(
     .sort(byCreate)
     .map((s) => s.ddl)
     .join("\n");
-
-  await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(SHADOW_DB)};`);
-  await db.query(`DEFINE DATABASE ${escapeIdent(SHADOW_DB)};`);
-  let desired: Snapshot;
-  try {
-    await db.use({ namespace, database: SHADOW_DB });
-    if (ddl) await db.query(`BEGIN;\n${ddl}\nCOMMIT;`);
-    desired = await introspect(db);
-  } finally {
-    await db.use({ namespace, database });
-    await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(SHADOW_DB)};`);
-  }
+  const desired = await applyToShadow(db, config, SHADOW_DB, ddl);
 
   // up = statements that would bring the live database in line with the schema. The filter drops
   // both sides' excluded kinds (access is off by default) so they're neither applied nor pruned.
