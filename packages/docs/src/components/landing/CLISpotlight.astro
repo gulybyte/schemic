@@ -42,15 +42,15 @@ const blocks: Block[] = [
   <div class="mx-auto flex max-w-[920px] flex-col items-center">
     <!-- head -->
     <div class="text-center">
-      <p class="font-mono text-xs uppercase tracking-[0.12em] text-pink">
+      <p class="font-mono text-xs uppercase tracking-[0.08em] text-pink">
         // the cli
       </p>
       <h2
-        class="mt-3 font-display text-4xl font-semibold tracking-tight text-ink sm:text-[42px]"
+        class="mt-3 font-display text-4xl font-semibold leading-[1.06] tracking-tight text-ink sm:text-[42px]"
       >
         Migrations are first-class.
       </h2>
-      <p class="mx-auto mt-4 max-w-2xl text-[17px] leading-relaxed text-ink-2">
+      <p class="mx-auto mt-3 max-w-[640px] text-[17px] leading-[1.5] text-ink-2">
         Write a migration from your schema, apply it, and check for drift against
         the live database — three commands, no SurrealQL by hand.
       </p>
@@ -58,36 +58,34 @@ const blocks: Block[] = [
 
     <!-- terminal -->
     <div
-      class="mt-9 w-full overflow-hidden rounded-2xl border border-border bg-code-bg shadow-[0_30px_70px_-30px_rgba(0,0,0,0.7),0_0_70px_-26px_rgba(150,0,255,0.3)]"
+      class="mt-9 w-full overflow-hidden rounded-[14px] border border-border bg-code-bg shadow-[0_0_60px_0_#9600ff22,0_30px_60px_0_#00000066]"
     >
       <!-- title bar -->
-      <div
-        class="flex items-center justify-between bg-surface px-4.5 py-3.5"
-      >
+      <div class="relative flex items-center bg-surface px-4.5 py-[13px]">
         <div class="flex items-center gap-2">
           <span class="size-3 rounded-full bg-[#ff5f57]"></span>
           <span class="size-3 rounded-full bg-[#febc2e]"></span>
           <span class="size-3 rounded-full bg-[#28c840]"></span>
         </div>
-        <span class="font-mono text-xs text-ink-3">surreal-zod — cli</span>
-        <span class="font-mono text-[11px] text-success">● running</span>
+        <span
+          class="absolute left-1/2 -translate-x-1/2 font-mono text-xs text-ink-3"
+          >surreal-zod — cli</span
+        >
       </div>
 
       <!-- body -->
       <div
-        class="overflow-x-auto px-5 py-5 font-mono text-[13px] leading-[1.6]"
+        class="flex flex-col gap-1.5 overflow-x-auto px-[22px] pt-[18px] pb-[22px] font-mono text-[13px] leading-[1.6]"
       >
         {
           blocks.map((block, i) => (
-            <div class:list={[i > 0 && "mt-4"]}>
-              <div class="whitespace-pre">
-                <span class="text-pink">$</span>
-                <span class="text-code-plain"> {block.cmd}</span>
-              </div>
+            <Fragment>
+              {i > 0 && <div class="h-2"></div>}
+              <div class="flex items-center gap-2"><span class="text-pink">$</span><span class="text-code-plain">{block.cmd}</span></div>
               {block.outputs.map((o) => (
                 <div class:list={["whitespace-pre", o.c]}>{o.t}</div>
               ))}
-            </div>
+            </Fragment>
           ))
         }
       </div>

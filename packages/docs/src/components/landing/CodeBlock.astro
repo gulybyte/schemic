@@ -5,23 +5,22 @@ type Tok = { t: string; c: string };
 interface Props {
   lines: Tok[][];
   class?: string;
+  size?: 12 | 13;
 }
-const { lines, class: cls = "" } = Astro.props;
+const { lines, class: cls = "", size = 13 } = Astro.props;
+const sizeClass = size === 12 ? "text-[12px]" : "text-[13px]";
 ---
 
 <div
   class:list={[
-    "overflow-x-auto rounded-[10px] border border-border-subtle bg-code-bg px-4 py-3.5 font-mono text-[13px] leading-[1.6]",
+    "overflow-x-auto rounded-[10px] border border-border-subtle bg-code-bg px-4 py-3.5 font-mono leading-[1.6]",
+    sizeClass,
     cls,
   ]}
 >
   {
     lines.map((line) => (
-      <div class="whitespace-pre">
-        {line.map((tk) => (
-          <span class={tk.c}>{tk.t}</span>
-        ))}
-      </div>
+      <div class="whitespace-pre">{line.map((tk) => <span class={tk.c}>{tk.t}</span>)}</div>
     ))
   }
 </div>
