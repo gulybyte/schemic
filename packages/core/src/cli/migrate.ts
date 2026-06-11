@@ -356,6 +356,8 @@ export interface StatusRow {
   applied: boolean;
   /** True if an applied migration's file was edited after it was applied. */
   drift?: boolean;
+  /** True if the DB records it applied but the migration file is gone (orphaned bookkeeping). */
+  missing?: boolean;
 }
 
 /** Recompute a migration file's checksum from its current contents (missing → ""). */
@@ -365,14 +367,17 @@ function currentChecksum(config: ResolvedConfig, m: Migration): string {
   return checksum(readFileSync(path, "utf8"));
 }
 
-/** Per-migration applied/pending status (+ drift), in apply order. */
+/** Per-migration applied/pending status (+ drift), in apply order. Includes orphaned rows — tags the
+ *  DB records applied whose files are gone — so a deleted-files / reset-snapshot drift is visible. */
 export async function status(
   db: Surreal,
   config: ResolvedConfig,
 ): Promise<StatusRow[]> {
   await ensureMigrationsTable(db, config.migrationsTable);
   const applied = await appliedRecords(db, config.migrationsTable);
-  return listMigrations(config.migrationsDir).map((m) => {
+  const files = listMigrations(config.migrationsDir);
+  const fileTags = new Set(files.map((m) => m.tag));
+  const rows: StatusRow[] = files.map((m) => {
     const appliedSum = applied.get(m.tag);
     return {
       tag: m.tag,
@@ -381,6 +386,10 @@ export async function status(
         appliedSum !== undefined && appliedSum !== currentChecksum(config, m),
     };
   });
+  // Orphans: recorded applied in the DB but the file no longer exists on disk.
+  for (const tag of applied.keys())
+    if (!fileTags.has(tag)) rows.push({ tag, applied: true, missing: true });
+  return rows.sort((a, b) => a.tag.localeCompare(b.tag));
 }
 
 /**

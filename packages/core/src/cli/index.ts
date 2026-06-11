@@ -129,7 +129,7 @@ function diffSummary(
   if (!isEmptyDiff(diff)) {
     const kinds = summarizeKinds(diff.up);
     summary.push(
-      `${plural(diff.up.length, "change")} ${opts.live ? "vs the live database" : "pending"}${kinds ? ` — ${kinds}` : ""}.`,
+      `${plural(diff.up.length, "change")} ${opts.live ? "vs the live database" : "vs the snapshot"}${kinds ? ` — ${kinds}` : ""}.`,
     );
   }
   if (pending !== undefined)
@@ -525,7 +525,11 @@ dbFlags(
           return;
         }
         for (const r of rows) {
-          if (r.drift) {
+          if (r.missing) {
+            console.log(
+              `  ${style.yellow("⚠ missing")}  ${r.tag} ${style.dim("(applied in the DB, file deleted)")}`,
+            );
+          } else if (r.drift) {
             console.log(
               `  ${style.yellow("⚠ drift")}    ${r.tag} ${style.dim("(file changed after apply)")}`,
             );
@@ -537,9 +541,18 @@ dbFlags(
         }
         const pending = rows.filter((r) => !r.applied).length;
         const drifted = rows.filter((r) => r.drift).length;
-        console.log(
-          `\n${style.dim(`${plural(rows.length, "migration")}, ${pending} pending${drifted ? `, ${drifted} drifted` : ""}.`)}`,
-        );
+        const missing = rows.filter((r) => r.missing).length;
+        const parts = [plural(rows.length, "migration"), `${pending} pending`];
+        if (drifted) parts.push(`${drifted} drifted`);
+        if (missing) parts.push(`${missing} missing`);
+        console.log(`\n${style.dim(`${parts.join(", ")}.`)}`);
+        if (missing) {
+          console.log(
+            style.dim(
+              "  Missing migrations were applied but their files are gone (e.g. after removing migrations or `snapshot reset`).",
+            ),
+          );
+        }
       }),
     );
   });
