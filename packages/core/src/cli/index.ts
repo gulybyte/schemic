@@ -32,7 +32,7 @@ import {
   syncPlan,
   verifyMigrations,
 } from "./introspect";
-import { listMigrations } from "./meta";
+import { EMPTY_SNAPSHOT, listMigrations, writeSnapshot } from "./meta";
 import {
   baseline,
   commitMigration,
@@ -448,6 +448,39 @@ addGenCommand(
     .description("Diff schemas, preview the migration script, and write it"),
 );
 addGenCommand(program.command("generate [name]", { hidden: true }));
+
+// `snapshot` groups operations on the migration snapshot (the state `sz gen`/`sz diff` compare
+// against). `reset` clears it so the next `sz gen` baselines the full schema.
+const snapshot = program
+  .command("snapshot")
+  .description(
+    "Manage the migration snapshot (what `sz gen`/`sz diff` compare against)",
+  );
+configFlag(
+  snapshot
+    .command("reset")
+    .description(
+      "Clear the snapshot — the next `sz gen` baselines the full schema",
+    ),
+).action((opts: CommonOpts) => {
+  run(async () => {
+    const config = await loadConfig({ config: opts.config });
+    writeSnapshot(config.metaDir, EMPTY_SNAPSHOT);
+    console.log(ok("Snapshot cleared."));
+    const existing = listMigrations(config.migrationsDir);
+    if (existing.length) {
+      console.log(
+        style.dim(
+          `  ${plural(existing.length, "migration")} still on disk — the next \`sz gen\` would add a full baseline alongside them. Remove them first (or use \`sz gen --baseline\`) for a clean baseline.`,
+        ),
+      );
+    } else {
+      console.log(
+        style.dim("  The next `sz gen` will baseline the full schema."),
+      );
+    }
+  });
+});
 
 dbFlags(
   program
