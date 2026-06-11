@@ -251,7 +251,7 @@ These are **CLI/tooling** findings; they do not overlap with the library-level f
   exports its `TableDef`s) just worked — the loader scanned `./src`, picked up all 8
   tables/relations, and ignored `src/db.ts` (which exports none). `sz check` reported
   `8 tables, 38 fields, 2 indexes` with no DB connection. No need to move schemas into a
-  dedicated `database/schemas` dir; the existing isomorphic module *is* the migration source.
+  dedicated `database/schema` dir; the existing isomorphic module *is* the migration source.
 - **Generated DDL matched the server with zero edits.** `sz generate initial` emitted exactly
   the DDL the hand-written `setup.ts` applies — nested objects (`settings.*`), `array<record<user>>`,
   enums/literals, `option<datetime | null>`, `DEFAULT`/`VALUE`/`ASSERT`/`READONLY`/`COMMENT`,
