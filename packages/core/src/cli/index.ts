@@ -240,12 +240,40 @@ Examples:
 `,
   );
 
-// Collapse negatable boolean flags to a single `--[no-]flag` line in help (instead of listing the
-// `--no-flag` form separately). Set before any subcommand is added so they inherit it.
+// Collapse negatable flags to a single `--[no-]flag` help line: drop the separate `--no-flag` line
+// and prefix its positive (or a lone `--no-flag`) with `[no-]`. Set before any subcommand is added
+// so they inherit it. `_collapsible` (positives that have a `--no-` counterpart) is computed in
+// `visibleOptions` and read in `optionTerm` within the same render pass.
+type CollapsibleHelp = { _collapsible?: Set<string> };
 program.configureHelp({
+  visibleOptions(cmd) {
+    const opts = Help.prototype.visibleOptions.call(this, cmd);
+    // `--tables` and `--no-tables` share an `attributeName()` ("tables"); `name()` does NOT.
+    const negated = new Set(
+      opts.filter((o) => o.negate).map((o) => o.attributeName()),
+    );
+    (this as CollapsibleHelp)._collapsible = new Set(
+      [...negated].filter((n) =>
+        opts.some((o) => !o.negate && o.attributeName() === n),
+      ),
+    );
+    // Drop the `--no-x` rows whose positive `--x` we'll fold the `[no-]` into.
+    return opts.filter(
+      (o) =>
+        !(
+          o.negate &&
+          (this as CollapsibleHelp)._collapsible?.has(o.attributeName())
+        ),
+    );
+  },
   optionTerm(option) {
     const term = Help.prototype.optionTerm.call(this, option);
-    return option.negate ? term.replace("--no-", "--[no-]") : term;
+    // A lone `--no-x` (no positive counterpart, e.g. `--no-prune`) -> `--[no-]x`.
+    if (option.negate) return term.replace("--no-", "--[no-]");
+    // A positive `--x` that has a `--no-x` counterpart -> `--[no-]x [...]`.
+    if ((this as CollapsibleHelp)._collapsible?.has(option.attributeName()))
+      return term.replace(`--${option.name()}`, `--[no-]${option.name()}`);
+    return term;
   },
 });
 
