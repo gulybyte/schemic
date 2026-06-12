@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { DefineStatement } from "surreal-zod";
+import type { DbStructured } from "./structure";
 
 /** A snapshot statement: the emitted DDL plus the source file it came from (for `diff` annotations). */
 export type SnapshotStatement = DefineStatement & {
@@ -19,6 +20,11 @@ export type SnapshotStatement = DefineStatement & {
 export interface Snapshot {
   version: 1;
   statements: Record<string, SnapshotStatement>;
+  /**
+   * The normalized Struct-IR of the same schema (added by `gen`/`baseline`). Used to render the
+   * schema as TypeScript for `diff --ts`; absent in older snapshots (re-`gen` to populate it).
+   */
+  struct?: DbStructured;
 }
 
 /** A migration file on disk. The filename is the source of truth — there's no journal. */

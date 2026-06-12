@@ -31,7 +31,9 @@ import type {
   TableEvent,
   TablePermissions,
 } from "../pure";
+import { normalizeDb } from "./struct";
 import type {
+  DbStructured,
   StructAccess,
   StructEvent,
   StructField,
@@ -321,4 +323,28 @@ export function fromStandalone(
   if (def.kind === "event") return lowerEvent(def.table, def);
   if (def.kind === "function") return lowerFunction(def);
   return lowerAccess(def);
+}
+
+/**
+ * The NORMALIZED Struct-IR for a whole loaded schema — the offline counterpart of `fromInfo`
+ * (introspectStructured). Standalone events are attached to their owning table. Used to render the
+ * schema as TypeScript (`diff --ts`) and stored in the snapshot.
+ */
+export function schemaStruct(
+  tables: TableDef<string, Shape>[],
+  defs: StandaloneDef[],
+): DbStructured {
+  const structTables = tables.map(fromTableDef);
+  const byName = new Map(structTables.map((t) => [t.name, t]));
+  const functions: StructFunction[] = [];
+  const accesses: StructAccess[] = [];
+  for (const d of defs) {
+    if (d.kind === "function")
+      functions.push(fromStandalone(d) as StructFunction);
+    else if (d.kind === "access")
+      accesses.push(fromStandalone(d) as StructAccess);
+    else if (d.kind === "event")
+      byName.get(d.table)?.events.push(fromStandalone(d) as StructEvent);
+  }
+  return normalizeDb({ tables: structTables, functions, accesses });
 }

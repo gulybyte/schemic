@@ -44,3 +44,23 @@ describe("diff file annotations", () => {
     expect(out).toContain("user");
   });
 });
+
+describe("struct snapshot (offline diff --ts)", () => {
+  const User = defineTable("user", {
+    id: sz.string(),
+    age: sz.int().optional(),
+  });
+  const tables = [User] as unknown as Parameters<typeof buildSnapshot>[0];
+
+  test("withStruct attaches the normalized Struct-IR", () => {
+    const snap = buildSnapshot(tables, [], { withStruct: true });
+    expect(snap.struct?.tables.map((t) => t.name)).toEqual(["user"]);
+    // age is normalized to option<int>
+    const age = snap.struct?.tables[0].fields.find((f) => f.name === "age");
+    expect(age?.kind).toBe("option<int>");
+  });
+
+  test("struct is absent by default (no withStruct)", () => {
+    expect(buildSnapshot(tables).struct).toBeUndefined();
+  });
+});

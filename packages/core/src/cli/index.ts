@@ -24,7 +24,12 @@ import {
   spawnEphemeralServer,
   surrealBinaryAvailable,
 } from "./engine";
-import { type FilterOpts, kindFlags, parseFilter } from "./filter";
+import {
+  type FilterOpts,
+  filterStructured,
+  kindFlags,
+  parseFilter,
+} from "./filter";
 import { init } from "./init";
 import {
   applyStatements,
@@ -33,8 +38,14 @@ import {
   tsViewsAgainstDb,
   verifyMigrations,
 } from "./introspect";
+import { schemaStruct } from "./lower";
 import { actionLabel, lineDiff, unifiedDiff } from "./merge";
-import { EMPTY_SNAPSHOT, listMigrations, writeSnapshot } from "./meta";
+import {
+  EMPTY_SNAPSHOT,
+  listMigrations,
+  readSnapshot,
+  writeSnapshot,
+} from "./meta";
 import {
   baseline,
   commitMigration,
@@ -48,7 +59,13 @@ import {
   unlock,
 } from "./migrate";
 import { pipeThroughPager, resolvePager } from "./pager";
-import { applyPull, type PullFilePlan, type PullPlan, planPull } from "./pull";
+import {
+  applyPull,
+  type PullFilePlan,
+  type PullPlan,
+  planPull,
+  renderSchemaToTS,
+} from "./pull";
 import { duplicateTables, loadDefs, loadSchemas } from "./schema";
 import { fail, ok, plural, style } from "./style";
 
@@ -304,10 +321,7 @@ kindFlags(
 )
   .option("--down", "also show the rollback (down) statements")
   .option("--live", "diff against the live database instead of the snapshot")
-  .option(
-    "--ts",
-    "show the change as TypeScript schema instead of SurrealQL (with --live)",
-  )
+  .option("--ts", "show the change as TypeScript schema instead of SurrealQL")
   .option("--watch", "re-run on schema changes")
   .option("--full", "show the full schema SQL, not just the changed parts")
   .option(
@@ -370,25 +384,20 @@ kindFlags(
         const persistent =
           opts.watch && opts.live ? await connect(config, opts) : undefined;
         const once = async () => {
-          // TypeScript view: render both sides as canonical TS and line-diff them.
+          // TypeScript view: render both sides as canonical TS and diff them.
           if (opts.ts) {
-            if (!opts.live)
-              throw new Error(
-                "diff --ts currently requires --live (offline --ts needs the Struct snapshot — coming next).",
-              );
-            const db = persistent ?? (await connect(config, opts));
-            try {
-              const { current, desired } = await tsViewsAgainstDb(
-                db,
-                config,
-                filter,
-              );
+            // current = the baseline (live DB or snapshot), desired = the declared schema.
+            const renderTsDiff = async (
+              current: string,
+              desired: string,
+              matchMsg: string,
+            ) => {
               if (opts.json) {
                 console.log(JSON.stringify({ current, desired }));
               } else if (current === desired) {
-                console.log(ok("Schema matches the live database."));
+                console.log(ok(matchMsg));
               } else if (pager || opts.patch) {
-                // Git-style unified patch (the whole schema renders as one module → one section).
+                // Git-style unified patch (the schema renders as one module → one section).
                 const patch = unifiedDiff(
                   current,
                   desired,
@@ -399,8 +408,49 @@ kindFlags(
               } else {
                 console.log(lineDiff(current, desired));
               }
-            } finally {
-              if (!persistent) await db.close();
+            };
+            if (opts.live) {
+              const db = persistent ?? (await connect(config, opts));
+              try {
+                const { current, desired } = await tsViewsAgainstDb(
+                  db,
+                  config,
+                  filter,
+                );
+                await renderTsDiff(
+                  current,
+                  desired,
+                  "Schema matches the live database.",
+                );
+              } finally {
+                if (!persistent) await db.close();
+              }
+            } else {
+              // Offline: the snapshot's recorded Struct vs the current schema's Struct, both as TS.
+              const prev = readSnapshot(config.metaDir);
+              if (!prev.struct)
+                throw new Error(
+                  "offline diff --ts needs a Struct snapshot — run `sz gen` (or `sz pull --write`) to record one, or pass --live.",
+                );
+              const { tables, defs } = await loadDefs(config.schemaPath);
+              const current = renderSchemaToTS(
+                filterStructured(prev.struct, filter),
+              );
+              const desired = renderSchemaToTS(
+                filterStructured(
+                  // Bridge the lib/src TableDef duality (see buildSnapshot).
+                  schemaStruct(
+                    tables as unknown as Parameters<typeof schemaStruct>[0],
+                    defs as unknown as Parameters<typeof schemaStruct>[1],
+                  ),
+                  filter,
+                ),
+              );
+              await renderTsDiff(
+                current,
+                desired,
+                "Schema matches the snapshot.",
+              );
             }
             return;
           }

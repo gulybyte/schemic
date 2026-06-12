@@ -8,6 +8,7 @@ import {
   overwriteStatement,
   removeStatement,
 } from "surreal-zod";
+import { schemaStruct } from "./lower";
 import type { Snapshot, SnapshotStatement } from "./meta";
 import type { AnyTable } from "./schema";
 import { colorEnabled, plural, style } from "./style";
@@ -22,7 +23,12 @@ const keyOf = (s: Pick<DefineStatement, "kind" | "name" | "table">) =>
 export function buildSnapshot(
   tables: AnyTable[],
   defs: StandaloneDef[] = [],
-  opts: { fileOf?: Map<unknown, string>; root?: string } = {},
+  opts: {
+    fileOf?: Map<unknown, string>;
+    root?: string;
+    /** Also compute + store the normalized Struct-IR (for `diff --ts`). Off by default. */
+    withStruct?: boolean;
+  } = {},
 ): Snapshot {
   const statements: Record<string, SnapshotStatement> = {};
   // The source file each object came from, project-root-relative for portable, readable snapshots.
@@ -40,7 +46,14 @@ export function buildSnapshot(
     const file = fileFor(d);
     statements[keyOf(s)] = file ? { ...s, file } : s;
   }
-  return { version: 1, statements };
+  const snap: Snapshot = { version: 1, statements };
+  if (opts.withStruct)
+    // Bridge the lib/src type duality (AnyTable is the built-lib TableDef; schemaStruct uses src).
+    snap.struct = schemaStruct(
+      tables as unknown as Parameters<typeof schemaStruct>[0],
+      defs as unknown as Parameters<typeof schemaStruct>[1],
+    );
+  return snap;
 }
 
 /**
