@@ -1,3 +1,4 @@
+import { relative } from "node:path";
 import type { DefineStatement, StandaloneDef } from "surreal-zod";
 import {
   alterField,
@@ -7,7 +8,7 @@ import {
   overwriteStatement,
   removeStatement,
 } from "surreal-zod";
-import type { Snapshot } from "./meta";
+import type { Snapshot, SnapshotStatement } from "./meta";
 import type { AnyTable } from "./schema";
 import { colorEnabled, plural, style } from "./style";
 
@@ -21,14 +22,23 @@ const keyOf = (s: Pick<DefineStatement, "kind" | "name" | "table">) =>
 export function buildSnapshot(
   tables: AnyTable[],
   defs: StandaloneDef[] = [],
+  opts: { fileOf?: Map<unknown, string>; root?: string } = {},
 ): Snapshot {
-  const statements: Record<string, DefineStatement> = {};
+  const statements: Record<string, SnapshotStatement> = {};
+  // The source file each object came from, project-root-relative for portable, readable snapshots.
+  const fileFor = (obj: unknown): string | undefined => {
+    const abs = opts.fileOf?.get(obj);
+    return abs ? (opts.root ? relative(opts.root, abs) : abs) : undefined;
+  };
   for (const t of tables) {
-    for (const s of emitStatements(t)) statements[keyOf(s)] = s;
+    const file = fileFor(t);
+    for (const s of emitStatements(t))
+      statements[keyOf(s)] = file ? { ...s, file } : s;
   }
   for (const d of defs) {
     const s = emitDefStatement(d);
-    statements[keyOf(s)] = s;
+    const file = fileFor(d);
+    statements[keyOf(s)] = file ? { ...s, file } : s;
   }
   return { version: 1, statements };
 }
@@ -43,6 +53,8 @@ export type DiffItem = {
   key: string;
   table: string;
   kind: DefineStatement["kind"];
+  /** The source file this object lives in (or lived in, for a removal). Absent if unknown. */
+  file?: string;
 } & (
   | { op: "add"; ddl: string }
   | { op: "remove"; ddl: string; old: string }
@@ -139,8 +151,8 @@ export function diffSnapshots(prev: Snapshot, next: Snapshot): Diff {
     removed.filter((s) => s.kind === "table").map((s) => s.name),
   );
 
-  const added: DefineStatement[] = [];
-  const changed: { old: DefineStatement; next: DefineStatement }[] = [];
+  const added: SnapshotStatement[] = [];
+  const changed: { old: SnapshotStatement; next: SnapshotStatement }[] = [];
   for (const k of Object.keys(nextS)) {
     const s = nextS[k];
     if (!(k in prevS)) added.push(s);
@@ -183,6 +195,7 @@ export function diffSnapshots(prev: Snapshot, next: Snapshot): Diff {
         kind: s.kind,
         key: keyOf(s),
         table: tableOf(s),
+        file: s.file,
         ddl: removeStatement(s),
         old: s.ddl,
       },
@@ -196,6 +209,7 @@ export function diffSnapshots(prev: Snapshot, next: Snapshot): Diff {
         kind: s.kind,
         key: keyOf(s),
         table: tableOf(s),
+        file: s.file,
         ddl: s.ddl,
       },
     });
@@ -208,6 +222,7 @@ export function diffSnapshots(prev: Snapshot, next: Snapshot): Diff {
         kind: c.next.kind,
         key: keyOf(c.next),
         table: tableOf(c.next),
+        file: c.next.file ?? c.old.file,
         before: c.old.ddl,
         after: c.next.ddl,
       },
@@ -320,16 +335,32 @@ function renderItem(it: DiffItem, inline = false): string {
   return `${style.red(`  - ${it.before}`)}\n${style.green(`  + ${it.after}`)}`;
 }
 
-/** Render display items grouped by table (blank line between table groups). */
+/** A group's header: the object label + the source file(s) it lives in (dim), e.g.
+ *  `Table: user  database/schema/tables/user.ts`. */
+function groupHeader(items: DiffItem[]): string {
+  const label = groupLabel(items[0].kind, items[0].table);
+  const files = [
+    ...new Set(items.map((i) => i.file).filter((f): f is string => !!f)),
+  ];
+  return files.length
+    ? `${style.bold(label)}  ${style.dim(files.join(", "))}`
+    : style.bold(label);
+}
+
+/** Render display items grouped by object, each under a `<label>  <file>` header. */
 export function formatItems(items: DiffItem[], inline = false): string {
-  const out: string[] = [];
+  const groups: DiffItem[][] = [];
   let prev: string | undefined;
   for (const it of items) {
-    if (prev !== undefined && it.table !== prev) out.push("");
-    out.push(renderItem(it, inline));
+    if (it.table !== prev) groups.push([]);
+    groups[groups.length - 1].push(it);
     prev = it.table;
   }
-  return out.join("\n");
+  return groups
+    .map((g) =>
+      [groupHeader(g), ...g.map((it) => renderItem(it, inline))].join("\n"),
+    )
+    .join("\n\n");
 }
 
 /**

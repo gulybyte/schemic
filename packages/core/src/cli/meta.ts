@@ -9,10 +9,16 @@ import {
 import { join } from "node:path";
 import type { DefineStatement } from "surreal-zod";
 
+/** A snapshot statement: the emitted DDL plus the source file it came from (for `diff` annotations). */
+export type SnapshotStatement = DefineStatement & {
+  /** Project-root-relative source file (absent for objects introspected from a live DB). */
+  file?: string;
+};
+
 /** Canonical schema state used to diff against the next `generate`. */
 export interface Snapshot {
   version: 1;
-  statements: Record<string, DefineStatement>;
+  statements: Record<string, SnapshotStatement>;
 }
 
 /** A migration file on disk. The filename is the source of truth — there's no journal. */

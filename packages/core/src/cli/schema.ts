@@ -63,28 +63,36 @@ async function* tablesIn(
  * tables/relations (ordered normal-before-relation, then by name, for stable DDL) and the standalone
  * defs (`defineEvent`/`defineFunction`). One pass over the files.
  */
-export async function loadDefs(
-  schemaPath: string,
-): Promise<{ tables: AnyTable[]; defs: StandaloneDef[] }> {
+export async function loadDefs(schemaPath: string): Promise<{
+  tables: AnyTable[];
+  defs: StandaloneDef[];
+  /** Absolute source file each table/def was loaded from (for `diff`'s file annotations). */
+  fileOf: Map<AnyTable | StandaloneDef, string>;
+}> {
   if (!existsSync(schemaPath)) {
     throw new Error(`Schema path not found: ${schemaPath}`);
   }
   const jiti = makeJiti();
   const tables = new Map<string, AnyTable>();
   const defs: StandaloneDef[] = [];
+  const fileOf = new Map<AnyTable | StandaloneDef, string>();
   for (const file of schemaFiles(schemaPath)) {
     const mod = (await jiti.import(file)) as Record<string, unknown>;
     for (const value of Object.values(mod)) {
-      if (isTableDef(value))
+      if (isTableDef(value)) {
         tables.set(value.name, value); // last def of a name wins
-      else if (isStandaloneDef(value)) defs.push(value);
+        fileOf.set(value, file);
+      } else if (isStandaloneDef(value)) {
+        defs.push(value);
+        fileOf.set(value, file);
+      }
     }
   }
   const rank = (t: AnyTable) => (t.config.relation ? 1 : 0);
   const sorted = [...tables.values()].sort(
     (a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name),
   );
-  return { tables: sorted, defs };
+  return { tables: sorted, defs, fileOf };
 }
 
 /** The tables/relations from `schemaPath` (standalone events excluded — see {@link loadDefs}). */

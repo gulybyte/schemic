@@ -56,8 +56,8 @@ export async function planMigration(
   filter: Filter = parseFilter({}),
   opts: { baseline?: boolean } = {},
 ): Promise<MigrationPlan> {
-  const { tables, defs } = await loadDefs(config.schemaPath);
-  const next = buildSnapshot(tables, defs);
+  const { tables, defs, fileOf } = await loadDefs(config.schemaPath);
+  const next = buildSnapshot(tables, defs, { fileOf, root: config.root });
   const prev = opts.baseline ? EMPTY_SNAPSHOT : readSnapshot(config.metaDir);
   const diff = diffSnapshots(
     filterSnapshot(prev, filter),
@@ -198,8 +198,8 @@ export async function baseline(
   // INFO form — the two canonical forms differ (e.g. default `PERMISSIONS`, `ON TABLE`), so mixing
   // them would make every later offline diff phantom. We take the just-pulled disk schema and keep
   // only the objects that are present in the DB.
-  const { tables, defs } = await loadDefs(config.schemaPath);
-  const disk = buildSnapshot(tables, defs);
+  const { tables, defs, fileOf } = await loadDefs(config.schemaPath);
+  const disk = buildSnapshot(tables, defs, { fileOf, root: config.root });
   const pulled: Snapshot = { version: 1, statements: {} };
   for (const [k, s] of Object.entries(disk.statements))
     if (liveKeys.has(k) && included(filter, s)) pulled.statements[k] = s;
