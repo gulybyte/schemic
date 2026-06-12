@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type { Surreal } from "surrealdb";
 import type { ResolvedConfig } from "./config";
 import { type Filter, filterStructured, parseFilter } from "./filter";
+import { type LocalOnly, mergeUnits, type RenderedUnit } from "./merge";
 import { existingTables } from "./schema";
 import {
   type DbStructured,
@@ -492,8 +493,13 @@ function renderTableConst(
   return { code: body.join("\n"), factory };
 }
 
-/** A full single-table module — cross-file imports + the const — for the directory layout. */
-function renderTableModule(t: StructTable, ctx: RenderCtx): string {
+/** Assemble a single-object module (imports + the const) for the directory layout. */
+function unitModule(u: RenderedUnit): string {
+  return `${u.imports.join("\n")}\n\n${u.code}\n`;
+}
+
+/** The rendered unit (const statement + the imports it needs) for one table/relation. */
+function tableUnit(t: StructTable, ctx: RenderCtx): RenderedUnit {
   const { code, factory } = renderTableConst(t, ctx);
   const names = ["sz", ...(code.includes("surql`") ? ["surql"] : []), factory];
   const imports = [`import { ${names.join(", ")} } from "surreal-zod";`];
@@ -501,7 +507,13 @@ function renderTableModule(t: StructTable, ctx: RenderCtx): string {
   for (const dep of [...ctx.imports].filter((d) => d !== t.name).sort()) {
     imports.push(`import { ${ctx.constOf(dep)} } from "./${dep}";`);
   }
-  return `${imports.join("\n")}\n\n${code}\n`;
+  return {
+    kind: "table",
+    name: t.name,
+    exportName: ctx.constOf(t.name),
+    code,
+    imports,
+  };
 }
 
 /** A const name for a function — `fn.name` sanitized to an identifier (`math::add` → `math_add`). */
@@ -587,21 +599,39 @@ function topoSort<T extends { name: string; deps: string[] }>(items: T[]): T[] {
   return out;
 }
 
-export interface PullResult {
-  files: string[];
-  skipped: string[];
+/** What pulling would do to one schema file. */
+export interface PullFilePlan {
+  /** Path relative to the project root (for display). */
+  rel: string;
+  /** Absolute path on disk. */
+  abs: string;
+  /** `create` (new file), `update` (merged edits), or `unchanged` (already matches the DB). */
+  action: "create" | "update" | "unchanged";
+  /** Current file contents (`""` for a new file). */
+  before: string;
+  /** Contents after the pull (the merged result). */
+  after: string;
+  /** Local-only content this file would drop when mirroring the DB. */
+  localOnly: LocalOnly;
 }
 
+export interface PullPlan {
+  files: PullFilePlan[];
+}
+
+const EMPTY_LOCAL: LocalOnly = { fields: [], objects: [] };
+
 /**
- * Introspect the live database (via `INFO … STRUCTURE`) and regenerate the `sz.*` schema. Writes
- * one combined module when `config.schema` is a file, or one `<table>.ts` per table when it's a
- * directory. Refuses (without `--force`) to overwrite existing files or duplicate definitions.
+ * Build the per-file pull plan: introspect the live DB (via `INFO … STRUCTURE`) and compute what
+ * each schema file would become. Nothing is written — {@link applyPull} does that. Existing files
+ * are *merged* (the DB wins per object/field, but unrelated code, comments, and local-only content
+ * survive); new files are created. `keepLocal` keeps local-only fields/objects instead of mirroring.
  */
-export async function pull(
+export async function planPull(
   db: Surreal,
   config: ResolvedConfig,
-  opts: { force?: boolean; filter?: Filter } = {},
-): Promise<PullResult> {
+  opts: { filter?: Filter; keepLocal?: boolean } = {},
+): Promise<PullPlan> {
   const introspected = await introspectStructured(
     db,
     new Set([config.migrationsTable, `${config.migrationsTable}_lock`]),
@@ -625,99 +655,132 @@ export async function pull(
     resolve: (target) => resolve(t.name, target),
   });
 
-  return config.schemaIsFile
-    ? pullToFile({ tables, functions, accesses }, config, opts, makeCtx)
-    : pullToDir({ tables, functions, accesses }, config, opts, makeCtx);
-}
+  const keepLocal = opts.keepLocal ?? false;
 
-/** Directory layout: one file per object under its kind folder (`tables/`, `functions/`, `access/`). */
-async function pullToDir(
-  { tables, functions, accesses }: DbStructured,
-  config: ResolvedConfig,
-  opts: { force?: boolean },
-  makeCtx: (t: StructTable) => RenderCtx,
-): Promise<PullResult> {
-  const dir = config.schemaPath;
-  // A table already defined in some OTHER file (e.g. a multi-table `schema.ts`) would become a
-  // duplicate once we also write `tables/<table>.ts` — refuse rather than create a silent "last wins".
-  const tableFile = (name: string) => join(dir, "tables", `${name}.ts`);
-  const existing = await existingTables(dir);
-  const conflicts = tables
-    .map((t) => ({ name: t.name, file: existing.get(t.name) }))
-    .filter((c) => c.file && c.file !== tableFile(c.name));
-  if (conflicts.length && !opts.force) {
-    // Group the offending tables by the file they're already defined in, so the message reads
-    // "schema.ts → a, b, c" once instead of repeating "(in schema.ts)" per table.
-    const byFile = new Map<string, string[]>();
-    for (const c of conflicts) {
-      const file = relative(dir, c.file as string);
-      const names = byFile.get(file);
-      if (names) names.push(c.name);
-      else byFile.set(file, [c.name]);
-    }
-    const lines = [...byFile]
-      .map(([file, names]) => `    ${file} → ${names.sort().join(", ")}`)
-      .join("\n");
-    const single = byFile.size === 1 ? [...byFile.keys()][0] : null;
-    const remedies = [
-      single
-        ? `    • point \`schema\` at ${single} (single-file layout) in surreal-zod.config.ts`
-        : "    • point `schema` at a single file (single-file layout) in surreal-zod.config.ts",
-      "    • clear those files and re-run pull into an empty directory",
-      "    • re-run with --force to overwrite",
-    ].join("\n");
-    throw new Error(
-      `pull would duplicate tables already defined elsewhere:\n${lines}\n\n` +
-        `  Directory mode writes one file per table. To resolve, either:\n${remedies}`,
-    );
+  // Single-file layout: one combined module.
+  if (config.schemaIsFile) {
+    const units = [
+      ...tables.map((t) => tableUnit(t, makeCtx(t))),
+      ...functions.map(functionUnit),
+      ...accesses.map(accessUnit),
+    ];
+    return {
+      files: [
+        planFile(config.schemaPath, units, keepLocal, config, () =>
+          assembleCombined({ tables, functions, accesses }, makeCtx),
+        ),
+      ],
+    };
   }
 
-  const files: string[] = [];
-  const skipped: string[] = [];
-  // One file per object, grouped by kind: `tables/<t>.ts`, `functions/<fn>.ts`, `access/<a>.ts`.
-  const writeObject = (kind: string, name: string, content: string) => {
-    const rel = join(kind, `${name}.ts`);
-    const file = join(dir, rel);
-    if (existsSync(file) && !opts.force) {
-      skipped.push(rel);
-      return;
-    }
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, content);
-    files.push(rel);
+  // Directory layout: one file per object, merged into wherever the object already lives (falling
+  // back to its kind folder). A table the user keeps in some other file is updated there, in place.
+  const dir = config.schemaPath;
+  const tableLoc = await existingTables(dir);
+  const groups = new Map<string, RenderedUnit[]>();
+  const add = (abs: string, u: RenderedUnit) => {
+    const arr = groups.get(abs);
+    if (arr) arr.push(u);
+    else groups.set(abs, [u]);
   };
   for (const t of tables)
-    writeObject("tables", t.name, renderTableModule(t, makeCtx(t)));
-  for (const fn of functions)
-    writeObject("functions", fn.name, renderFunctionModule(fn));
-  for (const a of accesses)
-    writeObject("access", a.name, renderAccessModule(a));
-  return { files, skipped };
-}
-
-/** The `functions/<name>.ts` module for the directory layout (one db-level function). */
-function renderFunctionModule(fn: StructFunction): string {
-  return `import { defineFunction, sz, surql } from "surreal-zod";\n\n${renderFunctionConst(fn)}\n`;
-}
-
-/** The `access/<name>.ts` module for the directory layout (one db-level access def). */
-function renderAccessModule(access: StructAccess): string {
-  return `import { defineAccess, surql } from "surreal-zod";\n\n${renderAccessConst(access)}\n`;
-}
-
-/** Single-file layout: one combined module (tables ordered so same-file refs resolve). */
-async function pullToFile(
-  { tables, functions, accesses }: DbStructured,
-  config: ResolvedConfig,
-  opts: { force?: boolean },
-  makeCtx: (t: StructTable) => RenderCtx,
-): Promise<PullResult> {
-  const target = config.schemaPath;
-  if (existsSync(target) && !opts.force) {
-    throw new Error(
-      `${relative(config.root, target)} already exists — use --force to overwrite it.`,
+    add(
+      tableLoc.get(t.name) ?? join(dir, "tables", `${t.name}.ts`),
+      tableUnit(t, makeCtx(t)),
     );
+  for (const fn of functions)
+    add(join(dir, "functions", `${fn.name}.ts`), functionUnit(fn));
+  for (const a of accesses)
+    add(join(dir, "access", `${a.name}.ts`), accessUnit(a));
+
+  const files = [...groups].map(([abs, units]) =>
+    planFile(abs, units, keepLocal, config, () =>
+      units.length === 1
+        ? unitModule(units[0])
+        : mergeUnits("", units, {
+            keepLocalFields: true,
+            keepLocalObjects: true,
+          }).content,
+    ),
+  );
+  files.sort((a, b) => a.rel.localeCompare(b.rel));
+  return { files };
+}
+
+/** Plan one file: create it from `fresh()` if absent, else merge the units into it. */
+function planFile(
+  abs: string,
+  units: RenderedUnit[],
+  keepLocal: boolean,
+  config: ResolvedConfig,
+  fresh: () => string,
+): PullFilePlan {
+  const rel = relative(config.root, abs);
+  if (!existsSync(abs)) {
+    const after = fresh();
+    return {
+      rel,
+      abs,
+      action: "create",
+      before: "",
+      after: after.endsWith("\n") ? after : `${after}\n`,
+      localOnly: EMPTY_LOCAL,
+    };
   }
+  const before = readFileSync(abs, "utf8");
+  const { content, localOnly } = mergeUnits(before, units, {
+    keepLocalFields: keepLocal,
+    keepLocalObjects: keepLocal,
+  });
+  return {
+    rel,
+    abs,
+    action: content === before ? "unchanged" : "update",
+    before,
+    after: content,
+    localOnly,
+  };
+}
+
+/** Write the changed files of a plan; returns the relative paths written. */
+export function applyPull(plan: PullPlan): string[] {
+  const written: string[] = [];
+  for (const f of plan.files) {
+    if (f.action === "unchanged") continue;
+    mkdirSync(dirname(f.abs), { recursive: true });
+    writeFileSync(f.abs, f.after);
+    written.push(f.rel);
+  }
+  return written;
+}
+
+/** The rendered unit for one db-level function. */
+function functionUnit(fn: StructFunction): RenderedUnit {
+  return {
+    kind: "function",
+    name: fn.name,
+    exportName: fnConst(fn.name),
+    code: renderFunctionConst(fn),
+    imports: [`import { defineFunction, sz, surql } from "surreal-zod";`],
+  };
+}
+
+/** The rendered unit for one db-level access def. */
+function accessUnit(a: StructAccess): RenderedUnit {
+  return {
+    kind: "access",
+    name: a.name,
+    exportName: fnConst(a.name),
+    code: renderAccessConst(a),
+    imports: [`import { defineAccess, surql } from "surreal-zod";`],
+  };
+}
+
+/** Assemble the single-file combined module (tables ordered so same-file refs resolve). */
+function assembleCombined(
+  { tables, functions, accesses }: DbStructured,
+  makeCtx: (t: StructTable) => RenderCtx,
+): string {
   // Render each const (collecting its same-file direct deps via ctx.imports), then order so deps
   // come first — same-file `Target.record()` refs need `Target` defined above them.
   const rendered = tables.map((t) => {
@@ -747,9 +810,5 @@ async function pullToFile(
   const body = [...ordered.map((r) => r.code), ...fnCode, ...accessCode].join(
     "\n\n",
   );
-  const out = `${imports.join("\n")}\n\n${body}\n`;
-
-  mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, out);
-  return { files: [relative(config.root, target)], skipped: [] };
+  return `${imports.join("\n")}\n\n${body}\n`;
 }

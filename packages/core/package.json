@@ -43,7 +43,8 @@
   },
   "dependencies": {
     "commander": "^14.0.2",
-    "jiti": "^2.4.2"
+    "jiti": "^2.4.2",
+    "magicast": "^0.5.3"
   },
   "peerDependencies": {
     "surrealdb": "^2.0.3",

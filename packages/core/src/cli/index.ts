@@ -32,6 +32,7 @@ import {
   syncPlan,
   verifyMigrations,
 } from "./introspect";
+import { actionLabel, lineDiff } from "./merge";
 import { EMPTY_SNAPSHOT, listMigrations, writeSnapshot } from "./meta";
 import {
   baseline,
@@ -46,7 +47,7 @@ import {
   unlock,
 } from "./migrate";
 import { pipeThroughPager, resolvePager } from "./pager";
-import { pull } from "./pull";
+import { applyPull, type PullFilePlan, type PullPlan, planPull } from "./pull";
 import { duplicateTables, loadDefs, loadSchemas } from "./schema";
 import { fail, ok, plural, style } from "./style";
 
@@ -236,7 +237,7 @@ Examples:
   $ sz init                 scaffold database/ (schemas + migrations) + config
   $ sz gen add_users        create a migration from schema changes
   $ sz migrate              apply pending migrations
-  $ sz sync --watch         keep the database in sync while you edit
+  $ sz push --watch         keep the database in sync while you edit
   $ sz diff --live          show how the schema differs from the live database
 `,
   );
@@ -805,8 +806,8 @@ dbFlags(
 kindFlags(
   dbFlags(
     program
-      .command("sync")
-      .alias("push")
+      .command("push")
+      .alias("sync")
       .description(
         "Reconcile the live database with your schema (no migration files)",
       )
@@ -837,7 +838,7 @@ kindFlags(
         const kinds = summarizeKinds(stmts);
         if (opts.dryRun) {
           console.log(
-            `\n${style.dim(`${plural(stmts.length, "change")}${kinds ? ` — ${kinds}` : ""} — run \`sz sync\` to apply.`)}`,
+            `\n${style.dim(`${plural(stmts.length, "change")}${kinds ? ` — ${kinds}` : ""} — run \`sz push\` to apply.`)}`,
           );
           return;
         }
@@ -872,40 +873,108 @@ dbFlags(
   );
 });
 
+/** Print the per-file create/update diffs of a pull plan (unchanged files are omitted). */
+function printPullPlan(plan: PullPlan): void {
+  for (const f of plan.files) {
+    if (f.action === "unchanged") continue;
+    console.log(`\n${actionLabel(f.action)} ${style.bold(f.rel)}`);
+    console.log(
+      lineDiff(f.before, f.after)
+        .split("\n")
+        .map((l) => `  ${l}`)
+        .join("\n"),
+    );
+  }
+}
+
+/** List the local-only fields/objects a mirror pull would drop. */
+function printLocalOnly(files: PullFilePlan[]): void {
+  console.log(`\n${style.yellow("! local-only schema, not in the database:")}`);
+  for (const f of files) {
+    for (const fld of f.localOnly.fields)
+      console.log(
+        style.dim(`    ${f.rel}: ${fld.exportName} → ${fld.fields.join(", ")}`),
+      );
+    for (const obj of f.localOnly.objects)
+      console.log(style.dim(`    ${f.rel}: ${obj} (whole definition)`));
+  }
+  console.log(style.dim("  keep with --merge, or drop with --discard."));
+}
+
 kindFlags(
   dbFlags(
     program
       .command("pull")
-      .description("Generate Zod schema files from the live database")
-      .option("--force", "overwrite existing schema files"),
+      .description("Generate/update Zod schema files from the live database")
+      .option("--write", "apply the changes (default: preview only)")
+      .option(
+        "--merge",
+        "keep local-only fields/objects (default: mirror the DB)",
+      )
+      .option(
+        "--discard",
+        "drop local-only fields/objects to mirror the DB exactly",
+      ),
   ),
-).action((opts: CommonOpts & FilterOpts & { force?: boolean }) => {
-  run(() =>
-    withDb(opts, async (db, config) => {
-      const { files, skipped } = await pull(db, config, {
-        force: opts.force,
-        filter: parseFilter(opts),
-      });
-      for (const f of files) console.log(`  ${style.green("+")} ${f}`);
-      for (const f of skipped)
-        console.log(style.dim(`  · ${f} (exists — use --force)`));
-      // Baseline: sync the snapshot and record the pulled state as an already-applied migration, so
-      // the schema matches the DB and `sz diff` doesn't report the freshly-pulled objects as pending.
-      const base = await baseline(db, config);
-      console.log(
-        files.length
-          ? `\n${ok(`Pulled ${plural(files.length, "schema")} into ${config.schema}.`)}`
-          : ok("Nothing to pull."),
-      );
-      if (base.created)
+).action(
+  (
+    opts: CommonOpts &
+      FilterOpts & { write?: boolean; merge?: boolean; discard?: boolean },
+  ) => {
+    run(() =>
+      withDb(opts, async (db, config) => {
+        const plan = await planPull(db, config, {
+          filter: parseFilter(opts),
+          keepLocal: opts.merge,
+        });
+        printPullPlan(plan);
+
+        const changed = plan.files.filter((f) => f.action !== "unchanged");
+        // Local-only content is only "at risk" when we're not keeping it (--merge keeps it).
+        const atRisk = opts.merge
+          ? []
+          : plan.files.filter(
+              (f) => f.localOnly.fields.length || f.localOnly.objects.length,
+            );
+
+        if (!changed.length) {
+          console.log(ok("Schema files already match the database."));
+          return;
+        }
+
+        if (!opts.write) {
+          console.log(
+            `\n${style.dim(`${plural(changed.length, "file")} would change — run \`sz pull --write\` to apply.`)}`,
+          );
+          if (atRisk.length) printLocalOnly(atRisk);
+          return;
+        }
+
+        // Don't silently destroy local-only schema (the git "commit or stash" guard).
+        if (atRisk.length && !opts.discard) {
+          printLocalOnly(atRisk);
+          throw new Error(
+            "pull would overwrite local-only schema — re-run with --merge to keep it or --discard to mirror the database.",
+          );
+        }
+
+        const written = applyPull(plan);
+        // Baseline: sync the snapshot and record the pulled state as an already-applied migration, so
+        // the schema matches the DB and `sz diff` doesn't report the freshly-pulled objects as pending.
+        const base = await baseline(db, config);
         console.log(
-          style.dim(
-            `  baseline ${base.tag} recorded (snapshot synced, marked applied).`,
-          ),
+          `\n${ok(`Pulled ${plural(written.length, "file")} from the database.`)}`,
         );
-    }),
-  );
-});
+        if (base.created)
+          console.log(
+            style.dim(
+              `  baseline ${base.tag} recorded (snapshot synced, marked applied).`,
+            ),
+          );
+      }),
+    );
+  },
+);
 
 if (process.argv.length <= 2) {
   program.outputHelp();
