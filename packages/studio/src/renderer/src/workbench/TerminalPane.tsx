@@ -1,11 +1,23 @@
 // Static terminal pane matching canonical shell A (full-width, bottom). Becomes a
 // real xterm + sz output stream in a later milestone (see PROGRESS.md).
 const LINES: Array<Array<[string, string]>> = [
-  [['$ ', 'm'], ['sz push --dry-run', 'p']],
-  [['~ ', 'a'], ['2 changes to apply to local-dev', 's']],
-  [['+ ', 'g'], ['DEFINE FIELD bio ON user TYPE option<string>', 's']],
-  [['$ ', 'm'], ['▋', 'a']],
-]
+  [
+    ["$ ", "m"],
+    ["sz push --dry-run", "p"],
+  ],
+  [
+    ["~ ", "a"],
+    ["2 changes to apply to local-dev", "s"],
+  ],
+  [
+    ["+ ", "g"],
+    ["DEFINE FIELD bio ON user TYPE option<string>", "s"],
+  ],
+  [
+    ["$ ", "m"],
+    ["▋", "a"],
+  ],
+];
 
 export function TerminalPane() {
   return (
@@ -34,5 +46,5 @@ export function TerminalPane() {
         ))}
       </div>
     </div>
-  )
+  );
 }

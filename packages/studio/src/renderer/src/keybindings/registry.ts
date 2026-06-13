@@ -4,17 +4,17 @@
 // Key syntax is TanStack Hotkeys': 'Mod' (Cmd/Ctrl), 'Shift', 'Enter', etc.
 
 export interface KeybindingDef {
-  keys: string
-  command: string
+  keys: string;
+  command: string;
 }
 
-const registry: KeybindingDef[] = []
+const registry: KeybindingDef[] = [];
 
 export function registerKeybinding(def: KeybindingDef): KeybindingDef {
-  registry.push(def)
-  return def
+  registry.push(def);
+  return def;
 }
 
 export function allKeybindings(): KeybindingDef[] {
-  return [...registry]
+  return [...registry];
 }

@@ -1,6 +1,6 @@
-import { ChevronDown, Folder, Moon, Search } from 'lucide-react'
-import { runCommand } from '../commands/registry'
-import { WindowControls } from './WindowControls'
+import { ChevronDown, Folder, Moon, Search } from "lucide-react";
+import { runCommand } from "../commands/registry";
+import { WindowControls } from "./WindowControls";
 
 // Canonical titlebar — Variation B (switcher-centric, single tier), from design/app.pen.
 // The collapsed "Menu" was removed; the search icon opens the command palette (Cmd/K).
@@ -38,7 +38,7 @@ export function TitleBarB() {
           type="button"
           className="tb-icon-btn"
           aria-label="Command palette"
-          onClick={() => runCommand('command.palette')}
+          onClick={() => runCommand("command.palette")}
         >
           <Search size={16} />
         </button>
@@ -49,5 +49,5 @@ export function TitleBarB() {
         <WindowControls />
       </div>
     </div>
-  )
+  );
 }

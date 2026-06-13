@@ -1,5 +1,5 @@
-import { Check, ChevronDown, Folder, Moon } from 'lucide-react'
-import { WindowControls } from './WindowControls'
+import { Check, ChevronDown, Folder, Moon } from "lucide-react";
+import { WindowControls } from "./WindowControls";
 
 // Canonical titlebar — Variation C (two-tier), from design/app.pen.
 // Tier 1 = window chrome (the static app menus were removed; actions live in the
@@ -44,5 +44,5 @@ export function TitleBarC() {
         </button>
       </div>
     </div>
-  )
+  );
 }
