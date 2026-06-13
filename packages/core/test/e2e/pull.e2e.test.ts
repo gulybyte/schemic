@@ -1,0 +1,300 @@
+// `sz pull` end to end: idempotency (the regression lock for the surql-import / literal-default
+// fixes), the local-only guard (--merge / --discard), and the documented codec asymmetries.
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { rmSync } from "node:fs";
+import { E2E_ENABLED, type Harness, startHarness } from "./harness";
+
+const e2e = describe.skipIf(!E2E_ENABLED);
+if (!E2E_ENABLED)
+  console.warn("[e2e] `surreal` binary not found — skipping e2e suite");
+
+let H: Harness;
+beforeAll(async () => {
+  if (E2E_ENABLED) H = await startHarness();
+}, 30_000);
+afterAll(async () => {
+  await H?.cleanup();
+});
+
+const T = 60_000;
+
+/** Init, then drop the sample `user.ts` so pull tests start from a clean, single-table slate. */
+async function setupBare() {
+  const root = H.scaffold();
+  const db = H.freshDb();
+  const run = (args: string[]) => H.run(args, { cwd: root, db });
+  await run(["init"]);
+  rmSync(`${root}/database/schema/tables/user.ts`);
+  return { root, db, run };
+}
+
+e2e("pull", () => {
+  test(
+    "round-trips idempotently: literal defaults stay bare, surql comes from surrealdb",
+    async () => {
+      const { root, run } = await setupBare();
+      H.write(
+        root,
+        "database/schema/tables/flag.ts",
+        `import { surql } from "surrealdb";
+import { sz, defineTable } from "surreal-zod";
+
+export const Flag = defineTable("flag", {
+  id: sz.string(),
+  enabled: sz.boolean().$default(false),
+  count: sz.int().$default(0),
+  createdAt: sz.datetime().$default(surql\`time::now()\`),
+});
+`,
+      );
+      await run(["push"]); // db now has `flag`
+
+      const written = await run(["pull", "--write"]);
+      expect(written.code).toBe(0);
+
+      const flag = H.read(root, "database/schema/tables/flag.ts");
+      // Literal defaults render bare (not wrapped in surql).
+      expect(flag).toContain(".$default(false)");
+      expect(flag).toContain(".$default(0)");
+      expect(flag).not.toContain("$default(surql`false`)");
+      expect(flag).not.toContain("$default(surql`0`)");
+      // An expression default keeps surql, imported from surrealdb on its own line.
+      expect(flag).toContain(".$default(surql`time::now()`)");
+      expect(flag).toContain(`import { surql } from "surrealdb";`);
+      // surql is NEVER folded into the surreal-zod import.
+      const szLine = flag
+        .split("\n")
+        .find((l) => l.includes('from "surreal-zod"'));
+      expect(szLine).toBeDefined();
+      expect(szLine).not.toContain("surql");
+
+      // Pulling an in-sync database is a no-op.
+      const again = await run(["pull"]);
+      expect(again.out).toContain("Schema files already match the database.");
+    },
+    T,
+  );
+
+  test(
+    "local-only field: preview warns, bare --write is guarded, --discard drops it",
+    async () => {
+      const { root, run } = await setupBare();
+      H.write(
+        root,
+        "database/schema/tables/flag.ts",
+        `import { sz, defineTable } from "surreal-zod";
+
+export const Flag = defineTable("flag", {
+  id: sz.string(),
+  enabled: sz.boolean().$default(false),
+});
+`,
+      );
+      await run(["push"]); // db has flag { enabled }
+
+      // Add a field the db doesn't have — local-only, at risk on a mirror pull.
+      H.write(
+        root,
+        "database/schema/tables/flag.ts",
+        `import { sz, defineTable } from "surreal-zod";
+
+export const Flag = defineTable("flag", {
+  id: sz.string(),
+  enabled: sz.boolean().$default(false),
+  note: sz.string().optional(),
+});
+`,
+      );
+
+      // Preview surfaces the local-only field.
+      const preview = await run(["pull"]);
+      expect(preview.out).toContain("local-only");
+      expect(preview.out).toContain("note");
+
+      // A bare --write refuses to clobber it (the git "commit or stash" guard).
+      const guarded = await run(["pull", "--write"]);
+      expect(guarded.code).toBe(1);
+      expect(guarded.out).toContain("would overwrite local-only schema");
+      expect(H.read(root, "database/schema/tables/flag.ts")).toContain("note");
+
+      // --discard mirrors the db exactly, dropping the local-only field.
+      const discard = await run(["pull", "--write", "--discard"]);
+      expect(discard.code).toBe(0);
+      expect(discard.out).toMatch(/Pulled/);
+      expect(H.read(root, "database/schema/tables/flag.ts")).not.toContain(
+        "note",
+      );
+    },
+    T,
+  );
+
+  test(
+    "local-only field: --merge keeps it while still mirroring the rest",
+    async () => {
+      const { root, run } = await setupBare();
+      H.write(
+        root,
+        "database/schema/tables/flag.ts",
+        `import { sz, defineTable } from "surreal-zod";
+
+export const Flag = defineTable("flag", {
+  id: sz.string(),
+  enabled: sz.boolean().$default(false),
+});
+`,
+      );
+      await run(["push"]);
+      H.write(
+        root,
+        "database/schema/tables/flag.ts",
+        `import { sz, defineTable } from "surreal-zod";
+
+export const Flag = defineTable("flag", {
+  id: sz.string(),
+  enabled: sz.boolean().$default(false),
+  note: sz.string().optional(),
+});
+`,
+      );
+
+      const merge = await run(["pull", "--write", "--merge"]);
+      expect(merge.code).toBe(0);
+      // The local-only field survives (no change to mirror → already in sync).
+      expect(H.read(root, "database/schema/tables/flag.ts")).toContain("note");
+    },
+    T,
+  );
+
+  test(
+    "documents the sz.email() codec asymmetry: it pulls back as string + ASSERT",
+    async () => {
+      // The sample `user.ts` uses sz.email(); the db stores it as `string` + an is_email ASSERT.
+      // pull can't know it was an email codec, so it round-trips as sz.string().$assert(...). This
+      // test pins that KNOWN asymmetry so a future codec-reversal change updates it deliberately.
+      const root = H.scaffold();
+      const db = H.freshDb();
+      const run = (args: string[]) => H.run(args, { cwd: root, db });
+      await run(["init"]);
+      await run(["push"]);
+
+      await run(["pull", "--write"]);
+      const user = H.read(root, "database/schema/tables/user.ts");
+      expect(user).toContain("string::is_email");
+      expect(user).toContain("$assert");
+
+      // Still idempotent on the second pull (the asymmetry is a one-time normalization).
+      const again = await run(["pull"]);
+      expect(again.out).toContain("Schema files already match the database.");
+    },
+    T,
+  );
+
+  test(
+    "pull against an empty database is a safe no-op (whole-table local-only not yet surfaced)",
+    async () => {
+      // KNOWN GAP: pull only reconciles files that map to a db object, so a whole local-only table
+      // (here `user`, never pushed) is neither dropped nor flagged — pull reports a clean match.
+      // Pinned so a future fix that surfaces whole-table local-only updates this deliberately.
+      const root = H.scaffold();
+      const db = H.freshDb();
+      const run = (args: string[]) => H.run(args, { cwd: root, db });
+      await run(["init"]); // user.ts on disk, db still empty
+      const pull = await run(["pull"]);
+      expect(pull.code).toBe(0);
+      expect(pull.out).toContain("Schema files already match the database.");
+    },
+    T,
+  );
+});
+
+e2e("migration guards", () => {
+  test(
+    "gen --baseline without --force refuses, pointing at the exact command",
+    async () => {
+      const root = H.scaffold();
+      const db = H.freshDb();
+      const run = (args: string[]) => H.run(args, { cwd: root, db });
+      await run(["init"]);
+      await run(["gen", "base", "-y"]); // one migration now exists
+
+      // Non-interactive (no TTY) + no --force → stop with an actionable message, no files touched.
+      const baseline = await run(["gen", "--baseline", "-y"]);
+      expect(baseline.code).toBe(1);
+      expect(baseline.out).toMatch(/already exist/);
+      expect(baseline.out).toMatch(/--baseline --force/);
+    },
+    T,
+  );
+
+  test(
+    "gen --baseline --force squashes existing migrations into one applied baseline",
+    async () => {
+      const root = H.scaffold();
+      const db = H.freshDb();
+      const run = (args: string[]) => H.run(args, { cwd: root, db });
+      await run(["init"]);
+      await run(["gen", "base", "-y"]);
+      await run(["migrate"]);
+      // A second migration, also applied → two on disk, both applied in the DB.
+      H.write(
+        root,
+        "database/schema/tables/post.ts",
+        `import { sz, defineTable } from "surreal-zod";
+
+export const Post = defineTable("post", {
+  id: sz.string(),
+  title: sz.string(),
+});
+`,
+      );
+      await run(["gen", "add_post", "-y"]);
+      await run(["migrate"]);
+
+      const squash = await run(["gen", "--baseline", "--force"]);
+      expect(squash.code).toBe(0);
+      expect(squash.out).toContain("replaced 2 migrations");
+      // DB already matched → baseline recorded applied (DDL not re-run).
+      expect(squash.out).toContain("recorded as applied");
+
+      // Exactly one migration, applied, with NO orphaned ('missing') history rows.
+      const status = await run(["status"]);
+      expect(status.out).toContain("baseline");
+      expect(status.out).not.toContain("missing");
+      expect(status.out).toMatch(/1 migration, 0 pending/);
+
+      // Code, snapshot, and DB are all back in sync.
+      const live = await run(["diff", "--live"]);
+      expect(live.out).toContain("No changes.");
+      const offline = await run(["diff"]);
+      expect(offline.out).toContain("No changes.");
+      const migrate = await run(["migrate"]);
+      expect(migrate.out).toContain("Up to date");
+    },
+    T,
+  );
+
+  test(
+    "rollback reverts the last migration and is then a no-op",
+    async () => {
+      const root = H.scaffold();
+      const db = H.freshDb();
+      const run = (args: string[]) => H.run(args, { cwd: root, db });
+      await run(["init"]);
+      await run(["gen", "base", "-y"]);
+      await run(["migrate"]);
+
+      const back = await run(["rollback"]);
+      expect(back.code).toBe(0);
+      expect(back.out).toMatch(/Rolled back 1 migration/);
+
+      // The migration is pending again.
+      const status = await run(["status"]);
+      expect(status.out).toContain("pending");
+
+      const again = await run(["rollback"]);
+      expect(again.out).toContain("Nothing to roll back.");
+    },
+    T,
+  );
+});
