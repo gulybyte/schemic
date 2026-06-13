@@ -325,10 +325,14 @@ export function unifiedDiff(
   ].join("\n")}\n`;
 }
 
-/** Colored verb for a pull action (`new` / `update` / `unchanged`). */
-export function actionLabel(action: "create" | "update" | "unchanged"): string {
+/** Colored verb for a pull action (`new` / `update` / `delete` / `unchanged`). */
+export function actionLabel(
+  action: "create" | "update" | "unchanged" | "delete",
+): string {
   if (action === "create") return colorEnabled() ? style.green("new") : "new";
   if (action === "update")
     return colorEnabled() ? style.yellow("update") : "update";
+  if (action === "delete")
+    return colorEnabled() ? style.red("delete") : "delete";
   return style.dim("unchanged");
 }

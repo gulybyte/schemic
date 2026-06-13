@@ -2,7 +2,8 @@
 // fixes), the local-only guard (--merge / --discard), and the documented codec asymmetries.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { E2E_ENABLED, type Harness, startHarness } from "./harness";
 
 const e2e = describe.skipIf(!E2E_ENABLED);
@@ -191,18 +192,89 @@ export const Flag = defineTable("flag", {
   );
 
   test(
-    "pull against an empty database is a safe no-op (whole-table local-only not yet surfaced)",
+    "whole-table local-only: surfaced in preview, kept by --merge, file deleted by --discard",
     async () => {
-      // KNOWN GAP: pull only reconciles files that map to a db object, so a whole local-only table
-      // (here `user`, never pushed) is neither dropped nor flagged — pull reports a clean match.
-      // Pinned so a future fix that surfaces whole-table local-only updates this deliberately.
-      const root = H.scaffold();
-      const db = H.freshDb();
-      const run = (args: string[]) => H.run(args, { cwd: root, db });
-      await run(["init"]); // user.ts on disk, db still empty
-      const pull = await run(["pull"]);
-      expect(pull.code).toBe(0);
-      expect(pull.out).toContain("Schema files already match the database.");
+      const { root, run } = await setupBare();
+      const flag = `import { sz, defineTable } from "surreal-zod";
+
+export const Flag = defineTable("flag", {
+  id: sz.string(),
+  enabled: sz.boolean().$default(false),
+});
+`;
+      H.write(root, "database/schema/tables/flag.ts", flag);
+      await run(["push"]); // DB has `flag` only
+
+      // A table the DB doesn't have — a whole local-only entity in its own file.
+      H.write(
+        root,
+        "database/schema/tables/draft.ts",
+        `import { sz, defineTable } from "surreal-zod";
+
+export const Draft = defineTable("draft", {
+  id: sz.string(),
+  title: sz.string(),
+});
+`,
+      );
+      const draftPath = join(root, "database/schema/tables/draft.ts");
+
+      // Preview surfaces it (no longer the old "already match" lie).
+      const preview = await run(["pull"]);
+      expect(preview.out).not.toContain("already match");
+      expect(preview.out).toContain("local-only");
+      expect(preview.out).toContain("draft.ts");
+
+      // A bare --write refuses to clobber it.
+      const guarded = await run(["pull", "--write"]);
+      expect(guarded.code).toBe(1);
+      expect(guarded.out).toContain("would overwrite local-only schema");
+      expect(existsSync(draftPath)).toBe(true);
+
+      // --merge keeps the file.
+      const merged = await run(["pull", "--write", "--merge"]);
+      expect(merged.code).toBe(0);
+      expect(existsSync(draftPath)).toBe(true);
+
+      // --discard deletes the whole file (it was purely the local-only entity).
+      const discard = await run(["pull", "--write", "--discard"]);
+      expect(discard.code).toBe(0);
+      expect(discard.out).toMatch(/removed/);
+      expect(existsSync(draftPath)).toBe(false);
+    },
+    T,
+  );
+
+  test(
+    "a local-only entity mixed with other code is surfaced but NOT deleted",
+    async () => {
+      const { root, run } = await setupBare();
+      await run(["push"]); // empty schema (user.ts removed) → empty DB
+
+      // A file that mixes a local-only table with a non-schema export → not safe to auto-delete.
+      H.write(
+        root,
+        "database/schema/tables/mix.ts",
+        `import { sz, defineTable } from "surreal-zod";
+
+export const HELPER = 42;
+export const Mix = defineTable("mix", {
+  id: sz.string(),
+  name: sz.string(),
+});
+`,
+      );
+      const mixPath = join(root, "database/schema/tables/mix.ts");
+
+      const preview = await run(["pull"]);
+      expect(preview.out).toContain("local-only");
+      expect(preview.out).toContain("mix.ts");
+
+      // --discard surfaces it but leaves the file (helper would be lost) with a note.
+      const discard = await run(["pull", "--write", "--discard"]);
+      expect(discard.code).toBe(0);
+      expect(existsSync(mixPath)).toBe(true);
+      expect(discard.out).toMatch(/left in place|by hand/);
     },
     T,
   );

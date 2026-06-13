@@ -100,6 +100,50 @@ export async function loadSchemas(schemaPath: string): Promise<AnyTable[]> {
   return (await loadDefs(schemaPath)).tables;
 }
 
+/** A schema file's exported entities (tables/functions/accesses) and whether it holds ONLY those. */
+export interface LocalFileEntities {
+  /** Each schema entity by its export-const identifier + its DB name (table/function/access name). */
+  entities: { exportName: string; name: string; kind: "table" | "def" }[];
+  /** True when EVERY runtime export of the file is a schema entity (no helpers / other exports). */
+  pureSchema: boolean;
+}
+
+/**
+ * Scan each schema file for the tables/functions/accesses it exports (by export-const name), and
+ * whether the file is purely schema. `pull` uses this to find whole-entity local-only schema
+ * (entities the live DB doesn't have) and to decide whether a file is safe to delete when mirroring
+ * the DB. Standalone events are not whole entities (they attach to a table), so they don't count as
+ * entities — a file exporting one is therefore not `pureSchema` and won't be auto-deleted.
+ */
+export async function scanLocalEntities(
+  schemaPath: string,
+): Promise<Map<string, LocalFileEntities>> {
+  if (!existsSync(schemaPath)) return new Map();
+  const jiti = makeJiti();
+  const out = new Map<string, LocalFileEntities>();
+  for (const file of schemaFiles(schemaPath)) {
+    const exports = Object.entries(
+      (await jiti.import(file)) as Record<string, unknown>,
+    );
+    const entities: LocalFileEntities["entities"] = [];
+    for (const [exportName, value] of exports) {
+      if (isTableDef(value))
+        entities.push({ exportName, name: value.name, kind: "table" });
+      else if (
+        isStandaloneDef(value) &&
+        (value.kind === "function" || value.kind === "access")
+      )
+        entities.push({ exportName, name: value.name, kind: "def" });
+    }
+    if (entities.length)
+      out.set(file, {
+        entities,
+        pureSchema: entities.length === exports.length,
+      });
+  }
+  return out;
+}
+
 /** Map of table name → the file that defines it (for `pull`'s duplicate-definition check). */
 export async function existingTables(
   schemaPath: string,

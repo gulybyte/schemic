@@ -1,10 +1,16 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type { Surreal } from "surrealdb";
 import type { ResolvedConfig } from "./config";
 import { type Filter, filterStructured, parseFilter } from "./filter";
 import { type LocalOnly, mergeUnits, type RenderedUnit } from "./merge";
-import { existingTables } from "./schema";
+import { existingTables, scanLocalEntities } from "./schema";
 import {
   type DbStructured,
   introspectStructured,
@@ -613,8 +619,11 @@ export interface PullFilePlan {
   rel: string;
   /** Absolute path on disk. */
   abs: string;
-  /** `create` (new file), `update` (merged edits), or `unchanged` (already matches the DB). */
-  action: "create" | "update" | "unchanged";
+  /**
+   * `create` (new file), `update` (merged edits), `unchanged` (already matches the DB), or `delete`
+   * (a file that is purely local-only entities the DB doesn't have — removed when mirroring).
+   */
+  action: "create" | "update" | "unchanged" | "delete";
   /** Current file contents (`""` for a new file). */
   before: string;
   /** Contents after the pull (the merged result). */
@@ -698,6 +707,36 @@ export async function planPull(
           }).content,
     ),
   );
+
+  // Whole-entity local-only: locally-defined tables/functions/accesses the live DB doesn't have. A
+  // file that ALSO holds a DB object is already reconciled above (mergeUnits keeps/drops the
+  // local-only entity per `keepLocal`); only files whose entities are ALL local-only are invisible
+  // to the DB-driven plan, so surface them here. A file that is PURELY those entities is deletable
+  // when mirroring (not --merge); one that mixes them with other code is surfaced but left in place.
+  const dbNames = new Set<string>([
+    ...tables.map((t) => t.name),
+    ...functions.map((f) => f.name),
+    ...accesses.map((a) => a.name),
+  ]);
+  const planned = new Set(files.map((f) => f.abs));
+  for (const [file, info] of await scanLocalEntities(dir)) {
+    if (planned.has(file)) continue;
+    const localOnly = info.entities.filter((e) => !dbNames.has(e.name));
+    if (!localOnly.length) continue;
+    const before = readFileSync(file, "utf8");
+    const deletable =
+      !keepLocal &&
+      info.pureSchema &&
+      localOnly.length === info.entities.length;
+    files.push({
+      rel: relative(config.root, file),
+      abs: file,
+      action: deletable ? "delete" : "unchanged",
+      before,
+      after: deletable ? "" : before,
+      localOnly: { fields: [], objects: localOnly.map((e) => e.exportName) },
+    });
+  }
   files.sort((a, b) => a.rel.localeCompare(b.rel));
   return { files };
 }
@@ -737,16 +776,20 @@ function planFile(
   };
 }
 
-/** Write the changed files of a plan; returns the relative paths written. */
+/** Apply a plan: write created/updated files, delete local-only files. Returns the paths touched. */
 export function applyPull(plan: PullPlan): string[] {
-  const written: string[] = [];
+  const touched: string[] = [];
   for (const f of plan.files) {
     if (f.action === "unchanged") continue;
-    mkdirSync(dirname(f.abs), { recursive: true });
-    writeFileSync(f.abs, f.after);
-    written.push(f.rel);
+    if (f.action === "delete") {
+      rmSync(f.abs, { force: true });
+    } else {
+      mkdirSync(dirname(f.abs), { recursive: true });
+      writeFileSync(f.abs, f.after);
+    }
+    touched.push(f.rel);
   }
-  return written;
+  return touched;
 }
 
 /** The rendered unit for one db-level function. */

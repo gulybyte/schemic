@@ -1075,6 +1075,14 @@ function printPullPlan(plan: PullPlan): void {
   for (const f of plan.files) {
     if (f.action === "unchanged") continue;
     console.log(`\n${actionLabel(f.action)} ${style.bold(f.rel)}`);
+    if (f.action === "delete") {
+      console.log(
+        style.dim(
+          `  whole file removed — ${f.localOnly.objects.join(", ")} not in the database`,
+        ),
+      );
+      continue;
+    }
     console.log(
       lineDiff(f.before, f.after)
         .split("\n")
@@ -1134,15 +1142,19 @@ kindFlags(
               (f) => f.localOnly.fields.length || f.localOnly.objects.length,
             );
 
-        if (!changed.length) {
+        // "Already match" only when nothing would change AND there's no at-risk local-only schema
+        // (a whole local-only entity is neither changed nor — under --merge — at risk, but it must
+        // still be surfaced rather than silently reported as a match).
+        if (!changed.length && !atRisk.length) {
           console.log(ok("Schema files already match the database."));
           return;
         }
 
         if (!opts.write) {
-          console.log(
-            `\n${style.dim(`${plural(changed.length, "file")} would change — run \`sz pull --write\` to apply.`)}`,
-          );
+          if (changed.length)
+            console.log(
+              `\n${style.dim(`${plural(changed.length, "file")} would change — run \`sz pull --write\` to apply.`)}`,
+            );
           if (atRisk.length) printLocalOnly(atRisk);
           return;
         }
@@ -1159,13 +1171,26 @@ kindFlags(
         // Baseline: sync the snapshot and record the pulled state as an already-applied migration, so
         // the schema matches the DB and `sz diff` doesn't report the freshly-pulled objects as pending.
         const base = await baseline(db, config);
+        const removed = plan.files.filter((f) => f.action === "delete").length;
+        // Files we surfaced but couldn't safely delete (a local-only entity mixed with other code).
+        const kept = opts.merge
+          ? []
+          : plan.files.filter(
+              (f) => f.action === "unchanged" && f.localOnly.objects.length,
+            );
         console.log(
-          `\n${ok(`Pulled ${plural(written.length, "file")} from the database.`)}`,
+          `\n${ok(`Pulled ${plural(written.length, "file")} from the database${removed ? ` (${removed} removed)` : ""}.`)}`,
         );
         if (base.created)
           console.log(
             style.dim(
               `  baseline ${base.tag} recorded (snapshot synced, marked applied).`,
+            ),
+          );
+        if (kept.length)
+          console.log(
+            style.dim(
+              `  ${plural(kept.length, "file")} with local-only entities mixed with other code left in place — remove those entities by hand.`,
             ),
           );
       }),
