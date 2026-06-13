@@ -332,6 +332,146 @@ button {
   font-weight: 500;
 }
 
+/* File Explorer (Code module secondary sidebar) */
+.explorer-wrap {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 100%;
+}
+.explorer-resizer {
+  flex: 0 0 auto;
+  width: 5px;
+  margin-left: -3px;
+  z-index: 5;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: col-resize;
+}
+.explorer-resizer:hover {
+  background: var(--accent-purple);
+  opacity: 0.5;
+}
+.explorer-reopen {
+  flex: 0 0 auto;
+  width: 28px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.explorer-reopen:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+.explorer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.explorer-head {
+  height: 38px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.explorer-head-icon {
+  color: var(--accent-soft);
+  flex: 0 0 auto;
+}
+.explorer-title {
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 4px 0;
+}
+.tree-row {
+  width: 100%;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tree-row:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+.tree-row.active {
+  background: #221a30;
+  color: var(--text-primary);
+}
+.tree-chevron {
+  flex: 0 0 13px;
+  width: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.tree-icon {
+  flex: 0 0 auto;
+}
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning-amber);
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.explorer-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 20px;
+  text-align: center;
+}
+.explorer-empty-icon {
+  color: var(--text-muted);
+}
+.explorer-empty-title {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+.explorer-empty-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.explorer-open {
+  margin-top: 6px;
+  padding: 7px 14px;
+}
+
 /* Workbench */
 .workbench {
   flex: 1 1 auto;

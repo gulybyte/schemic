@@ -15,6 +15,49 @@ export type Doc = {
   scratch: boolean;
 };
 
+/** A node in the project file tree. `children: null` = a directory not yet read. */
+export type TreeNode = {
+  name: string;
+  path: string;
+  isDir: boolean;
+  children: TreeNode[] | null;
+};
+
+/** Join a child name onto a parent path, matching the parent's separator. */
+function joinPath(parent: string, name: string): string {
+  const sep = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return `${parent.replace(/[\\/]$/, "")}${sep}${name}`;
+}
+
+const IGNORED_ENTRIES = new Set([".git", "node_modules"]);
+
+async function readTree(dir: string): Promise<TreeNode[]> {
+  const entries = await getFileSystem().readDir(dir);
+  return entries
+    .filter((e) => !IGNORED_ENTRIES.has(e.name))
+    .map((e) => ({
+      name: e.name,
+      path: joinPath(dir, e.name),
+      isDir: e.isDir,
+      children: null,
+    }))
+    .sort(
+      (a, b) =>
+        Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name),
+    );
+}
+
+function findNode(nodes: TreeNode[], path: string): TreeNode | null {
+  for (const n of nodes) {
+    if (n.path === path) return n;
+    if (n.children) {
+      const hit = findNode(n.children, path);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 function langFromPath(name: string): string {
   if (name.endsWith(".surql")) return "surrealql";
   if (name.endsWith(".ts") || name.endsWith(".tsx")) return "typescript";
@@ -50,9 +93,12 @@ interface StudioState {
   // Command palette.
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
-  // Workspace.
+  // Workspace + project file tree.
   workspaceRoot: string | null;
   openProject: (dir?: string) => Promise<void>;
+  tree: TreeNode[] | null;
+  expanded: Record<string, boolean>;
+  toggleDir: (path: string) => Promise<void>;
   // Open documents (editor tabs).
   docs: Doc[];
   activePath: string | null;
@@ -96,13 +142,35 @@ export const useStudio = create<StudioState>()(
         s.paletteOpen = open;
       }),
     workspaceRoot: null,
+    tree: null,
+    expanded: {},
     openProject: async (dir) => {
       let root = dir ?? null;
       if (!root) root = (await window.studio?.fs.openDirectoryDialog()) ?? null;
       if (!root) return;
       await window.studio?.fs.addRoot(root);
+      const children = await readTree(root);
       set((s) => {
         s.workspaceRoot = root;
+        s.tree = children;
+        s.expanded = {};
+      });
+    },
+    toggleDir: async (path) => {
+      const node = get().tree ? findNode(get().tree as TreeNode[], path) : null;
+      if (!node || !node.isDir) return;
+      // Lazy-load children the first time the directory is expanded.
+      if (node.children === null) {
+        const children = await readTree(path);
+        set((s) => {
+          const n = s.tree && findNode(s.tree, path);
+          if (n) n.children = children;
+          s.expanded[path] = true;
+        });
+        return;
+      }
+      set((s) => {
+        s.expanded[path] = !s.expanded[path];
       });
     },
     docs: [scratchDoc()],

@@ -63,7 +63,9 @@
 - [x] **`WasmQueryEngine`** (`@surrealdb/wasm`, renderer, seeded `mem://`) — powers the Run loop (playground profile)
 - [x] **`Codegen` adapter (`IpcCodegen`) + main-process bridge** — first capability to reach `packages/core` (`surreal-zod` + `jiti` deps); generates SurrealQL from schema files. Web has no codegen (returns a clear message)
 - [ ] Other capability adapters (`Terminal` / `SecretStore`) — not yet created
-- [ ] FS: file-tree / project explorer UI, file watching, dirty-state indicator, VirtualFS (web)
+- [x] **File Explorer** (Code-module secondary sidebar) — canonical `design/app.pen`: 264px, resizable + collapsible, project header (name + collapse), `TreeRow` (chevron / per-type icons / indent / hover+active / modified amber dot), lazy `readDir` per expand (ignores `.git`/`node_modules`), click a file → opens a tab. Empty state = Open Folder
+- [x] **Monaco project types (LSP)** — ambient module declarations for `surreal-zod`/`surrealdb`/`zod` + TS compiler options, so schema files no longer show false `Cannot find module` (ts2792). Real `.d.ts` graph for `sz.*` autocomplete is a follow-up
+- [ ] FS: file watching, new-file / context-menu actions, VirtualFS (web)
 - [ ] Connection subsystem (D28): registry + main-process manager + IPC + Remote ws connect/test + switchers
 - [ ] Secrets via Electron `safeStorage` (D27)
 - [ ] Organizations (D24–D31): workspace switcher, sign-in, share-to-team, org management
