@@ -82,6 +82,112 @@
   (ties to D11). Strongest monetization candidate among the parity modules.
 - **D19 (§4.9–4.11 · 2026-06-11)** — *Confirmed as written:* Diff/Sync (Phase 3), the Phase-4 parity
   list, and the lib backlog priorities (record references, full-text search, vector indexes first).
+- **D20 (§5 · 2026-06-11)** — *The app shell gets a **fresh design**, not just confirmation.* `xr3UV`
+  is **inspiration only**; the real studio has outgrown the playground 2-pane into an IDE-class shell.
+  All app/studio designs live at Pencil canvas coords **Y < 0** (the website keeps Y > 0). Output-pane
+  tabs order by phase (**Result** first; SurrealQL/Types fast-follow; Migration P2). Left-rail module
+  order, Dashboards placement, and final region layout are **deferred until the new sample shell is
+  designed**.
+- **D21 (§5/§6 · 2026-06-11)** — *The shell is a **VSCode-class workbench** with **resizable +
+  sortable/dockable panes***, not a fixed layout. The #1 near-term priority is the working shell
+  (movable/resizable panels, draggable tabs, dock zones). §6 must pick a **docking/panel library**
+  (e.g. dockview / rc-dock / FlexLayout / react-resizable-panels) rather than hand-rolling it.
+- **D22 (§5/§7 · 2026-06-11)** — *v1 shell panels = **query editor** + **result***. The first
+  buildable target is the workbench chrome (rail + status bar + dock host) hosting exactly two
+  dockable/resizable panels: a SurrealQL/TS query editor and a result view. Everything else (extra
+  modules, output tabs) docks into the same workbench later.
+- **D23 (§5 · 2026-06-11)** — *Design suite + rail order settled.* 8 frames designed in
+  `design/website.pen` at Y < 0: App Shell (`sr1wy`, the v1 Query+Result workbench) + module screens
+  Schema (`O1mx96`), Migrations (`rEATl`), Explorer (`IzDmU`), Designer (`jYwIy`), Dashboards
+  (`M2HcDE`), Diff/Sync (`W5Wrq`), Connections (`q7kpU` — v3; OS titlebar/menus, All/Local/Shared
+  filter, org-shared w/ environment tags, auth-level-driven form incl. Record). **Left-rail order:** Schema · Query ·
+  Explorer · Migrations · Designer · Dashboards · Diff/Sync · Connections, with Search + Settings
+  pinned bottom. These frames are the shell-of-record for §5 (inspiration: `xr3UV`).
+- **D24 (§4.5/§6.5 · 2026-06-12)** — *Connections are **main-process-owned** behind a typed IPC bridge.*
+  ALL kinds (sandbox/remote/local/cloud) are uniform main-process SDK instances; the renderer drives
+  via `window.studio.connections.*` IPC. Desktop sandbox = embedded engine in main; the **web** build
+  falls back to `@surrealdb/wasm` in the renderer behind the same connection interface. Secrets and
+  local-server spawning stay main-only.
+- **D25 (§3.1/§4.5 · 2026-06-12, REVISED)** — *Connections are app-managed in two scopes: **Local** &
+  **Shared**.* **Local** = this device (app store non-secret + keychain secret, private). **Shared** =
+  provided by an **organization** the project is bound to (D26). Connections are **NOT** stored in
+  `surreal-zod.config.ts` — config + env vars are **CLI-only** (override / CI). *Supersedes the earlier
+  "config = pinned project connection" model.*
+- **D26 (product/§11 · 2026-06-12, REVISED)** — *Commercial cloud = **organizations**.* A project
+  **binds to an org**; the org provides **Shared** connections to members, optionally organized **per
+  environment** (dev/staging/prod) or however the org prefers. Shared connections are visually distinct
+  from Local. Ties to D11. *(Supersedes the "team connection sharing" framing — same idea, org-scoped.)*
+- **D27 (§4.5/§11.7 · 2026-06-12)** — *Credentials via Electron **`safeStorage`*** (OS-keychain-backed
+  encryption, no native dep); encrypted blob in the app store keyed by connection id. Never in config.
+- **D28 (§4.5 · 2026-06-12)** — *First connections build slice:* registry + main-process manager +
+  IPC + Connections list/form UI + **Remote (ws) connect/test/doctor** + real top-bar switcher. Local
+  version-manager (D15) and Cloud/teams come later. **Design review of connection screens precedes
+  the build.**
+- **D29 (§4.5 · 2026-06-12)** — *Connection form has **no "kind" field*** — the endpoint scheme implies
+  transport (`ws/wss/http/https` remote, `mem://` sandbox, local). **Auth level** drives the conditional
+  fields: **Anonymous** (none) · **Root** (user/pass) · **Namespace** (+ns) · **Database** (+ns/db) ·
+  **Record** (ns/db + access method + user/pass) · **Token** (raw JWT). Categories in the UI: **Local**
+  / **Shared** (org), with optional **environment** tags on shared connections.
+- **D30 (§4.5/§5 · 2026-06-12)** — *Connections (and dashboards/queries) are **project-based**, per
+  environment; the studio is **project-scoped** (one open project at a time).* A **workspace switcher**
+  (top-bar, left, after brand) switches the active project; projects group by **Local** (device) and by
+  **org name**. Within a project, connections split into **local** (device-only) and **org-shared** —
+  the shared group is labeled with the **org name** (the UI **never shows the word "Shared" verbatim**).
+  **Logged-out** users see local projects/connections only. The **org** = people · roles · billing ·
+  access that **hosts & shares projects** (D26); org-level features: members/roles, billing, audit log,
+  SSO/SAML, project access, usage. Content (connections/dashboards/queries) stays project-scoped,
+  shared by binding the project to an org.
+- **D31 (auth/§4.5/§5 · 2026-06-12)** — *Login is **optional** (local-first, no signup wall); **"Personal"
+  replaces "Local"** as the concept.* Signed-out = a local **personal workspace**; signing in **syncs it
+  into a Personal org** (local projects auto-adopt) and unlocks **team orgs**. For authenticated users the
+  model is uniform: **Personal org vs Team orgs** (no separate local/shared special-casing). Sign-in is
+  prominently *encouraged*, not forced — preserves offline + privacy while keeping the commercial funnel
+  (D11). *Supersedes the "Local vs Shared" naming in D30: "Personal" is the device/you scope; team scopes
+  show the **org name**.*
+- **D32 (§5 · 2026-06-12)** — *Shell-of-record = **"App Shell — A (Refined IDE)"** (`OaUSf`)*, the
+  componentized refinement by the `designer` agent — **supersedes `sr1wy`** (D23). **Division of labor:**
+  `designer` owns the **shell + visual system + `c/*` components**; `developer` (this instance) owns the
+  **Electron build (`packages/studio`) + connections/org subsystem + module screens**. Both sync through
+  this Decision Log. The Electron scaffold (currently sr1wy-derived) will be **realigned to A** once
+  designer locks A's chrome; module/org frames reparent to A's chrome over time.
+- **D33 (§5 · 2026-06-12)** — *Canonical UI source switched to **`design/app.pen`*** (the `design-expert`
+  agent's from-scratch design), **superseding A/`OaUSf` (D32)**. Per Manuel: **latest design wins**; the
+  two design agents reconcile among themselves; ask Manuel if in doubt. The running app implements
+  app.pen: **two-tier titlebar — Variation C default** (tier1 logo+Reverie+menus+window controls;
+  tier2 project switcher + connection switcher + drift chip + account) **+ Variation B behind a flag**
+  (switcher-centric). Frameless Electron own-titlebar + window controls; web build = no OS controls.
+  A's chrome realignment (just done) is superseded — chrome rebuilds to app.pen.
+- **D34 (§6 · 2026-06-12)** — *Adopt an **adapter / runtime-profile architecture*** (VSCode/Theia-style)
+  for portability + future extensions. Capability interfaces: **`QueryEngine`** (run SurrealQL),
+  **`FileSystem`**, **`Terminal`**, **`SecretStore`** — swappable impls chosen by a **runtime profile**:
+  *playground* (web) = VirtualFS + **WasmQueryEngine** + NullTerminal + MemorySecrets; *desktop*
+  (Electron) = LocalFS + (Wasm|Embedded|Remote) + LocalPty + KeychainSecrets. Interfaces are **async**
+  so an impl can be in-process (wasm) or IPC-backed (main) transparently. Extensions register adapters
+  via contribution points later. **Build only adapters in use; others stay interface stubs.** First
+  adapter shipped: **`WasmQueryEngine`** (`@surrealdb/wasm`, renderer, seeded `mem://`) powering the
+  **Run loop** (Run + Cmd/Ctrl+Enter → real results) — with simple placeholder UI until design-expert
+  specs the Query module toolbar.
+- **D35 (§6 · 2026-06-12)** — *State management = **Zustand + `mutative` middleware** (zustand-mutative)*
+  for ergonomic immutable-by-mutation updates. All app state (settings, editor, results, …) flows
+  through this store.
+- **D36 (§6 · 2026-06-12)** — *VSCode-like **settings system***. A **contribution registry** of setting
+  definitions (`key`, `type`, `default`, `scope`, `enum?`, `description`); **scopes** = user (this
+  install) + project (committed to repo) with project overriding user; reactive via the mutative store
+  (D35); a searchable settings UI later. First settings: **`titlebar.variant`** (replaces the
+  localStorage hack) and **`statusbar.segments`** (D38). "Select what shows" = toggling segments.
+- **D37 (§6 · 2026-06-12, REVISED)** — *Agent control of the app — **both directions**, both routed
+  through the **command/state registry** (the spine).* (a) **External assistants** (Claude Code, Cursor,
+  …) → the studio is an **MCP server** (official `@modelcontextprotocol/sdk`, HTTP/SSE local transport,
+  main) exposing commands as tools + state/settings as resources. (b) **Integrated "Sidekick" assistant**
+  (§4.10, paid — D18) → built with **TanStack AI** (provider-agnostic chat + `@tanstack/ai-mcp` host-side
+  client); drives the app via the registry **in-process** and can also consume external MCP servers as
+  tools. Build the **command + settings + state registries first** (MCP-shaped); the MCP server and the
+  Sidekick both layer on top. (Ties to D34/D36 contribution model.)
+- **D38 (§5 · 2026-06-12)** — *Status bar = **dynamic, settings-driven segments** (D36).* Composition
+  (Manuel): **LEFT** = ns+db (moved here), git branch, errors/warnings; **RIGHT** = language mode,
+  cursor position, indentation. **Removed:** connection (redundant — it's in the titlebar), engine/CLI
+  status (no value now; may resurface). The bar is approved; `design-expert` designs each segment and
+  its **multi-status** states (showcased on titlebar Variation B).
 
 ---
 
