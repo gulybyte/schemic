@@ -176,7 +176,10 @@ describe("diff engine", () => {
     });
     expect(m).toContain('IF $direction = "up" {');
     expect(m).toContain("} ELSE {");
-    expect(m).toContain("DEFINE TABLE x");
+    // Migration files are idempotent: a plain DEFINE is rendered as DEFINE … OVERWRITE so the
+    // migration replays cleanly over objects that already exist (REMOVE already uses IF EXISTS).
+    expect(m).toContain("DEFINE TABLE OVERWRITE x TYPE NORMAL SCHEMAFULL;");
+    expect(m).not.toContain("DEFINE TABLE x TYPE");
     expect(m).toContain("REMOVE TABLE IF EXISTS x;");
   });
 });

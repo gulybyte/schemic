@@ -218,6 +218,29 @@ e2e("3-state divergence matrix", () => {
   );
 
   test(
+    "migrate is idempotent against a database populated out-of-band (push then migrate)",
+    async () => {
+      // The classic inconsistency: the DB already has a pending migration's objects (applied via
+      // push/pull, not recorded in _migrations). Plain DEFINE would fail "already exists" and abort;
+      // idempotent (OVERWRITE) migration files replay cleanly.
+      const { run } = await setup();
+      await run(["gen", "base", "-y"]); // migration on disk, pending
+      await run(["push"]); // DB populated directly; nothing recorded as applied
+
+      const migrate = await run(["migrate"]);
+      expect(migrate.code).toBe(0);
+      expect(migrate.out).not.toContain("already exists");
+      expect(migrate.out).toContain("Applied 1 migration");
+
+      const status = await run(["status"]);
+      expect(status.out).toContain("applied");
+      expect(status.out).toContain("0 pending");
+      expect(status.out).not.toMatch(/· pending/); // no pending migration rows
+    },
+    T,
+  );
+
+  test(
     "push applies a flexible array-of-object field (implicit .* wildcard)",
     async () => {
       // Regression: `sz.object({}).loose().array()` emits an implicit `<field>.*` element that the

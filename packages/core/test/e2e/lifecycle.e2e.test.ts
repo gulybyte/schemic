@@ -42,7 +42,8 @@ e2e("lifecycle: init -> gen -> migrate -> status -> diff -> check", () => {
       const gen = await run(["gen", "init_schema", "-y"]);
       expect(gen.code).toBe(0);
       expect(gen.out).toContain("to migrate");
-      expect(gen.out).toContain("DEFINE TABLE user");
+      // Migration files are idempotent: added objects are emitted as DEFINE … OVERWRITE.
+      expect(gen.out).toContain("DEFINE TABLE OVERWRITE user");
       expect(gen.out).toContain("init_schema");
 
       // status: one pending migration (nothing applied yet).
