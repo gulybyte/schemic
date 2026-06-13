@@ -23,7 +23,7 @@ self.MonacoEnvironment = {
 };
 
 // Minimal SurrealQL language (highlighting only for now; LSP comes later).
-const SURQL_KEYWORDS = [
+export const SURQL_KEYWORDS = [
   "SELECT",
   "FROM",
   "WHERE",

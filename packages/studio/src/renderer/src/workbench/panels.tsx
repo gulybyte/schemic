@@ -3,6 +3,7 @@ import { FileCode, Play, X } from "lucide-react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { runCommand } from "../commands/registry";
+import { installSurqlTemplateHighlight } from "../monaco/surqlTemplate";
 import { getCodegen } from "../runtime";
 import { activeDoc, type Doc, useStudio } from "../store";
 import { PaneHeader, type PaneType } from "./PaneHeader";
@@ -114,6 +115,8 @@ export function EditorPanel() {
               const word = editor.getModel()?.getWordAtPosition(e.position);
               useStudio.getState().setLinkedName(word?.word ?? null);
             });
+            // SurrealQL highlighting inside surql`...` tagged templates.
+            installSurqlTemplateHighlight(editor, monaco);
           }}
           options={{
             fontFamily: "'JetBrains Mono', monospace",

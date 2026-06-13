@@ -1229,6 +1229,28 @@ button {
   font-family: var(--font-mono);
   color: var(--code-type);
 }
+/* Embedded SurrealQL highlighting inside surql`...` templates (inline decorations,
+   so !important to win over the TS token colors on the same span). */
+.surql-t-keyword {
+  color: var(--code-keyword) !important;
+}
+.surql-t-fn {
+  color: var(--code-fn) !important;
+}
+.surql-t-string {
+  color: var(--code-string) !important;
+}
+.surql-t-number {
+  color: var(--code-type) !important;
+}
+.surql-t-param {
+  color: var(--accent-soft) !important;
+}
+.surql-t-comment {
+  color: var(--code-comment) !important;
+  font-style: italic;
+}
+
 /* Linked highlighting: the generated DEFINE line matching the editor cursor's field. */
 .linked-line {
   background: #221a30;
