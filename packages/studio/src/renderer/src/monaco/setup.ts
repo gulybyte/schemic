@@ -123,6 +123,10 @@ monaco.editor.defineTheme("reverie-dark", {
     { token: "type", foreground: "9fe3b0" },
     { token: "identifier", foreground: "d8d3e4" },
     { token: "delimiter", foreground: "aaa1bb" },
+    // Semantic token types (from surrealql-language-server) overlaying the Monarch base.
+    { token: "function", foreground: "7bd0ff" },
+    { token: "parameter", foreground: "c77dff" },
+    { token: "variable", foreground: "e0af68" },
   ],
   colors: {
     "editor.background": "#100d18",

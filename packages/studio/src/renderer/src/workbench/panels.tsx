@@ -219,6 +219,8 @@ export function EditorPanel() {
             tabSize: 2,
             fontLigatures: true,
             overviewRulerLanes: 0,
+            // Force on so surql semantic tokens overlay the Monarch base in any theme.
+            "semanticHighlighting.enabled": true,
             scrollbar: {
               verticalScrollbarSize: 10,
               horizontalScrollbarSize: 10,

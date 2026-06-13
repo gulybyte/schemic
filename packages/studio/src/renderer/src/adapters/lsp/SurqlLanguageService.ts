@@ -86,6 +86,7 @@ export class SurqlLanguageService implements LanguageService {
   install(monaco: typeof Monaco): void {
     this.syncModels(monaco);
     this.registerProviders(monaco);
+    this.registerSemanticTokens(monaco);
     this.wireDiagnostics(monaco);
   }
 
@@ -200,6 +201,42 @@ export class SurqlLanguageService implements LanguageService {
           contents: arr.map((c) => ({ value: markupToMarkdown(c) })),
         };
       },
+    });
+  }
+
+  // Accurate, parser-driven highlighting via the server's semanticTokens/full. The LSP token
+  // encoding (deltaLine, deltaStart, length, type, modifiers — relative) is identical to
+  // Monaco's, and the legend order matches the server's, so the data array passes straight
+  // through. Overlays the Monarch base grammar (which stays for instant tokenization).
+  private registerSemanticTokens(monaco: typeof Monaco): void {
+    const surql = this.surql;
+    const legend: Monaco.languages.SemanticTokensLegend = {
+      // Order MUST match the server's legend indices (0..7).
+      tokenTypes: [
+        "keyword",
+        "function",
+        "parameter",
+        "type",
+        "string",
+        "number",
+        "comment",
+        "variable",
+      ],
+      tokenModifiers: [],
+    };
+    monaco.languages.registerDocumentSemanticTokensProvider("surrealql", {
+      getLegend: () => legend,
+      async provideDocumentSemanticTokens(model) {
+        const res = (await surql.request(
+          "textDocument/semanticTokens/full",
+          { textDocument: { uri: toUri(model) } },
+          rootUri(),
+        )) as { result?: { data?: number[]; resultId?: string } };
+        const data = res?.result?.data;
+        if (!data) return null;
+        return { data: new Uint32Array(data), resultId: res.result?.resultId };
+      },
+      releaseDocumentSemanticTokens() {},
     });
   }
 
