@@ -1,29 +1,16 @@
-import { useEffect, useState } from 'react'
-import { runCommand } from './commands/registry'
+import { useState } from 'react'
 import { ActivityRail } from './components/ActivityRail'
 import { Chrome } from './components/Chrome'
 import { CommandPalette } from './components/CommandPalette'
+import { Keybindings } from './components/Keybindings'
 import { StatusBar } from './components/StatusBar'
 import { Workbench } from './workbench/Workbench'
 
 export function App() {
-  const [active, setActive] = useState('')
-
-  // Global Cmd/Ctrl+K → command palette (capture so it wins over the editor).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
-        e.preventDefault()
-        e.stopPropagation()
-        void runCommand('command.palette')
-      }
-    }
-    window.addEventListener('keydown', onKey, { capture: true })
-    return () => window.removeEventListener('keydown', onKey, { capture: true })
-  }, [])
-
+  const [active, setActive] = useState('code')
   return (
     <div className="app">
+      <Keybindings />
       <Chrome />
       <div className="body">
         <ActivityRail active={active} onSelect={setActive} />

@@ -1,17 +1,40 @@
+import { Braces } from 'lucide-react'
 import type { ComponentType } from 'react'
 
-export type RailItem = {
+export type NavItemDef = {
   id: string
   icon: ComponentType<{ size?: number }>
   label: string
 }
 
-// The activity rail starts EMPTY. Module nav items are added here only as each
-// module is actually implemented in the app — the app surfaces only what exists.
-// Track status in packages/studio/PROGRESS.md. Styling matches canonical shell A
-// (36px items, accent-border + tint on active) so added items drop in cleanly.
-const RAIL_TOP: RailItem[] = []
-const RAIL_BOTTOM: RailItem[] = []
+// Canonical Nav Item spec from design/app.pen (design-expert). The rail surfaces only
+// implemented features — module items are added as each ships; system items
+// (Settings/Help) are held until their pages exist (Manuel). P1 = Code only.
+const MODULES: NavItemDef[] = [{ id: 'code', icon: Braces, label: 'Code' }]
+const SYSTEM: NavItemDef[] = []
+
+function NavItem({
+  item,
+  active,
+  onSelect,
+}: {
+  item: NavItemDef
+  active: boolean
+  onSelect: (id: string) => void
+}) {
+  const Icon = item.icon
+  return (
+    <button
+      type="button"
+      className={`nav-item${active ? ' active' : ''}`}
+      title={item.label}
+      onClick={() => onSelect(item.id)}
+    >
+      <Icon size={20} />
+      <span className="nav-label">{item.label}</span>
+    </button>
+  )
+}
 
 export function ActivityRail({
   active,
@@ -20,24 +43,14 @@ export function ActivityRail({
   active: string
   onSelect: (id: string) => void
 }) {
-  const renderItem = (item: RailItem) => {
-    const Icon = item.icon
-    return (
-      <button
-        type="button"
-        key={item.id}
-        title={item.label}
-        className={`rail-item${item.id === active ? ' active' : ''}`}
-        onClick={() => onSelect(item.id)}
-      >
-        <Icon size={18} />
-      </button>
-    )
-  }
+  const render = (item: NavItemDef) => (
+    <NavItem key={item.id} item={item} active={item.id === active} onSelect={onSelect} />
+  )
   return (
     <nav className="rail">
-      <div className="rail-group">{RAIL_TOP.map(renderItem)}</div>
-      <div className="rail-group">{RAIL_BOTTOM.map(renderItem)}</div>
+      <div className="rail-group">{MODULES.map(render)}</div>
+      <div className="rail-spacer" />
+      <div className="rail-group">{SYSTEM.map(render)}</div>
     </nav>
   )
 }

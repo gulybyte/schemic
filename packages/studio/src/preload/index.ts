@@ -14,4 +14,14 @@ contextBridge.exposeInMainWorld('studio', {
     initial: ipcRenderer.sendSync('settings:read') as Record<string, unknown>,
     save: (values: Record<string, unknown>) => ipcRenderer.send('settings:write', values),
   },
+  fs: {
+    read: (path: string): Promise<string> => ipcRenderer.invoke('fs:read', path),
+    write: (path: string, content: string): Promise<void> =>
+      ipcRenderer.invoke('fs:write', path, content),
+    readdir: (path: string) => ipcRenderer.invoke('fs:readdir', path),
+    exists: (path: string): Promise<boolean> => ipcRenderer.invoke('fs:exists', path),
+    addRoot: (path: string): Promise<void> => ipcRenderer.invoke('fs:addRoot', path),
+    openDirectoryDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory'),
+    openFileDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFile'),
+  },
 })

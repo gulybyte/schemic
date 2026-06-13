@@ -25,10 +25,10 @@ const menusGone = await win.evaluate(
 )
 console.log('menus removed:', menusGone, '| initial chrome:', await chrome())
 
-// Open the palette with Cmd/Ctrl+K.
+// Open the palette with Cmd/Ctrl+K (TanStack Hotkeys → command.palette).
 await win.keyboard.press('Control+K')
-await win.waitForSelector('.palette-input', { timeout: 4000 })
-console.log('palette opened:', await win.evaluate(() => !!document.querySelector('.palette')))
+await win.waitForSelector('[cmdk-input]', { timeout: 4000 })
+console.log('palette opened:', await win.evaluate(() => !!document.querySelector('[cmdk-dialog]')))
 
 // Filter + run the titlebar command.
 await win.keyboard.type('Switch Title')

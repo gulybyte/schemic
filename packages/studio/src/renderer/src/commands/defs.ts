@@ -30,3 +30,24 @@ registerCommand({
     setPaletteOpen(!paletteOpen)
   },
 })
+
+registerCommand({
+  id: 'project.open',
+  title: 'Open Project…',
+  category: 'File',
+  run: () => useStudio.getState().openProject(),
+})
+
+registerCommand({
+  id: 'file.open',
+  title: 'Open File…',
+  category: 'File',
+  run: () => useStudio.getState().openFileDialog(),
+})
+
+registerCommand({
+  id: 'file.save',
+  title: 'Save File',
+  category: 'File',
+  run: () => useStudio.getState().saveOpenFile(),
+})

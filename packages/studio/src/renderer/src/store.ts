@@ -1,9 +1,20 @@
 import { create } from 'zustand'
 import { mutative } from 'zustand-mutative'
 import type { QueryOutcome } from './adapters/QueryEngine'
-import { getQueryEngine } from './runtime'
+import { getFileSystem, getQueryEngine } from './runtime'
 import './settings/defs' // register built-in setting definitions (side effect)
 import { getSettingDef } from './settings/registry'
+
+export type OpenFile = { path: string; name: string; language: string }
+
+function langFromPath(name: string): string {
+  if (name.endsWith('.surql')) return 'surrealql'
+  if (name.endsWith('.ts') || name.endsWith('.tsx')) return 'typescript'
+  if (name.endsWith('.js')) return 'javascript'
+  if (name.endsWith('.json')) return 'json'
+  if (name.endsWith('.md')) return 'markdown'
+  return 'plaintext'
+}
 
 const DEFAULT_QUERY = `-- edit and Run (Cmd/Ctrl+Enter)
 SELECT id, name, email, age
@@ -18,6 +29,13 @@ interface StudioState {
   // Command palette.
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
+  // Workspace / files.
+  workspaceRoot: string | null
+  openFile: OpenFile | null
+  openProject: (dir?: string) => Promise<void>
+  openFileDialog: () => Promise<void>
+  openFilePath: (path: string) => Promise<void>
+  saveOpenFile: () => Promise<void>
   // Query / results.
   query: string
   outcome: QueryOutcome | null
@@ -43,6 +61,34 @@ export const useStudio = create<StudioState>()(
       set((s) => {
         s.paletteOpen = open
       }),
+    workspaceRoot: null,
+    openFile: null,
+    openProject: async (dir) => {
+      let root = dir ?? null
+      if (!root) root = (await window.studio?.fs.openDirectoryDialog()) ?? null
+      if (!root) return
+      await window.studio?.fs.addRoot(root)
+      set((s) => {
+        s.workspaceRoot = root
+      })
+    },
+    openFileDialog: async () => {
+      const path = (await window.studio?.fs.openFileDialog()) ?? null
+      if (path) await get().openFilePath(path)
+    },
+    openFilePath: async (path) => {
+      const content = await getFileSystem().readFile(path)
+      const name = path.split(/[\\/]/).pop() ?? path
+      set((s) => {
+        s.openFile = { path, name, language: langFromPath(name) }
+        s.query = content
+      })
+    },
+    saveOpenFile: async () => {
+      const { openFile, query } = get()
+      if (!openFile) return
+      await getFileSystem().writeFile(openFile.path, query)
+    },
     query: DEFAULT_QUERY,
     outcome: null,
     running: false,

@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { BrowserWindow, app, ipcMain } from 'electron'
+import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve, sep } from 'node:path'
+import { BrowserWindow, app, dialog, ipcMain } from 'electron'
 
 // WSL/headless friendliness: avoid GPU + sandbox issues when running under WSLg.
 app.disableHardwareAcceleration()
@@ -38,6 +39,50 @@ ipcMain.on('settings:write', (_e, values: Record<string, unknown>) => {
   } catch (err) {
     console.error('settings write failed', err)
   }
+})
+
+// Filesystem access, scoped to explicitly-allowed roots (opened projects/files) so
+// the renderer can't read/write arbitrary paths. Roots are added by the open dialogs
+// or `fs:addRoot`. (FileSystem capability adapter, D34.)
+const allowedRoots = new Set<string>()
+function addRoot(p: string): void {
+  allowedRoots.add(resolve(p))
+}
+function assertAllowed(p: string): string {
+  const abs = resolve(p)
+  for (const root of allowedRoots) {
+    if (abs === root || abs.startsWith(root + sep)) return abs
+  }
+  throw new Error(`path outside any open workspace: ${p}`)
+}
+ipcMain.handle('fs:addRoot', (_e, p: string) => addRoot(p))
+ipcMain.handle('fs:read', (_e, p: string) => readFile(assertAllowed(p), 'utf8'))
+ipcMain.handle('fs:write', async (_e, p: string, c: string) => {
+  await writeFile(assertAllowed(p), c, 'utf8')
+})
+ipcMain.handle('fs:readdir', async (_e, p: string) => {
+  const entries = await readdir(assertAllowed(p), { withFileTypes: true })
+  return entries.map((d) => ({ name: d.name, isDir: d.isDirectory() }))
+})
+ipcMain.handle('fs:exists', async (_e, p: string) => {
+  try {
+    await stat(assertAllowed(p))
+    return true
+  } catch {
+    return false
+  }
+})
+ipcMain.handle('dialog:openDirectory', async () => {
+  const r = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+  const dir = r.canceled ? null : (r.filePaths[0] ?? null)
+  if (dir) addRoot(dir)
+  return dir
+})
+ipcMain.handle('dialog:openFile', async () => {
+  const r = await dialog.showOpenDialog({ properties: ['openFile'] })
+  const file = r.canceled ? null : (r.filePaths[0] ?? null)
+  if (file) addRoot(dirname(file))
+  return file
 })
 
 // Dev screenshot hook: SZ_SHOT=<path> captures the renderer once loaded, then quits.

@@ -14,7 +14,7 @@
 - [x] Monaco editor (local workers, `reverie-dark` theme, minimal `surrealql` language)
 - [x] Brand fonts (Geist Variable + JetBrains Mono, ligatures)
 - [x] Frameless window + custom window controls (min/max/close) wired via IPC; web build = no OS controls
-- [x] Activity rail rendered + **empty** (module items added as built)
+- [x] Activity rail — canonical **Nav Item** (72px, icon+label, indicator-bar states: default/hover/active/focus). P1 = **Code only**; module items added as they ship, system items (Settings/Help) held until their pages exist (Manuel)
 - [x] Two-tier titlebar from `design/app.pen` (D33), rendered:
   - [x] Variation **C (default)** — logo · Reverie · menus · window controls / project + connection switchers · drift chip · account
   - [x] Variation **B (flagged)** — switcher-centric single bar; selected via the `titlebar.variant` **setting** (D36)
@@ -46,14 +46,16 @@
 - [x] **State store** — Zustand + `mutative` middleware (D35); holds settings + query/result
 - [x] **Settings system (D36) — core** — registry (`defineSetting`) + user-scope persistence (`userData/settings.json` via main IPC, sync read = no-flash). First real setting: **`titlebar.variant`** (reactive + persisted; verified)
 - [ ] Settings — project scope (`.reverie/settings.json`), and the settings **page UI** (awaits design-expert)
-- [x] **Command registry + Cmd/K palette** (D36/D37) — commands: `query.run`, `titlebar.switchStyle`, `command.palette`; editor Run/Cmd-Enter routed through it; B's search icon opens the palette
-- [ ] Keybinding registry (currently Cmd/K + Cmd/Enter are hardcoded, not yet a registry)
+- [x] **Command registry + command palette (cmdk)** (D36/D37) — commands: `query.run`, `titlebar.switchStyle`, `command.palette`, `project.open`, `file.open`, `file.save`; editor Run/Cmd-Enter routed through it
+- [x] **Keybinding registry (TanStack Hotkeys)** — registry-driven; `Mod+K` / `Mod+Shift+P` → palette, `Mod+O` → open file, `Mod+S` → save. Cmd/Enter + Cmd/K also bound inside Monaco (editor swallows the chord) so they work when the editor is focused
+- [x] **FileSystem adapter (LocalFS)** — main-process `node:fs` over IPC, **scoped to allowed roots** (path-traversal blocked); open project (dir dialog), open/save file → editor loads & writes real files. Verified read+save round-trip.
 - [x] **Status-bar segment registry + `statusbar.segments` setting (D38)** — dynamic, settings-driven; **aligned to canonical `design/app.pen`**: left = branch · migrations | ns/db | problems, right = language · cursor | indentation · encoding, with group dividers, multi-status states, `warning-amber` token, 28px, desktop-only Branch
 - [ ] Status-bar segment **data + contextual visibility** — wire to real diagnostics / editor focus / connection / git / migrations (currently placeholder + always-shown)
 - [ ] MCP server (external agents) + Sidekick (TanStack AI) over the registries (D37)
 - [x] **Adapter / runtime pattern established** — `QueryEngine` interface + `runtime` registry + one impl
 - [x] **`WasmQueryEngine`** (`@surrealdb/wasm`, renderer, seeded `mem://`) — powers the Run loop (playground profile)
-- [ ] Other capability adapters (`FileSystem` / `Terminal` / `SecretStore`) — planned, not yet created
+- [ ] Other capability adapters (`Terminal` / `SecretStore`) — not yet created
+- [ ] FS: file-tree / project explorer UI, file watching, dirty-state indicator, VirtualFS (web)
 - [ ] Connection subsystem (D28): registry + main-process manager + IPC + Remote ws connect/test + switchers
 - [ ] Secrets via Electron `safeStorage` (D27)
 - [ ] Organizations (D24–D31): workspace switcher, sign-in, share-to-team, org management

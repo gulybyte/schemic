@@ -7,11 +7,12 @@ import { useStudio } from '../store'
 export function EditorPanel() {
   const running = useStudio((s) => s.running)
   const setQuery = useStudio((s) => s.setQuery)
+  const openFile = useStudio((s) => s.openFile)
 
   return (
     <div className="panel editor-panel">
       <div className="editor-toolbar">
-        <span className="editor-file">query.surql</span>
+        <span className="editor-file">{openFile?.name ?? 'query.surql'}</span>
         <button
           type="button"
           className="run-btn editor-run"
@@ -25,8 +26,9 @@ export function EditorPanel() {
       </div>
       <div className="editor-host">
         <Editor
+          key={openFile?.path ?? 'scratch'}
           height="100%"
-          defaultLanguage="surrealql"
+          defaultLanguage={openFile?.language ?? 'surrealql'}
           defaultValue={useStudio.getState().query}
           theme="reverie-dark"
           onChange={(v) => setQuery(v ?? '')}
@@ -34,6 +36,17 @@ export function EditorPanel() {
             editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
               void runCommand('query.run')
             })
+            // Monaco swallows Cmd/Ctrl+K (chord prefix), so bind global shortcuts
+            // inside the editor too, routed to the same commands.
+            editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
+              void runCommand('command.palette')
+            })
+            editor.addCommand(
+              monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
+              () => {
+                void runCommand('command.palette')
+              },
+            )
           }}
           options={{
             fontFamily: "'JetBrains Mono', monospace",

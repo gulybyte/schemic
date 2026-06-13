@@ -12,6 +12,15 @@ interface StudioBridge {
     initial: Record<string, unknown>
     save: (values: Record<string, unknown>) => void
   }
+  fs: {
+    read: (path: string) => Promise<string>
+    write: (path: string, content: string) => Promise<void>
+    readdir: (path: string) => Promise<Array<{ name: string; isDir: boolean }>>
+    exists: (path: string) => Promise<boolean>
+    addRoot: (path: string) => Promise<void>
+    openDirectoryDialog: () => Promise<string | null>
+    openFileDialog: () => Promise<string | null>
+  }
 }
 
 interface Window {
