@@ -1,6 +1,8 @@
 ---
+import { Code } from "astro:components";
 import BlogLayout from "../../layouts/BlogLayout.astro";
-import CodeToggle from "../../components/docs/CodeToggle.astro";
+import CodeBlock from "../../components/docs/CodeBlock.astro";
+import { brandShikiTheme } from "../../config/code-theme.mjs";
 
 const editTs = `export const User = defineTable("user", {
   name: sz.string(),
@@ -55,11 +57,17 @@ DEFINE FIELD lastSeen ON TABLE user TYPE option<datetime>;`;
 
     <h2>Try it</h2>
     <p>
-      Flip the block below to SurrealQL to see the exact statements the generator
-      emits for an enum change plus a new optional field.
+      Change the schema (an enum value plus a new optional field), and the
+      generator emits the migration below.
     </p>
 
-    <CodeToggle ts={editTs} surql={migrationSurql} tsTitle="user.ts" />
+    <CodeBlock title="user.ts" lang="ts">
+      <Code code={editTs} lang="ts" theme={brandShikiTheme} />
+    </CodeBlock>
+
+    <CodeBlock title="Generated migration" lang="surql">
+      <Code code={migrationSurql} lang="sql" theme={brandShikiTheme} />
+    </CodeBlock>
 
     <blockquote class="pull">
       Safe migrations, not rip-and-replace — and every up/down round-trips on
