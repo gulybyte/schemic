@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { escapeIdent, type Surreal } from "surrealdb";
 import type { ResolvedConfig } from "./config";
@@ -226,6 +232,36 @@ export async function baseline(
   const res = commitMigration(config, prepared);
   await recordApplied(db, config, prepared);
   return res;
+}
+
+/** Delete every migration `.surql` file (the `meta/` snapshot is left intact); returns removed tags. */
+export function clearMigrationFiles(config: ResolvedConfig): string[] {
+  const migs = listMigrations(config.migrationsDir);
+  for (const m of migs)
+    rmSync(join(config.migrationsDir, m.file), { force: true });
+  return migs.map((m) => m.tag);
+}
+
+/**
+ * Reconcile the DB's migration history after a baseline squash (old migrations replaced by one
+ * fresh baseline). When the live DB already matches the schema (`drift` false), drop the now-stale
+ * applied-records and record the baseline as already-applied — its DDL is never re-run. When the DB
+ * differs (`drift` true), leave the history untouched and report the baseline as still pending (the
+ * next `sz migrate` applies it). Caller handles the no-connection case.
+ */
+export async function reconcileBaseline(
+  db: Surreal,
+  config: ResolvedConfig,
+  prepared: PreparedMigration,
+  drift: boolean,
+): Promise<"applied" | "pending"> {
+  await ensureMigrationsTable(db, config.migrationsTable);
+  if (drift) return "pending";
+  // DB == schema: the squashed objects already exist, so wipe the stale tags and mark the baseline
+  // applied rather than re-running its DDL.
+  await db.query("DELETE type::table($tbl)", { tbl: config.migrationsTable });
+  await recordApplied(db, config, prepared);
+  return "applied";
 }
 
 /** `DEFINE TABLE … SCHEMALESS` for the internal migrations-tracking table. */

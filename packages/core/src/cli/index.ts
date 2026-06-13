@@ -48,11 +48,13 @@ import {
 } from "./meta";
 import {
   baseline,
+  clearMigrationFiles,
   commitMigration,
   migrate,
   newMigration,
   planMigration,
   prepareMigration,
+  reconcileBaseline,
   rollback,
   seed,
   status,
@@ -140,6 +142,18 @@ async function promptTitle(): Promise<string | undefined> {
   try {
     const answer = (await rl.question("Migration title: ")).trim();
     return answer || undefined;
+  } finally {
+    rl.close();
+  }
+}
+
+/** A yes/no prompt; defaults to NO when non-interactive, so scripts must opt in via a flag. */
+async function confirmPrompt(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const a = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
+    return a === "y" || a === "yes";
   } finally {
     rl.close();
   }
@@ -529,21 +543,34 @@ kindFlags(
 // command so help shows only `gen`, not `gen|generate`). Both share one action.
 const genAction = (
   name: string | undefined,
-  opts: CommonOpts & FilterOpts & { yes?: boolean; baseline?: boolean },
+  opts: CommonOpts &
+    FilterOpts & { yes?: boolean; baseline?: boolean; force?: boolean },
 ) => {
   run(async () => {
     const config = await loadConfig({ config: opts.config });
+    const filter = parseFilter(opts);
+    // A baseline regenerates the WHOLE schema from an empty snapshot; existing migrations would
+    // clash (they already created those objects), so a baseline must REPLACE them. With --force (or
+    // an interactive yes) we squash them into one fresh baseline; otherwise stop with the exact
+    // command to run.
+    let squashed: string[] | null = null;
     if (opts.baseline) {
-      // A baseline re-DEFINEs the whole schema; alongside earlier migrations it would clash with
-      // objects they already created. Require a clean slate (the "removed all migrations" flow).
       const existing = listMigrations(config.migrationsDir);
       if (existing.length) {
-        throw new Error(
-          `--baseline regenerates a full baseline from an empty snapshot, but ${plural(existing.length, "migration")} already exist in ${config.migrations}.\n  Remove them first — a baseline alongside earlier migrations would re-define objects they already created.`,
-        );
+        const proceed =
+          opts.force ||
+          (await confirmPrompt(
+            `Replace ${plural(existing.length, "migration")} in ${config.migrations} with a single baseline?`,
+          ));
+        if (!proceed) {
+          throw new Error(
+            `${plural(existing.length, "migration")} already exist in ${config.migrations} — a baseline would re-define objects they already created.\n  Re-run \`sz gen --baseline --force\` to replace them with one fresh baseline.`,
+          );
+        }
+        squashed = clearMigrationFiles(config);
       }
     }
-    const plan = await planMigration(config, parseFilter(opts), {
+    const plan = await planMigration(config, filter, {
       baseline: opts.baseline,
     });
     if (isEmptyDiff(plan.diff)) {
@@ -568,14 +595,48 @@ const genAction = (
     console.log(
       `${ok(res.file ?? "migration written")}  ${style.dim(`(+${res.up} up / ${res.down} down)`)}`,
     );
+    // After a squash, reconcile the live DB's migration history (best-effort): when the DB already
+    // matches the schema, record the baseline as applied so its DDL isn't re-run and `sz status`
+    // stays clean. Unreachable / drifted → leave it pending and say so.
+    if (squashed) {
+      console.log(
+        style.dim(`  replaced ${plural(squashed.length, "migration")}.`),
+      );
+      try {
+        const db = await connect(config, opts);
+        try {
+          const drift = !isEmptyDiff(await diffAgainstDb(db, config, filter));
+          const state = await reconcileBaseline(db, config, prepared, drift);
+          console.log(
+            style.dim(
+              state === "applied"
+                ? "  database matched the schema — baseline recorded as applied."
+                : "  database differs from the schema — baseline left pending; run `sz migrate`.",
+            ),
+          );
+        } finally {
+          await db.close();
+        }
+      } catch (e) {
+        console.log(
+          style.dim(
+            `  database not reconciled (${errMsg(e)}) — baseline is pending; run \`sz migrate\` to apply it.`,
+          ),
+        );
+      }
+    }
   });
 };
 const addGenCommand = (cmd: Command): void => {
-  kindFlags(configFlag(cmd))
+  kindFlags(dbFlags(cmd))
     .option("-y, --yes", "use the given/default name without prompting")
     .option(
       "--baseline",
-      "regenerate a full baseline from an empty snapshot (after removing all migrations)",
+      "regenerate one fresh baseline from an empty snapshot (replaces existing migrations)",
+    )
+    .option(
+      "--force",
+      "with --baseline, replace existing migrations without confirmation",
     )
     .action(genAction);
 };
@@ -608,7 +669,7 @@ configFlag(
     if (existing.length) {
       console.log(
         style.dim(
-          `  ${plural(existing.length, "migration")} still on disk — the next \`sz gen\` would add a full baseline alongside them. Remove them first (or use \`sz gen --baseline\`) for a clean baseline.`,
+          `  ${plural(existing.length, "migration")} still on disk — run \`sz gen --baseline --force\` to replace them with one fresh baseline. (A plain \`sz gen\` would add a baseline alongside them.)`,
         ),
       );
     } else {
