@@ -1,0 +1,88 @@
+{
+  "source": "design/app.pen -> Title Bar Kit -> Title Bar C (BWN3w)",
+  "note": "Normalized StyleRecords exported from Pencil (colors as token names, sizes in px). Each anchor pairs a Pencil node to a CSS selector; only the listed props are compared.",
+  "records": [
+    {
+      "anchor": "Tier 1 Chrome",
+      "node": "CiMao",
+      "selector": ".tb-c-tier1",
+      "props": {
+        "bg": "canvas-2",
+        "borderBottomColor": "border-subtle",
+        "borderBottomWidth": 1,
+        "height": 34
+      }
+    },
+    {
+      "anchor": "Tier 2 Context",
+      "node": "soioF",
+      "selector": ".tb-c-tier2",
+      "props": { "bg": "surface", "height": 42 }
+    },
+    {
+      "anchor": "Wordmark",
+      "node": "ecP6Q/BzPrh",
+      "selector": ".tb-wordmark",
+      "props": {
+        "fg": "text-primary",
+        "fontSize": 13,
+        "fontWeight": 600,
+        "fontFamily": "Geist",
+        "text": "Reverie"
+      }
+    },
+    {
+      "anchor": "Menu Item (File)",
+      "node": "BtKf7",
+      "selector": ".tb-menus .tb-menu:nth-of-type(1)",
+      "props": {
+        "fg": "text-secondary",
+        "fontSize": 13,
+        "radius": 6,
+        "paddingTop": 6,
+        "paddingLeft": 9,
+        "text": "File"
+      }
+    },
+    {
+      "anchor": "Project Switcher",
+      "node": "x64lkS",
+      "selector": ".tb-c-tier2 .ctx-switcher:nth-of-type(1)",
+      "props": {
+        "bg": "surface-2",
+        "radius": 8,
+        "gap": 8,
+        "paddingTop": 6,
+        "paddingLeft": 10,
+        "borderTopColor": "border-subtle",
+        "borderTopWidth": 1
+      }
+    },
+    {
+      "anchor": "Connection Switcher",
+      "node": "TcZeS",
+      "selector": ".tb-c-tier2 .ctx-switcher:nth-of-type(2)",
+      "props": { "bg": "surface-2", "radius": 8, "gap": 8, "borderTopWidth": 0 }
+    },
+    {
+      "anchor": "Drift Chip",
+      "node": "i4sFj",
+      "selector": ".drift-chip",
+      "props": {
+        "bg": "surface-2",
+        "radius": 20,
+        "gap": 7,
+        "paddingTop": 5,
+        "paddingLeft": 10,
+        "borderTopColor": "border-subtle",
+        "borderTopWidth": 1
+      }
+    },
+    {
+      "anchor": "Account",
+      "node": "M0FetW",
+      "selector": ".account-badge",
+      "props": { "bg": "accent-hot", "radius": 13, "width": 26, "height": 26 }
+    }
+  ]
+}

@@ -56,7 +56,10 @@ export function TitleBarC() {
           <span className="ctx-name">credilisto</span>
           <ChevronDown size={14} className="muted" />
         </button>
-        <button type="button" className="ctx-switcher no-drag">
+        <button
+          type="button"
+          className="ctx-switcher ctx-switcher--plain no-drag"
+        >
           {isWeb ? (
             <>
               <span className="conn-dot2 sandbox" />

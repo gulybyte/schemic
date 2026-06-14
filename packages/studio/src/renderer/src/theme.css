@@ -999,6 +999,10 @@ button {
   border: 1px solid var(--border-subtle);
   cursor: pointer;
 }
+/* Connection switcher: no border in the design (project switcher keeps it). */
+.ctx-switcher--plain {
+  border: none;
+}
 .drift-chip {
   display: flex;
   align-items: center;

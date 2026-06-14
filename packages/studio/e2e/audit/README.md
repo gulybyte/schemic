@@ -1,0 +1,56 @@
+# Design-vs-build audit (PoC)
+
+Automates the manual "does the build match Pencil?" audit: extract a normalized
+`StyleRecord` from the **running app** and diff it, token-aware, against a **design
+manifest** exported from Pencil. Same idea as the hand audits of the File Explorer and
+titlebar — formalized and repeatable.
+
+## How it works
+
+1. **Design manifest** (`manifest.<area>.json`) — normalized records exported from the
+   Pencil "<Area> Kit" via the Pencil MCP (`batch_get` with `resolveVariables`/
+   `resolveInstances`). Colors are stored as **token names** (`accent-soft`), sizes in px.
+   Each record pairs a Pencil node to a **CSS selector** (the anchor) and lists only the
+   props that matter for that element.
+2. **Build extractor** (`audit-<area>.mjs`) — launches the Electron app with Playwright and
+   reads `getComputedStyle` + geometry + text for each anchor selector, normalizing units.
+3. **Token-aware diff** (`tokens.mjs`) — parses `theme.css` `:root` so computed `rgb()` maps
+   back to a token **name**; colors compare by name (survives theme changes, readable diffs).
+   Numeric props get ±1px slack; **border width + font weight compare exact** (0-vs-1px border
+   or 600-vs-700 weight are meaningful). Percentage radii are resolved against the box
+   (`50%` on a 26px circle == `13px`).
+
+Run (build first):
+
+```
+npx electron-vite build
+node e2e/audit/audit-titlebar.mjs   # exit 1 on any divergence / missing anchor
+```
+
+## Extending
+
+- **New props:** add the key to the extractor's record + (for colors) `COLOR_PROPS`, then
+  list it in a manifest record's `props`.
+- **New component:** add `manifest.<area>.json` (from Pencil) + an `audit-<area>.mjs` (or
+  generalize the runner to take a manifest path). Drive any interaction state first
+  (hover/open) before extracting, and anchor the matching Pencil **state node**.
+- **Anchor map** is the one hand-authored part: Pencil nodeId ↔ CSS selector. It's the
+  source of truth for "this element *is* this design node."
+
+## Known limits / next steps
+
+- The **manifest is a committed snapshot** (Pencil MCP isn't available in plain CI). Re-export
+  when the design changes. This decouples the audit from a live Pencil so it can gate CI.
+- **Geometry from Pencil**: variable-bound `width`/`height` resolve to 0 in Pencil — compare
+  only numeric dims.
+- Per-prop **adapters** may be needed (e.g. a "glyph" frame's `fill` → the inner SVG `color`).
+- Complementary: a **pixel** visual-regression (Playwright screenshot vs Pencil
+  `export_nodes` PNG) catches rendering drift this structural diff doesn't — worth adding as a
+  second signal.
+
+## Proof
+
+On first run this PoC reproduced a real divergence the manual audit had found —
+`[Connection Switcher] borderTopWidth: expected 0, got 1` (design's connection switcher has no
+border; the shared `.ctx-switcher` gave it one). Fixing the build (`.ctx-switcher--plain`)
+turned the audit green.
