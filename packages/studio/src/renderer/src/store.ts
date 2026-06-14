@@ -3,6 +3,7 @@ import { mutative } from "zustand-mutative";
 import type { Span, SpanLink } from "./adapters/Codegen";
 import type { QueryOutcome } from "./adapters/QueryEngine";
 import { getFileSystem, getQueryEngine } from "./runtime";
+import type { PaneType } from "./workbench/PaneHeader";
 import "./settings/defs"; // register built-in setting definitions (side effect)
 import { getSettingDef } from "./settings/registry";
 
@@ -95,6 +96,13 @@ interface StudioState {
   // Command palette.
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  // Explorer collapse (lifted so the View menu can toggle it).
+  explorerCollapsed: boolean;
+  setExplorerCollapsed: (v: boolean) => void;
+  toggleExplorer: () => void;
+  // Output pane type (lifted so the View/Schema menus can switch it).
+  outputType: PaneType;
+  setOutputType: (t: PaneType) => void;
   // Workspace + project file tree.
   workspaceRoot: string | null;
   openProject: (dir?: string) => Promise<void>;
@@ -161,6 +169,20 @@ export const useStudio = create<StudioState>()(
     setPaletteOpen: (open) =>
       set((s) => {
         s.paletteOpen = open;
+      }),
+    explorerCollapsed: false,
+    setExplorerCollapsed: (v) =>
+      set((s) => {
+        s.explorerCollapsed = v;
+      }),
+    toggleExplorer: () =>
+      set((s) => {
+        s.explorerCollapsed = !s.explorerCollapsed;
+      }),
+    outputType: "result",
+    setOutputType: (t) =>
+      set((s) => {
+        s.outputType = t;
       }),
     workspaceRoot: null,
     tree: null,

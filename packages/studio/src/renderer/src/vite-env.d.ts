@@ -59,6 +59,9 @@ interface StudioBridge {
     request: (command: string, args: unknown) => Promise<unknown>;
     onEvent: (cb: (msg: unknown) => void) => () => void;
   };
+  shell: {
+    openExternal: (url: string) => Promise<void>;
+  };
   terminal: {
     run: (id: string, line: string, cwd: string) => void;
     signal: (id: string, signal: string) => void;

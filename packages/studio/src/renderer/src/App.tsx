@@ -6,12 +6,14 @@ import { CommandPalette } from "./components/CommandPalette";
 import { FileExplorer } from "./components/FileExplorer";
 import { Keybindings } from "./components/Keybindings";
 import { StatusBar } from "./components/StatusBar";
+import { useStudio } from "./store";
 import { Workbench } from "./workbench/Workbench";
 
 export function App() {
   const [active, setActive] = useState("code");
   const [explorerWidth, setExplorerWidth] = useState(264);
-  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
+  const explorerCollapsed = useStudio((s) => s.explorerCollapsed);
+  const setExplorerCollapsed = useStudio((s) => s.setExplorerCollapsed);
 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();

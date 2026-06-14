@@ -60,6 +60,10 @@ contextBridge.exposeInMainWorld("studio", {
       return () => ipcRenderer.removeListener("lsp:event", handler);
     },
   },
+  shell: {
+    openExternal: (url: string): Promise<void> =>
+      ipcRenderer.invoke("shell:openExternal", url),
+  },
   terminal: {
     run: (id: string, line: string, cwd: string) =>
       ipcRenderer.send("terminal:run", id, line, cwd),

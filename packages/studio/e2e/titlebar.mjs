@@ -48,6 +48,30 @@ console.log(
 );
 await win.keyboard.press("Escape");
 
+// Dump all 6 menus' contents to eyeball against the inventory ((x)=disabled).
+for (let i = 0; i < 6; i++) {
+  await win.evaluate((idx) => {
+    document
+      .querySelectorAll(".tb-menus .tb-menu")
+      [idx]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }, i);
+  await win.waitForSelector(".ctx-menu");
+  const dump = await win.evaluate(() => {
+    const open = document.querySelector(".tb-menu.open")?.textContent;
+    const rows = [
+      ...document.querySelectorAll(".ctx-menu .ctx-item, .ctx-menu .ctx-sep"),
+    ].map((el) =>
+      el.classList.contains("ctx-sep")
+        ? "—"
+        : `${el.textContent?.trim()}${el.disabled ? "(x)" : ""}`,
+    );
+    return `[${open}] ${rows.join(" / ")}`;
+  });
+  console.log(dump);
+  await win.keyboard.press("Escape");
+  await win.waitForTimeout(80);
+}
+
 // Switch to variant B and exercise the collapsed Menu dropdown.
 await win.evaluate(() =>
   window.__studio.getState().setSetting("titlebar.variant", "B"),

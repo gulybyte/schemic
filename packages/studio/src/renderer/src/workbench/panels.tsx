@@ -491,17 +491,19 @@ function defaultTypeFor(language: string | undefined): PaneType {
     : "result";
 }
 
-// Output pane is contextual to the active file: switching files re-derives the
-// default type, but the user can override it (in place) via the header dropdown.
+// Output pane type lives in the store (so the View/Schema menus can switch it). It's
+// contextual to the active file: switching files re-derives the default type, but the
+// user can override it (in place) via the header dropdown or the menus.
 export function OutputPane() {
   const active = useStudio(activeDoc);
-  const wanted = defaultTypeFor(active?.language);
-  const [type, setType] = useState<PaneType>(wanted);
-  const [contextType, setContextType] = useState<PaneType>(wanted);
-  if (wanted !== contextType) {
-    setContextType(wanted);
-    setType(wanted);
-  }
+  const type = useStudio((s) => s.outputType);
+  const setOutputType = useStudio((s) => s.setOutputType);
+
+  // Reset to the file's contextual default when the active document changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: contextual reset keys on the doc, not setter.
+  useEffect(() => {
+    setOutputType(defaultTypeFor(active?.language));
+  }, [active?.path]);
 
   const codegen = useCodegen(active, type === "surrealql");
   const canCopy = type === "surrealql" && !!codegen.surql;
@@ -510,7 +512,7 @@ export function OutputPane() {
     <div className="panel output-panel">
       <PaneHeader
         type={type}
-        onSwitchType={setType}
+        onSwitchType={setOutputType}
         readOnly={type === "surrealql"}
         loading={type === "surrealql" && codegen.loading}
         onRefresh={type === "surrealql" ? codegen.refresh : undefined}

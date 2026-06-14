@@ -124,6 +124,10 @@ ipcMain.handle("fs:trash", (_e, p: string) =>
 ipcMain.handle("fs:reveal", (_e, p: string) => {
   shell.showItemInFolder(assertAllowed(p));
 });
+// Open an external URL in the OS browser (Help menu links). Not path-scoped (URLs only).
+ipcMain.handle("shell:openExternal", (_e, url: string) =>
+  shell.openExternal(url),
+);
 // Generate SurrealQL from a schema file (path-scoped like fs:*). The codegen runs the
 // user's TS via jiti in the main process. (Engine bridge, Slice 2.)
 ipcMain.handle("codegen:fromFile", (_e, p: string, content?: string) =>
