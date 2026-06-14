@@ -127,6 +127,11 @@ monaco.editor.defineTheme("reverie-dark", {
     { token: "function", foreground: "7bd0ff" },
     { token: "parameter", foreground: "c77dff" },
     { token: "variable", foreground: "e0af68" },
+    // Modifiers: grey the standard library (math::/string::/…), emphasize definition sites.
+    { token: "function.defaultLibrary", foreground: "8b84a0" },
+    { token: "function.declaration", fontStyle: "bold" },
+    { token: "parameter.declaration", fontStyle: "bold" },
+    { token: "variable.declaration", fontStyle: "bold" },
   ],
   colors: {
     "editor.background": "#100d18",

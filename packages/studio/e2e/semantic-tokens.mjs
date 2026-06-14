@@ -76,8 +76,17 @@ for (let i = 0; i < 20; i++) {
   const data = res?.result?.data;
   if (data?.length) {
     const types = new Set();
-    for (let k = 0; k < data.length; k += 5) types.add(legend[data[k + 3]]);
-    decoded = { count: data.length / 5, types: [...types].sort() };
+    const mods = new Set();
+    for (let k = 0; k < data.length; k += 5) {
+      types.add(legend[data[k + 3]]);
+      if (data[k + 4] & 1) mods.add("declaration");
+      if (data[k + 4] & 2) mods.add("defaultLibrary");
+    }
+    decoded = {
+      count: data.length / 5,
+      types: [...types].sort(),
+      mods: [...mods].sort(),
+    };
     break;
   }
   await win.waitForTimeout(400);
@@ -103,6 +112,12 @@ if (!decoded) {
   console.log(
     "all 8 legend types present:",
     want.every((t) => decoded.types.includes(t)),
+  );
+  console.log("modifiers:", decoded.mods.join(",") || "(none)");
+  console.log(
+    "declaration + defaultLibrary present:",
+    decoded.mods.includes("declaration") &&
+      decoded.mods.includes("defaultLibrary"),
   );
 }
 await win.screenshot({ path: "/tmp/sz-semtok.png" });

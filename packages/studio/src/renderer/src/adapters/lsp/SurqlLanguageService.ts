@@ -222,7 +222,8 @@ export class SurqlLanguageService implements LanguageService {
         "comment",
         "variable",
       ],
-      tokenModifiers: [],
+      // Order must match the server's bit indices: declaration=bit0, defaultLibrary=bit1.
+      tokenModifiers: ["declaration", "defaultLibrary"],
     };
     monaco.languages.registerDocumentSemanticTokensProvider("surrealql", {
       getLegend: () => legend,
