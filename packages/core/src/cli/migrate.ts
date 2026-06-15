@@ -6,7 +6,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import type { Surreal } from "surrealdb";
 import {
   type Authored,
   type AuthoredDef,
@@ -210,7 +209,7 @@ export async function generate(
  * (e.g. after `pull`), where the objects already exist so the DDL must not be re-executed.
  */
 async function recordApplied(
-  db: Surreal,
+  db: unknown,
   config: ResolvedConfig,
   m: PreparedMigration,
 ): Promise<void> {
@@ -230,7 +229,7 @@ async function recordApplied(
  * metadata, or `created: false` when nothing changed.
  */
 export async function baseline(
-  db: Surreal,
+  db: unknown,
   config: ResolvedConfig,
   filter: Filter = parseFilter({}),
 ): Promise<GenerateResult> {
@@ -297,7 +296,7 @@ export function clearMigrationFiles(config: ResolvedConfig): string[] {
  * next `schemic migrate` applies it). Caller handles the no-connection case.
  */
 export async function reconcileBaseline(
-  db: Surreal,
+  db: unknown,
   config: ResolvedConfig,
   prepared: PreparedMigration,
   drift: boolean,
@@ -325,7 +324,7 @@ function indexOfTag(migrations: Migration[], tag: string): number {
 
 /** Manually clear a stale migration lock. */
 export async function unlock(
-  db: Surreal,
+  db: unknown,
   config: ResolvedConfig,
 ): Promise<void> {
   await migStore(config).unlock(db, config.migrationsTable);
@@ -336,7 +335,7 @@ export async function unlock(
  * Takes an advisory lock so concurrent runs can't race.
  */
 export async function migrate(
-  db: Surreal,
+  db: unknown,
   config: ResolvedConfig,
   opts: { count?: number; to?: string } = {},
 ): Promise<MigrateResult> {
@@ -389,7 +388,7 @@ function currentChecksum(config: ResolvedConfig, m: Migration): string {
 /** Per-migration applied/pending status (+ drift), in apply order. Includes orphaned rows — tags the
  *  DB records applied whose files are gone — so a deleted-files / reset-snapshot drift is visible. */
 export async function status(
-  db: Surreal,
+  db: unknown,
   config: ResolvedConfig,
 ): Promise<StatusRow[]> {
   const mig = migStore(config);
@@ -417,7 +416,7 @@ export async function status(
  * `to` (leaving `to` as the latest applied). Takes the advisory lock.
  */
 export async function rollback(
-  db: Surreal,
+  db: unknown,
   config: ResolvedConfig,
   opts: { count?: number; to?: string } = {},
 ): Promise<Migration[]> {
@@ -476,7 +475,7 @@ export function newMigration(
 }
 
 /** Run the project's seed script (`config.seed` or `database/seed.ts`) with a connected client. */
-export async function seed(db: Surreal, config: ResolvedConfig): Promise<void> {
+export async function seed(db: unknown, config: ResolvedConfig): Promise<void> {
   const path = config.seed
     ? resolve(config.root, config.seed)
     : resolve(config.root, "database/seed.ts");
@@ -484,8 +483,10 @@ export async function seed(db: Surreal, config: ResolvedConfig): Promise<void> {
   const mod = (await makeJiti().import(path)) as Record<string, unknown> & {
     default?: unknown;
   };
+  // The seed callback is the user's own code against the live driver connection — they annotate it
+  // with their SDK's client type (e.g. `Surreal`); the orchestration hands it the opaque `db`.
   const fn = (typeof mod.default === "function" ? mod.default : mod.seed) as
-    | ((db: Surreal) => Promise<unknown>)
+    | ((db: unknown) => Promise<unknown>)
     | undefined;
   if (typeof fn !== "function") {
     throw new Error("Seed file must export a default function `(db) => …`.");

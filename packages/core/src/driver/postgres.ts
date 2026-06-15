@@ -449,6 +449,10 @@ export const postgresDriver: Driver<PgConn> = {
     await conn.exec(`BEGIN;\n${body}\nCOMMIT;`);
   },
 
+  close(conn: PgConn): Promise<void> {
+    return conn.close();
+  },
+
   shadow,
 };
 

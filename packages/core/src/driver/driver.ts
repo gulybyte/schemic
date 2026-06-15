@@ -180,6 +180,8 @@ export interface Driver<
   // --- execution -----------------------------------------------------------------------------
   connect(config: ResolvedConfig, over?: ConnectionOverrides): Promise<Conn>;
   apply(conn: Conn, statements: string[], opts?: ApplyOptions): Promise<void>;
+  /** Tear down a connection opened by {@link connect} (the orchestration owns the lifecycle). */
+  close(conn: Conn): Promise<void>;
 
   // --- optional capabilities -----------------------------------------------------------------
   readonly shadow?: ShadowCapability<Conn>;

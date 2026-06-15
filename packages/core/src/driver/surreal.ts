@@ -230,6 +230,10 @@ export const surrealDriver: Driver<
     await applyStatements(conn, statements);
   },
 
+  async close(conn: Surreal): Promise<void> {
+    await conn.close();
+  },
+
   shadow,
   migrations,
 };

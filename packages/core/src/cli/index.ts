@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Command, Help, Option } from "commander";
 import type { Surreal } from "surrealdb";
+import { getDriver } from "../driver";
 import { lowerDb } from "../driver/portable-ir";
 import {
   type ConnectionOverrides,
@@ -80,17 +81,22 @@ interface CommonOpts extends ConnectionOverrides {
   config?: string;
 }
 
-/** Load config, connect, run, and always close the handle. */
+/**
+ * Load config, connect via the configured driver, run, and always close the handle. The connection
+ * is OPAQUE here (`db: unknown`) — the orchestration only hands it back to the same driver; a
+ * surreal-specific command body casts it to `Surreal` at its own boundary.
+ */
 async function withDb(
   opts: CommonOpts,
-  fn: (db: Surreal, config: ResolvedConfig) => Promise<void>,
+  fn: (db: unknown, config: ResolvedConfig) => Promise<void>,
 ): Promise<void> {
   const config = await loadConfig({ config: opts.config });
-  const db = await connect(config, opts);
+  const driver = getDriver(config.driver ?? "surreal");
+  const db = await driver.connect(config, opts);
   try {
     await fn(db, config);
   } finally {
-    await db.close();
+    await driver.close(db);
   }
 }
 
@@ -1064,7 +1070,8 @@ kindFlags(
         );
       };
       if (!opts.watch) {
-        await withDb(opts, once);
+        // `push` is surreal-specific (live struct diff + applyStatements) — narrow the opaque handle.
+        await withDb(opts, (db) => once(db as Surreal));
         return;
       }
       const db = await connect(config, opts);
@@ -1146,7 +1153,8 @@ kindFlags(
   ) => {
     run(() =>
       withDb(opts, async (db, config) => {
-        const plan = await planPull(db, config, {
+        // `pull` is surreal-specific (introspect -> TS codegen) — narrow the opaque handle.
+        const plan = await planPull(db as Surreal, config, {
           filter: parseFilter(opts),
           keepLocal: opts.merge,
         });
