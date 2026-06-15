@@ -209,31 +209,48 @@ function canonicalPerms(
   return clauses.length ? `PERMISSIONS ${clauses.join(" ")}` : "";
 }
 
-/** Canonical `DEFINE FIELD …`. The name is taken as-is (STRUCTURE already escapes reserved words). */
-function canonicalField(f: StructField): string {
-  const parts = [
-    `DEFINE FIELD ${f.name} ON TABLE ${f.table} TYPE ${canonicalKind(f.kind)}`,
-  ];
-  if (f.flexible) parts.push("FLEXIBLE");
+/**
+ * Field CLAUSES keyed by clause name (insertion order == DDL order), each value already in the
+ * `ALTER FIELD … <set>` form — so the migration engine can diff clauses structurally without
+ * re-parsing the DDL (matches the authoring `emit` in ddl.ts). Keys are drawn from
+ * `FIELD_CLAUSE_ORDER`. REFERENCE is intentionally absent (canonicalField never emitted it).
+ */
+function fieldClauses(f: StructField): Record<string, string> {
+  const clauses: Record<string, string> = {
+    TYPE: `TYPE ${canonicalKind(f.kind)}`,
+  };
+  if (f.flexible) clauses.FLEXIBLE = "FLEXIBLE";
   if (f.default !== undefined)
-    parts.push(`DEFAULT ${f.default_always ? "ALWAYS " : ""}${f.default}`);
-  if (f.value !== undefined) parts.push(`VALUE ${f.value}`);
-  if (f.computed !== undefined) parts.push(`COMPUTED ${f.computed}`);
-  if (f.assert !== undefined) parts.push(`ASSERT ${f.assert}`);
-  if (f.readonly) parts.push("READONLY");
+    clauses.DEFAULT = `DEFAULT ${f.default_always ? "ALWAYS " : ""}${f.default}`;
+  if (f.value !== undefined) clauses.VALUE = `VALUE ${f.value}`;
+  if (f.computed !== undefined) clauses.COMPUTED = `COMPUTED ${f.computed}`;
+  if (f.assert !== undefined) clauses.ASSERT = `ASSERT ${f.assert}`;
+  if (f.readonly) clauses.READONLY = "READONLY";
   if (f.comment !== undefined)
-    parts.push(`COMMENT ${JSON.stringify(f.comment)}`);
+    clauses.COMMENT = `COMMENT ${JSON.stringify(f.comment)}`;
   const perms = canonicalPerms(
     f.permissions,
     ["select", "create", "update"],
     true,
   );
-  if (perms) parts.push(perms);
-  return `${parts.join(" ")};`;
+  if (perms) clauses.PERMISSIONS = perms;
+  return clauses;
 }
 
-/** Canonical `DEFINE TABLE …` head. */
-function canonicalTableHead(t: StructTable): string {
+/** Canonical `DEFINE FIELD …`. The name is taken as-is (STRUCTURE already escapes reserved words). */
+function canonicalField(f: StructField): string {
+  const { TYPE, ...rest } = fieldClauses(f);
+  const head = `DEFINE FIELD ${f.name} ON TABLE ${f.table} ${TYPE}`;
+  const tail = Object.values(rest).join(" ");
+  return tail ? `${head} ${tail};` : `${head};`;
+}
+
+/**
+ * Table-head CLAUSES keyed by clause name (insertion order == DDL order), in the `ALTER TABLE …
+ * <set>` form so the migration engine can diff them structurally. Keys are drawn from
+ * `TABLE_CLAUSE_ORDER` (the head's own clauses; fields/indexes/events are their own statements).
+ */
+function tableHeadClauses(t: StructTable): Record<string, string> {
   const k = t.kind;
   let type: string;
   if (k.kind === "RELATION") {
@@ -245,24 +262,28 @@ function canonicalTableHead(t: StructTable): string {
   } else {
     type = k.kind;
   }
-  const parts = [
-    `DEFINE TABLE ${t.name} TYPE ${type}`,
-    t.schemafull ? "SCHEMAFULL" : "SCHEMALESS",
-  ];
-  if (t.drop) parts.push("DROP");
-  if (t.changefeed) {
-    parts.push(`CHANGEFEED ${t.changefeed.expiry}`);
-    if (t.changefeed.original) parts.push("INCLUDE ORIGINAL");
-  }
+  const clauses: Record<string, string> = { TYPE: `TYPE ${type}` };
+  clauses.SCHEMA = t.schemafull ? "SCHEMAFULL" : "SCHEMALESS";
+  if (t.drop) clauses.DROP = "DROP";
+  if (t.changefeed)
+    clauses.CHANGEFEED = `CHANGEFEED ${t.changefeed.expiry}${t.changefeed.original ? " INCLUDE ORIGINAL" : ""}`;
   if (t.comment !== undefined)
-    parts.push(`COMMENT ${JSON.stringify(t.comment)}`);
+    clauses.COMMENT = `COMMENT ${JSON.stringify(t.comment)}`;
   const perms = canonicalPerms(
     t.permissions,
     ["select", "create", "update", "delete"],
     false,
   );
-  if (perms) parts.push(perms);
-  return `${parts.join(" ")};`;
+  if (perms) clauses.PERMISSIONS = perms;
+  return clauses;
+}
+
+/** Canonical `DEFINE TABLE …` head. */
+function canonicalTableHead(t: StructTable): string {
+  const { TYPE, ...rest } = tableHeadClauses(t);
+  const head = `DEFINE TABLE ${t.name} ${TYPE}`;
+  const tail = Object.values(rest).join(" ");
+  return tail ? `${head} ${tail};` : `${head};`;
 }
 
 /** Canonical `DEFINE INDEX …` (`index` is `"UNIQUE"`, `""`, or a `SEARCH …`/`MTREE …` spec). */
@@ -397,6 +418,7 @@ export function structuredSnapshot({
       kind: "table",
       name: t.name,
       ddl: canonicalTableHead(t),
+      clauses: tableHeadClauses(t),
     };
     statements[keyOf(tableStmt)] = tableStmt;
 
@@ -430,6 +452,7 @@ export function structuredSnapshot({
         name: f.name,
         table: t.name,
         ddl: canonicalField(field),
+        clauses: fieldClauses(field),
       };
       statements[keyOf(s)] = s;
     }
