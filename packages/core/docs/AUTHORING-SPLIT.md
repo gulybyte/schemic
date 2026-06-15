@@ -1,10 +1,30 @@
 # Authoring split — genericizing the `s.*` builder (extraction phase B)
 
-Status: **approved (Approach A)**, not yet implemented. Follows the engine
-genericization (snapshot + diff + migration-runner are already driver-parametric).
-This phase makes the **authoring layer** driver-parametric so SurrealDB can be
-pulled out of `@schemic/core` and a `@schemic/postgres` builder can plug in the
-same way.
+Status: **Approach A — B1 class split DONE.** Follows the engine genericization
+(snapshot + diff + migration-runner are already driver-parametric). This phase
+makes the **authoring layer** driver-parametric so SurrealDB can be pulled out of
+`@schemic/core` and a `@schemic/postgres` builder can plug in the same way.
+
+> **Implementation revision (B1).** The `portableBuilders` factory sketched below
+> turned out **not to be cleanly typeable**: a generic `portableBuilders<M>(mk: M)`
+> degrades each factory's return to the *base* type (`SFieldBase`), dropping the
+> dialect's `$`-methods — TypeScript has no higher-kinded types, so a generic
+> factory can't preserve the concrete subclass (`SField<Sc>`) across the call.
+> (Verified: `built.string()` types as `SFieldBase<…>`, so `.$default()` is gone.)
+> A mapped-type re-narrowing cast per dialect could recover the *non-generic*
+> scalar factories, but not the generic ones (`literal`/`enum`/`object`/`array`/…),
+> and it adds `as unknown as As<Dialect>` machinery.
+>
+> **Decision: skip the generic factory.** Each dialect package declares its own
+> portable factories — they are trivial one-liners (`() => new SField(z.string())`)
+> over the shared `SFieldBase`, which is the actual reuse. This matches the
+> industry norm (Zod, Drizzle ship per-dialect builders) and keeps the public types
+> precise with zero casts. The "standardized App-land" guarantee is the **shared
+> base class + the same `z.*` schemas**, not a shared factory object.
+>
+> So B1 is **complete** with the class split (`SFieldBase` + `SField`). The code
+> blocks below keep `portableBuilders` for context; treat it as illustrative, not
+> the shipped shape.
 
 ## Goal
 
@@ -225,13 +245,17 @@ in phase C.
 
 ## Staging (keeps every test green until the physical move)
 
-- **B1 — refactor in place, inside `@schemic/core`.** Extract the `SField` base +
-  `portableBuilders`; make `SurrealField` the extension; `s` becomes
-  `portableBuilders(...)` + the surreal natives. Behavior identical; tests still
+- **B1 — done (refactor in place, inside `@schemic/core`).** Extracted the portable
+  base `SFieldBase`; `SField extends SFieldBase<…, SurrealMeta>` is the extension
+  (here it's named `SField`, not `SurrealField` — keeping the public name minimizes
+  churn; it can be renamed at the physical move). No generic `portableBuilders` (see
+  the revision note at the top); `s` is unchanged. Behavior identical; tests still
   `import { s, defineTable } from "@schemic/core"` and pass unchanged.
-- **C — physical extraction.** Move `SurrealField` + natives + `ddl.ts` + the
-  surreal `cli/*` modules to `@schemic/surreal`; have core publicly export the
-  authoring contract + `Driver`/portable types + `ResolvedConfig`; re-point
-  examples/docs/tests. Add `@schemic/postgres` authoring as the parallel subclass.
+- **C — physical extraction.** Move `SField` (the extension) + natives + `ddl.ts` +
+  the surreal `cli/*` modules to `@schemic/surreal`; have core publicly export the
+  authoring contract (`SFieldBase`/`TableDef`/`Shape`/`StandaloneDef`) + `Driver`/
+  portable types + `ResolvedConfig`; re-point examples/docs/tests. Add
+  `@schemic/postgres` authoring as the parallel `PgField extends SFieldBase` subclass
+  with its own per-dialect portable factories.
 
 This is the only phase that touches import paths; B1 does not.
