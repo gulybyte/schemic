@@ -32,7 +32,7 @@ export interface PortableField {
   computed?: string;
   assert?: string;
   comment?: string;
-  reference?: unknown;
+  reference?: { on_delete?: string };
   permissions?: StructPermissions;
   table: string;
 }

@@ -205,3 +205,58 @@ describe("driver.diff (portable IR -> up/down + display items)", () => {
     expect(diff.items?.length).toBeGreaterThan(0);
   });
 });
+
+describe("surreal: record REFERENCE clause (regression — was dropped on the portable path)", () => {
+  test("emit includes REFERENCE; a bare reference renders without ON DELETE", () => {
+    const db = surrealDriver.lower(
+      [defineTable("doc", { author: s.recordId("user").reference() })],
+      [],
+    );
+    const ddl = surrealDriver
+      .emit(surrealDriver.normalize(db))
+      .map((st) => st.ddl)
+      .join("\n");
+    expect(ddl).toMatch(/DEFINE FIELD author ON TABLE doc .*REFERENCE/);
+    expect(ddl).not.toContain("ON DELETE");
+  });
+
+  test("ON DELETE action renders; a reference-only change is detected as ALTER FIELD", () => {
+    const cascade = surrealDriver.lower(
+      [
+        defineTable("doc", {
+          author: s.recordId("user").reference({ onDelete: "cascade" }),
+        }),
+      ],
+      [],
+    );
+    expect(
+      surrealDriver
+        .emit(surrealDriver.normalize(cascade))
+        .map((st) => st.ddl)
+        .join("\n"),
+    ).toContain("REFERENCE ON DELETE CASCADE");
+
+    // adding a reference where there was none must produce a migration (was silently missed).
+    const without = surrealDriver.lower(
+      [defineTable("doc", { author: s.recordId("user") })],
+      [],
+    );
+    const up = surrealDriver.diff(without, cascade).up.join("\n");
+    expect(up).toMatch(
+      /ALTER FIELD author ON TABLE doc.*REFERENCE ON DELETE CASCADE/,
+    );
+  });
+
+  test("IGNORE (SurrealDB's materialized default) canonicalizes to a bare REFERENCE — no phantom vs live", () => {
+    // A bare reference lowers offline to reference:{} but INFO STRUCTURE materializes it as
+    // { on_delete: 'IGNORE' }; both must canonicalize identically or every bare ref phantom-diffs.
+    const bare = surrealDriver.lower(
+      [defineTable("doc", { author: s.recordId("user").reference() })],
+      [],
+    );
+    const liveLike = structuredClone(bare);
+    const f = liveLike.tables[0].fields.find((x) => x.name === "author");
+    if (f) f.reference = { on_delete: "IGNORE" };
+    expect(surrealDriver.diff(bare, liveLike).up).toEqual([]);
+  });
+});

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { RecordId } from "surrealdb";
 import { z } from "zod";
 import { emitStatements, fieldType } from "../../src/ddl";
 import {
   defineTable,
   objectFieldsRegistry,
+  RecordIdField,
   SField,
   s,
   surrealTypeRegistry,
@@ -240,5 +242,27 @@ describe("field method wrappers", () => {
     expect(s.string().$comment("c").optional().unwrap().surreal.comment).toBe(
       "c",
     );
+  });
+});
+
+describe("RecordIdField stays a RecordIdField across `this`-returning passthroughs (B1 soundness)", () => {
+  test("refine/check keep the RecordIdField runtime methods (.for/.type) — no crash", () => {
+    const f = s.recordId("user").refine(() => true);
+    // The `this`-returning base passthroughs rebuild via RecordIdField.rebuild, so `f` is a real
+    // RecordIdField at runtime (pre-fix it was a plain SField and `.for` crashed).
+    expect(f).toBeInstanceOf(RecordIdField);
+    const id = f.for("ada");
+    expect(id).toBeInstanceOf(RecordId);
+    expect(id.table.name).toBe("user");
+    // chaining .type() (another RecordIdField method) also still works
+    expect(s.recordId("user").check().type(z.string())).toBeInstanceOf(
+      RecordIdField,
+    );
+  });
+
+  test("the refinement is preserved (not silently dropped by rebuild)", () => {
+    const f = s.recordId("user").refine((r) => r.id === "ada", "must be ada");
+    expect(f.safeDecode(new RecordId("user", "ada")).success).toBe(true);
+    expect(f.safeDecode(new RecordId("user", "bob")).success).toBe(false);
   });
 });

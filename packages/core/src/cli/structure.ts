@@ -53,7 +53,10 @@ export interface StructField {
   computed?: string;
   assert?: string;
   comment?: string;
-  reference?: unknown;
+  /** `REFERENCE [ON DELETE …]` on a record-link field. `on_delete` mirrors `INFO … STRUCTURE`
+   *  (snake_case) and the offline lowering (`lowerReference`): an action keyword (`CASCADE`/…) or a
+   *  `surql` expression. Absent = no reference; present-without-`on_delete` = a bare `REFERENCE`. */
+  reference?: { on_delete?: string };
   permissions?: StructPermissions;
   table: string;
 }
@@ -240,6 +243,19 @@ function fieldClauses(f: StructField): Record<string, string> {
     TYPE: `TYPE ${canonicalKind(f.kind)}`,
   };
   if (f.flexible) clauses.FLEXIBLE = "FLEXIBLE";
+  // REFERENCE. SurrealDB defaults a bare `REFERENCE` to `ON DELETE IGNORE` and MATERIALIZES that in
+  // `INFO … STRUCTURE` (reference: { on_delete: 'IGNORE' }), whereas the offline lowering leaves a
+  // bare reference's on_delete absent — so IGNORE (and absent) both canonicalize to a bare `REFERENCE`
+  // (else every bare reference phantom-diffs against a live DB). A non-default action keyword renders
+  // `ON DELETE <ACTION>`; anything else (a surql expression) renders `ON DELETE THEN <expr>`. Inserted
+  // after FLEXIBLE to match FIELD_CLAUSE_ORDER, so a reference change diffs as ALTER FIELD, not OVERWRITE.
+  if (f.reference) {
+    const od = f.reference.on_delete;
+    clauses.REFERENCE =
+      !od || od.toUpperCase() === "IGNORE"
+        ? "REFERENCE"
+        : `REFERENCE ON DELETE ${/^(REJECT|CASCADE|UNSET)$/i.test(od) ? od : `THEN ${od}`}`;
+  }
   if (f.default !== undefined)
     clauses.DEFAULT = `DEFAULT ${f.default_always ? "ALWAYS " : ""}${f.default}`;
   if (f.value !== undefined) clauses.VALUE = `VALUE ${f.value}`;

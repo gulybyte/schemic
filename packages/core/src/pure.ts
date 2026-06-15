@@ -915,8 +915,28 @@ export class RecordIdField<
     readonly tables: T[],
     readonly valueType?: z.ZodType<V>,
     surreal: SurrealMeta = {},
+    // The `this`-returning Zod passthroughs (refine/check/…) wrap the schema and rebuild via the hook
+    // below; this lets such a rebuild carry the wrapped schema instead of rebuilding the bare record
+    // schema. Defaults to the record schema for the normal `s.recordId(...)` construction.
+    schemaOverride?: z.ZodType<RecordId<T, V>, RecordId<T, V>>,
   ) {
-    super(recordIdSchema<T, V>(tables, valueType), surreal);
+    super(schemaOverride ?? recordIdSchema<T, V>(tables, valueType), surreal);
+  }
+
+  // The base `this`-returning wrappers (refine/superRefine/check/…) construct via `rebuild`. SField's
+  // rebuild makes a plain SField, which would make `this` (typed RecordIdField) a LIE at runtime —
+  // `s.recordId("x").refine(p).for(id)` would crash. Override so those chains stay a RecordIdField
+  // (the schema-CHANGING wrappers like `.optional()` still narrow to SField via SField's overrides).
+  protected override rebuild<S2 extends z.ZodType, F2 extends string>(
+    schema: S2,
+    native: SurrealMeta,
+  ): SField<S2, F2> {
+    return new RecordIdField<T, V>(
+      this.tables,
+      this.valueType,
+      native,
+      schema as unknown as z.ZodType<RecordId<T, V>, RecordId<T, V>>,
+    ) as unknown as SField<S2, F2>;
   }
 
   /** Restrict the id value's type — reflected as `RecordId<T, V>` and validated at runtime. */
