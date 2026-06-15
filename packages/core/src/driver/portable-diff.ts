@@ -57,26 +57,41 @@ export function diffPortable(
 /**
  * Turn a structural diff into executable `up`/`down` DDL via the driver's change-vocabulary:
  * add -> create up / drop down; remove -> drop up / recreate down; change -> overwrite both ways.
+ *
+ * Dependency ordering matters for `up` AND `down`. The diff items arrive parent-first (emit RANK:
+ * table, then field/index/…). For `up` that's right for creates/changes — but a REMOVE must drop
+ * children before parents (a table's FK/index/field drops before the table itself), so removes are
+ * applied in REVERSE emit order. `down` is the exact inverse migration: invert each op and run the
+ * whole sequence backwards — so a rolled-back table is recreated before its FKs are re-added. This
+ * also makes a dropped table's child-object drops harmless rather than orphaned errors (the child
+ * drop runs while the table still exists; CASCADE on the table is the backstop).
  */
 export function planPortable(
   driver: Driver<unknown>,
   items: PortableDiffItem[],
 ): { up: string[]; down: string[] } {
+  // up-order: creates/changes parent-first (emit order), then removes child-first (reverse).
+  const ordered = [
+    ...items.filter((it) => it.op !== "remove"),
+    ...items.filter((it) => it.op === "remove").reverse(),
+  ];
   const up: string[] = [];
-  const down: string[] = [];
-  for (const it of items) {
+  const inverse: string[] = [];
+  for (const it of ordered) {
     if (it.op === "add") {
       up.push(it.stmt.ddl);
-      down.push(driver.remove(it.stmt));
+      inverse.push(driver.remove(it.stmt));
     } else if (it.op === "remove") {
       up.push(driver.remove(it.stmt));
-      down.push(it.stmt.ddl);
+      inverse.push(it.stmt.ddl);
     } else {
       up.push(driver.overwrite(it.after));
-      down.push(driver.overwrite(it.before));
+      inverse.push(driver.overwrite(it.before));
     }
   }
-  return { up, down };
+  // `down` undoes `up` in reverse order (parents recreated before children, added objects dropped
+  // child-first).
+  return { up, down: inverse.reverse() };
 }
 
 /** Map structural items to display {@link DiffItem}s (source-file linkage is attached by the caller). */

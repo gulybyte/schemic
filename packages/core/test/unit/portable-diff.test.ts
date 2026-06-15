@@ -204,6 +204,39 @@ describe("driver.diff (portable IR -> up/down + display items)", () => {
     expect(diff.down.join("\n")).toContain('DROP TABLE IF EXISTS "user"');
     expect(diff.items?.length).toBeGreaterThan(0);
   });
+
+  // Dependency ordering (g2): dropping a table that has an FK must drop the constraint BEFORE the
+  // table on `up`, and the rollback must recreate the table BEFORE re-adding the constraint on `down`.
+  test("postgres: dropping an FK-bearing table orders up child-first, down parent-first", () => {
+    const prev = surrealDriver.lower(
+      [
+        defineTable("user", { name: s.string() }),
+        defineTable("post", { title: s.string(), author: s.recordId("user") }),
+      ],
+      [],
+    );
+    const next = surrealDriver.lower(
+      [defineTable("user", { name: s.string() })],
+      [],
+    );
+    const { up, down } = postgresDriver.diff(prev, next);
+
+    const upFk = up.findIndex((sql) => sql.includes("DROP CONSTRAINT"));
+    const upTable = up.findIndex((sql) =>
+      sql.includes('DROP TABLE IF EXISTS "post"'),
+    );
+    expect(upFk).toBeGreaterThanOrEqual(0);
+    expect(upTable).toBeGreaterThanOrEqual(0);
+    expect(upFk).toBeLessThan(upTable); // FK dropped before its table
+
+    const downTable = down.findIndex((sql) =>
+      sql.includes('CREATE TABLE "post"'),
+    );
+    const downFk = down.findIndex((sql) => sql.includes("ADD CONSTRAINT"));
+    expect(downTable).toBeGreaterThanOrEqual(0);
+    expect(downFk).toBeGreaterThanOrEqual(0);
+    expect(downTable).toBeLessThan(downFk); // table recreated before its FK
+  });
 });
 
 describe("surreal: record REFERENCE clause (regression — was dropped on the portable path)", () => {
