@@ -7,8 +7,13 @@ import {
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { Surreal } from "surrealdb";
-import { type Driver, getDriver, type MigrationStore } from "../driver";
-import type { Shape, StandaloneDef, TableDef } from "../pure";
+import {
+  type Authored,
+  type AuthoredDef,
+  type Driver,
+  getDriver,
+  type MigrationStore,
+} from "../driver";
 import type { ResolvedConfig } from "./config";
 import { makeJiti } from "./config";
 import { type Diff, isEmptyDiff } from "./diff";
@@ -30,7 +35,7 @@ import {
   timestamp,
   writeSnapshot,
 } from "./meta";
-import { type AnyTable, loadDefs } from "./schema";
+import { loadDefs } from "./schema";
 
 /**
  * Build the canonical STORED snapshot from the authored schema: lower to the portable IR via the
@@ -38,14 +43,11 @@ import { type AnyTable, loadDefs } from "./schema";
  */
 function buildStored(
   driver: Driver,
-  tables: AnyTable[],
-  defs: StandaloneDef[],
+  tables: Authored[],
+  defs: AuthoredDef[],
   opts: { fileOf?: Map<unknown, string>; root?: string } = {},
 ): StoredSnapshot {
-  const portable = driver.lower(
-    tables as unknown as TableDef<string, Shape>[],
-    defs,
-  );
+  const portable = driver.lower(tables, defs);
   const files: Record<string, string> = {};
   const rel = (abs: string) => (opts.root ? relative(opts.root, abs) : abs);
   for (const t of tables) {
@@ -54,7 +56,9 @@ function buildStored(
   }
   for (const d of defs) {
     const abs = opts.fileOf?.get(d);
-    if (abs) files[d.kind === "event" ? d.table : d.name] = rel(abs);
+    // An event is file-linked under its owner table; other defs under their own name.
+    const key = d.kind === "event" ? d.table : d.name;
+    if (abs && key) files[key] = rel(abs);
   }
   return { version: 2, driver: driver.name, portable, files };
 }

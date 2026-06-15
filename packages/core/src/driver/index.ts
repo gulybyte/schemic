@@ -2,6 +2,8 @@
 
 export type {
   ApplyOptions,
+  Authored,
+  AuthoredDef,
   ConnectionOverrides,
   Driver,
   EmitOptions,

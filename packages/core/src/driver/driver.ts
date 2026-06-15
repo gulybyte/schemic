@@ -7,12 +7,35 @@
 //
 // The connection type is a driver-private parameter `Conn`: the orchestration treats it opaquely and
 // only ever hands it back to the SAME driver. So the Surreal driver is `Driver<Surreal>`, a future
-// Postgres driver is `Driver<PgClient>`, and core never sees either concrete type.
+// Postgres driver is `Driver<PgClient>`, and core never sees either concrete type. The AUTHORING
+// types (`Tbl`/`Def`) are driver-private the same way — opaque to core beyond the neutral
+// `Authored`/`AuthoredDef` bounds — so the neutral engine never names a dialect's concrete builder
+// (`TableDef`/`StandaloneDef`).
 
 import type { ResolvedConfig } from "../cli/config";
 import type { Diff } from "../cli/diff";
-import type { Shape, StandaloneDef, TableDef } from "../pure";
 import type { PortableDb } from "./portable-ir";
+
+/**
+ * The dialect-NEUTRAL authoring contract — the only structure the orchestration reads off an
+ * authored object (everything else is opaque and handed straight to {@link Driver.lower}). A table
+ * contributes just its `name`; this is the upper bound for a driver's table-authoring type. The
+ * Surreal `TableDef` is a structural subtype, as is any future dialect's table builder.
+ */
+export interface Authored {
+  readonly name: string;
+}
+
+/**
+ * The neutral contract for a standalone (non-table) authored object — an event/function/access. It
+ * adds a `kind` discriminant and, for objects owned by a table (e.g. an event), the owner `table`
+ * name (so the snapshot can file-link a child object under its parent). The Surreal `StandaloneDef`
+ * union is a structural subtype.
+ */
+export interface AuthoredDef extends Authored {
+  readonly kind: string;
+  readonly table?: string;
+}
 
 /**
  * A single emitted DDL statement, structured: object identity (`kind`/`name`/`table`) + the dialect
@@ -124,12 +147,16 @@ export interface ShadowCapability<Conn> {
  * to/from its own dialect (the Surreal driver lifts/lowers the SurrealQL string kinds; the Postgres
  * driver produces/consumes the portable IR natively).
  */
-export interface Driver<Conn = unknown> {
+export interface Driver<
+  Conn = unknown,
+  Tbl extends Authored = Authored,
+  Def extends AuthoredDef = AuthoredDef,
+> {
   readonly name: string;
 
   // --- IR pipeline ---------------------------------------------------------------------------
   /** Authoring (loaded `defineTable`/standalone defs) -> NORMALIZED portable IR. */
-  lower(tables: TableDef<string, Shape>[], defs: StandaloneDef[]): PortableDb;
+  lower(tables: Tbl[], defs: Def[]): PortableDb;
   /** Portable IR -> ordered DDL statements (a fresh apply / migration `up`). */
   emit(db: PortableDb, opts?: EmitOptions): Statement[];
   /** DROP/REMOVE DDL for one object — `up` for a removed object, `down` for an added one. */

@@ -152,7 +152,11 @@ const migrations: MigrationStore<Surreal> = {
   },
 };
 
-export const surrealDriver: Driver<Surreal> = {
+export const surrealDriver: Driver<
+  Surreal,
+  TableDef<string, Shape>,
+  StandaloneDef
+> = {
   name: "surreal",
 
   // --- IR pipeline ---------------------------------------------------------------------------
