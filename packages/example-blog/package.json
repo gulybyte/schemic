@@ -1,0 +1,14 @@
+{
+  "name": "example-blog",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@schemic/core": "workspace:*",
+    "surrealdb": "^2.0.3"
+  }
+}

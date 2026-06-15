@@ -1,4 +1,4 @@
-import { defineConfig } from "surreal-zod/config";
+import { defineConfig } from "@schemic/core/config";
 
 export default defineConfig({
   // schema and migrations default to ./database/schema and ./database/migrations.
@@ -13,8 +13,8 @@ export default defineConfig({
     password: process.env.SURREAL_PASS,
     authLevel: "root", // "root" | "namespace" | "database"
   },
-  // `sz check` replays your migrations to confirm they reproduce the schema. By default ("auto") it
-  // spins up an ephemeral in-memory SurrealDB from your local `surreal` CLI — your exact version, no
+  // `schemic check` replays your migrations to confirm they reproduce the schema. By default ("auto")
+  // it spins up an ephemeral in-memory SurrealDB from your local `surreal` CLI — your exact version, no
   // external server, your real database untouched. Falls back to the `db` server if the CLI is
   // missing. To always use a server (and keep it off production) point the replay at a scratch one:
   // check: { engine: "remote", db: { url: "ws://localhost:8000", namespace: "scratch" } },
