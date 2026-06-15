@@ -274,14 +274,30 @@ type InnerOf<S extends z.ZodType> =
  * `"readonly"` (excluded from updates). It only appears in method return types, so
  * `SField` is covariant in it.
  */
-export class SField<
+/**
+ * The PORTABLE, dialect-agnostic field base (extraction phase B — see docs/AUTHORING-SPLIT.md).
+ * Holds the Zod schema, an opaque per-dialect `native` metadata slot, the field-level codecs, and
+ * the App-land Zod wrappers (which carry `native` forward via the `rebuild` hook so a chain keeps
+ * its concrete dialect type). It references NOTHING SurrealDB-specific. Each dialect subclasses it
+ * (see {@link SField} for SurrealDB) to add native authoring (`$`-methods) and re-type the wrappers.
+ */
+export abstract class SFieldBase<
   S extends z.ZodType = z.ZodType,
   Flags extends string = never,
+  N = unknown,
 > {
   constructor(
     readonly schema: S,
-    readonly surreal: SurrealMeta = {},
+    readonly native: N,
   ) {}
+
+  /** Rebuild a sibling field of the SAME dialect with a new schema/flags. Each dialect overrides it. */
+  protected abstract rebuild<S2 extends z.ZodType, F2 extends string>(
+    schema: S2,
+    native: N,
+  ): SFieldBase<S2, F2, N>;
+  /** A fresh, empty native-metadata bag (for wrappers like `or`/`and` that reset it). */
+  protected abstract blank(): N;
 
   // --- Field-level codec (raw, on `this.schema`): `decode` reads (wire -> app), `encode`
   // writes (app -> wire). Create-shaping is a table concept, so these are NOT create-shaped —
@@ -331,43 +347,47 @@ export class SField<
     return this.safeDecodeAsync(value);
   }
 
-  // Zod wrappers — delegate to the inner schema, carry DDL metadata + flags forward.
-  optional(): SField<z.ZodOptional<S>, Flags> {
-    return new SField(this.schema.optional(), this.surreal);
+  // Zod wrappers — delegate to the inner schema, carry native metadata + flags forward.
+  optional(): SFieldBase<z.ZodOptional<S>, Flags, N> {
+    return this.rebuild(this.schema.optional(), this.native);
   }
-  nullable(): SField<z.ZodNullable<S>, Flags> {
-    return new SField(this.schema.nullable(), this.surreal);
+  nullable(): SFieldBase<z.ZodNullable<S>, Flags, N> {
+    return this.rebuild(this.schema.nullable(), this.native);
   }
-  default(value: z.input<S>): SField<z.ZodDefault<S>, Flags> {
-    return new SField(this.schema.default(value as never), this.surreal);
+  default(value: z.input<S>): SFieldBase<z.ZodDefault<S>, Flags, N> {
+    return this.rebuild(this.schema.default(value as never), this.native);
   }
   /** Zod prefault: fill an absent value with `value`, then validate it (unlike `.default`). */
-  prefault(value: z.input<S>): SField<z.ZodPrefault<S>, Flags> {
-    return new SField(z.prefault(this.schema, value as never), this.surreal);
+  prefault(value: z.input<S>): SFieldBase<z.ZodPrefault<S>, Flags, N> {
+    return this.rebuild(z.prefault(this.schema, value as never), this.native);
   }
   /** Zod catch: fall back to `value` when parsing fails. */
-  catch(value: z.output<S>): SField<z.ZodCatch<S>, Flags> {
-    return new SField(this.schema.catch(value as never), this.surreal);
+  catch(value: z.output<S>): SFieldBase<z.ZodCatch<S>, Flags, N> {
+    return this.rebuild(this.schema.catch(value as never), this.native);
   }
-  array(): SField<z.ZodArray<S>, Flags> {
-    return new SField(z.array(this.schema), this.surreal);
+  array(): SFieldBase<z.ZodArray<S>, Flags, N> {
+    return this.rebuild(z.array(this.schema), this.native);
   }
-  nullish(): SField<z.ZodOptional<z.ZodNullable<S>>, Flags> {
-    return new SField(this.schema.nullish(), this.surreal);
+  nullish(): SFieldBase<z.ZodOptional<z.ZodNullable<S>>, Flags, N> {
+    return this.rebuild(this.schema.nullish(), this.native);
   }
   /** Zod union — `a.or(b)` accepts either; SurrealQL `<a> | <b>`. Mirrors Zod's `.or()`. */
   or<F extends AnyField | z.ZodType>(
     other: F,
-  ): SField<z.ZodUnion<[S, SchemaOf<F>]>> {
-    return new SField(
+  ): SFieldBase<z.ZodUnion<[S, SchemaOf<F>]>, never, N> {
+    return this.rebuild<z.ZodUnion<[S, SchemaOf<F>]>, never>(
       z.union([this.schema, toZod(other)]) as z.ZodUnion<[S, SchemaOf<F>]>,
+      this.blank(),
     );
   }
   /** Zod intersection — `a.and(b)`; merges object fields in DDL. Mirrors Zod's `.and()`. */
   and<F extends AnyField | z.ZodType>(
     other: F,
-  ): SField<z.ZodIntersection<S, SchemaOf<F>>> {
-    return new SField(z.intersection(this.schema, toZod(other) as SchemaOf<F>));
+  ): SFieldBase<z.ZodIntersection<S, SchemaOf<F>>, never, N> {
+    return this.rebuild<z.ZodIntersection<S, SchemaOf<F>>, never>(
+      z.intersection(this.schema, toZod(other) as SchemaOf<F>),
+      this.blank(),
+    );
   }
 
   // --- Native Zod passthrough (drop-in for `z.*`): app-side validation / transform / metadata,
@@ -380,80 +400,106 @@ export class SField<
   refine(
     check: (arg: z.output<S>) => unknown,
     params?: string | z.core.$ZodCustomParams,
-  ): SField<S, Flags> {
-    return new SField(this.schema.refine(check, params) as S, this.surreal);
+  ): this {
+    return this.rebuild(
+      this.schema.refine(check, params) as S,
+      this.native,
+    ) as unknown as this;
   }
   superRefine(
     refinement: (
       arg: z.output<S>,
       ctx: z.core.$RefinementCtx<z.output<S>>,
     ) => void,
-  ): SField<S, Flags> {
-    return new SField(this.schema.superRefine(refinement) as S, this.surreal);
+  ): this {
+    return this.rebuild(
+      this.schema.superRefine(refinement) as S,
+      this.native,
+    ) as unknown as this;
   }
   check(
     ...checks: (z.core.CheckFn<z.output<S>> | z.core.$ZodCheck<z.output<S>>)[]
-  ): SField<S, Flags> {
-    return new SField(this.schema.check(...checks) as S, this.surreal);
+  ): this {
+    return this.rebuild(
+      this.schema.check(...checks) as S,
+      this.native,
+    ) as unknown as this;
   }
-  overwrite(fn: (x: z.output<S>) => z.output<S>): SField<S, Flags> {
-    return new SField(this.schema.overwrite(fn) as S, this.surreal);
+  overwrite(fn: (x: z.output<S>) => z.output<S>): this {
+    return this.rebuild(
+      this.schema.overwrite(fn) as S,
+      this.native,
+    ) as unknown as this;
   }
-  brand<B extends PropertyKey = PropertyKey>(value?: B): SField<S, Flags> {
-    return new SField(this.schema.brand(value) as unknown as S, this.surreal);
+  brand<B extends PropertyKey = PropertyKey>(value?: B): this {
+    return this.rebuild(
+      this.schema.brand(value) as unknown as S,
+      this.native,
+    ) as unknown as this;
   }
   /** Zod's app-side metadata (JSON-schema/docs) — distinct from `$comment()` (SurrealDB COMMENT). */
-  describe(description: string): SField<S, Flags> {
-    return new SField(this.schema.describe(description) as S, this.surreal);
+  describe(description: string): this {
+    return this.rebuild(
+      this.schema.describe(description) as S,
+      this.native,
+    ) as unknown as this;
   }
-  meta(data: z.core.GlobalMeta): SField<S, Flags> {
-    return new SField(this.schema.meta(data) as S, this.surreal);
+  meta(data: z.core.GlobalMeta): this {
+    return this.rebuild(
+      this.schema.meta(data) as S,
+      this.native,
+    ) as unknown as this;
   }
   /** Zod's app-side readonly (TS-immutable output) — distinct from `$readonly()` (SurrealDB READONLY). */
-  readonly(): SField<z.ZodReadonly<S>, Flags> {
-    return new SField(this.schema.readonly(), this.surreal);
+  readonly(): SFieldBase<z.ZodReadonly<S>, Flags, N> {
+    return this.rebuild(this.schema.readonly(), this.native);
   }
   /** Zod transform — changes the decoded `App<>` value; the stored (wire) type is unchanged. */
   transform<NewOut>(
     fn: (arg: z.output<S>, ctx: z.core.$RefinementCtx<z.output<S>>) => NewOut,
-  ): SField<z.ZodPipe<S, z.ZodTransform<Awaited<NewOut>, z.output<S>>>, Flags> {
-    return new SField(this.schema.transform(fn), this.surreal);
+  ): SFieldBase<
+    z.ZodPipe<S, z.ZodTransform<Awaited<NewOut>, z.output<S>>>,
+    Flags,
+    N
+  > {
+    return this.rebuild(this.schema.transform(fn), this.native);
   }
   /** Zod pipe — feed this field's output into `target`; the stored (wire) type stays `this`. */
   pipe<T extends z.core.$ZodType<unknown, z.output<S>>>(
     target: T,
-  ): SField<z.ZodPipe<S, T>, Flags> {
-    return new SField(
+  ): SFieldBase<z.ZodPipe<S, T>, Flags, N> {
+    return this.rebuild(
       this.schema.pipe(target) as z.ZodPipe<S, T>,
-      this.surreal,
+      this.native,
     );
   }
   /** Peel one wrapper (optional/nullable/default/prefault/catch/readonly/array) off the field. */
-  unwrap(): SField<InnerOf<S>, Flags> {
+  unwrap(): SFieldBase<InnerOf<S>, Flags, N> {
     const def = this.schema._zod.def as {
       innerType?: z.ZodType;
       element?: z.ZodType;
     };
     const inner = def.innerType ?? def.element ?? this.schema;
-    return new SField(inner, this.surreal) as unknown as SField<
+    return this.rebuild(inner, this.native) as unknown as SFieldBase<
       InnerOf<S>,
-      Flags
+      Flags,
+      N
     >;
   }
 
   /** Object-only: allow arbitrary extra keys — `FLEXIBLE` in DDL. Mirrors Zod's `.loose()`. */
-  loose(): SField<S, Flags> {
+  loose(): this {
     return this.objectMode("loose");
   }
   /** Object-only: reject unknown keys — non-`FLEXIBLE` (the default). Mirrors Zod's `.strict()`. */
-  strict(): SField<S, Flags> {
+  strict(): this {
     return this.objectMode("strict");
   }
-  /** Alias for {@link SField.loose | loose} — a `FLEXIBLE` object accepting arbitrary keys. */
-  flexible(): SField<S, Flags> {
+  /** Alias for {@link loose} — a `FLEXIBLE` object accepting arbitrary keys. */
+  flexible(): this {
     return this.loose();
   }
-  private objectMode(mode: "loose" | "strict"): SField<S, Flags> {
+  private objectMode(mode: "loose" | "strict"): this {
     const obj = this.schema as unknown as {
       loose?: () => z.ZodType;
       strict?: () => z.ZodType;
@@ -467,7 +513,90 @@ export class SField<
     // Carry the nested-field registry forward so DDL/create-shaping still see the subfields.
     const fields = objectFieldsRegistry.get(this.schema);
     if (fields) objectFieldsRegistry.set(next, fields);
-    return new SField(next, this.surreal);
+    return this.rebuild(next, this.native) as unknown as this;
+  }
+}
+
+/**
+ * The SurrealDB field — the dialect extension of {@link SFieldBase}. Adds SurrealDB-native authoring
+ * (the `$`-methods over `SurrealMeta`: DEFAULT/VALUE/ASSERT/PERMISSIONS/REFERENCE/…) and re-types the
+ * inherited portable Zod wrappers so a chain stays a `SField`. `s.*` produces these. In the package
+ * split this class moves to `@schemic/surreal` (see docs/AUTHORING-SPLIT.md).
+ */
+export class SField<
+  S extends z.ZodType = z.ZodType,
+  Flags extends string = never,
+> extends SFieldBase<S, Flags, SurrealMeta> {
+  constructor(schema: S, surreal: SurrealMeta = {}) {
+    super(schema, surreal);
+  }
+  /** The SurrealDB-native field metadata (DEFAULT/VALUE/ASSERT/PERMISSIONS/…). */
+  get surreal(): SurrealMeta {
+    return this.native;
+  }
+  protected rebuild<S2 extends z.ZodType, F2 extends string>(
+    schema: S2,
+    native: SurrealMeta,
+  ): SField<S2, F2> {
+    return new SField<S2, F2>(schema, native);
+  }
+  protected blank(): SurrealMeta {
+    return {};
+  }
+
+  // Re-type the inherited schema-changing portable wrappers so a chain keeps its `SField` type. These
+  // are real METHOD overrides (not `declare` properties) so they stay method-bivariant — a property
+  // would be param-contravariant and break table-name covariance / record-id `default` (see below).
+  // Each just delegates to the SFieldBase body (which rebuilds a SField via the `rebuild` hook).
+  override optional(): SField<z.ZodOptional<S>, Flags> {
+    return super.optional() as SField<z.ZodOptional<S>, Flags>;
+  }
+  override nullable(): SField<z.ZodNullable<S>, Flags> {
+    return super.nullable() as SField<z.ZodNullable<S>, Flags>;
+  }
+  override default(value: z.input<S>): SField<z.ZodDefault<S>, Flags> {
+    return super.default(value) as SField<z.ZodDefault<S>, Flags>;
+  }
+  override prefault(value: z.input<S>): SField<z.ZodPrefault<S>, Flags> {
+    return super.prefault(value) as SField<z.ZodPrefault<S>, Flags>;
+  }
+  override catch(value: z.output<S>): SField<z.ZodCatch<S>, Flags> {
+    return super.catch(value) as SField<z.ZodCatch<S>, Flags>;
+  }
+  override array(): SField<z.ZodArray<S>, Flags> {
+    return super.array() as SField<z.ZodArray<S>, Flags>;
+  }
+  override nullish(): SField<z.ZodOptional<z.ZodNullable<S>>, Flags> {
+    return super.nullish() as SField<z.ZodOptional<z.ZodNullable<S>>, Flags>;
+  }
+  override or<F extends AnyField | z.ZodType>(
+    other: F,
+  ): SField<z.ZodUnion<[S, SchemaOf<F>]>> {
+    return super.or(other) as SField<z.ZodUnion<[S, SchemaOf<F>]>>;
+  }
+  override and<F extends AnyField | z.ZodType>(
+    other: F,
+  ): SField<z.ZodIntersection<S, SchemaOf<F>>> {
+    return super.and(other) as SField<z.ZodIntersection<S, SchemaOf<F>>>;
+  }
+  override readonly(): SField<z.ZodReadonly<S>, Flags> {
+    return super.readonly() as SField<z.ZodReadonly<S>, Flags>;
+  }
+  override transform<NewOut>(
+    fn: (arg: z.output<S>, ctx: z.core.$RefinementCtx<z.output<S>>) => NewOut,
+  ): SField<z.ZodPipe<S, z.ZodTransform<Awaited<NewOut>, z.output<S>>>, Flags> {
+    return super.transform(fn) as SField<
+      z.ZodPipe<S, z.ZodTransform<Awaited<NewOut>, z.output<S>>>,
+      Flags
+    >;
+  }
+  override pipe<T extends z.core.$ZodType<unknown, z.output<S>>>(
+    target: T,
+  ): SField<z.ZodPipe<S, T>, Flags> {
+    return super.pipe(target) as SField<z.ZodPipe<S, T>, Flags>;
+  }
+  override unwrap(): SField<InnerOf<S>, Flags> {
+    return super.unwrap() as unknown as SField<InnerOf<S>, Flags>;
   }
 
   // SurrealQL DDL metadata. $default/$defaultAlways mark the field create-optional;
