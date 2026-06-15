@@ -11,12 +11,22 @@
 
 import type { ResolvedConfig } from "../cli/config";
 import type { Diff } from "../cli/diff";
-import type { DefineStatement } from "../ddl";
 import type { Shape, StandaloneDef, TableDef } from "../pure";
 import type { PortableDb } from "./portable-ir";
 
-/** A single emitted DDL statement, structured (carries identity + the dialect `ddl` string). */
-export type Statement = DefineStatement;
+/**
+ * A single emitted DDL statement, structured: object identity (`kind`/`name`/`table`) + the dialect
+ * `ddl` string, plus an optional clause map (each value an `ALTER … <set>` form) for dialects that
+ * diff clause-level. `kind` is a dialect-defined string the orchestration treats opaquely — the
+ * SurrealDB `DefineStatement` (with its fixed kind union) is a structural subtype of this.
+ */
+export interface Statement {
+  kind: string;
+  name: string;
+  table?: string;
+  ddl: string;
+  clauses?: Record<string, string>;
+}
 
 /** Options for {@link Driver.emit} — mirrors the existing `DefineOptions` (e.g. IF NOT EXISTS). */
 export interface EmitOptions {

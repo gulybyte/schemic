@@ -18,7 +18,6 @@
 
 import type { ResolvedConfig } from "../cli/config";
 import type { Diff } from "../cli/diff";
-import type { DefineStatement } from "../ddl";
 import type {
   ApplyOptions,
   ConnectionOverrides,
@@ -233,7 +232,7 @@ function pgEmit(db: PortableDb, _opts?: EmitOptions): Statement[] {
   // All CREATE TABLEs first, then all FK constraints (so referenced tables already exist).
   const tables = [...db.tables].sort((a, b) => a.name.localeCompare(b.name));
   const stmts = tables.flatMap(emitTable);
-  const RANK: Record<DefineStatement["kind"], number> = {
+  const RANK: Record<string, number> = {
     table: 0,
     field: 1,
     index: 2,
@@ -241,7 +240,7 @@ function pgEmit(db: PortableDb, _opts?: EmitOptions): Statement[] {
     function: 4,
     access: 5,
   };
-  return [...stmts].sort((a, b) => RANK[a.kind] - RANK[b.kind]);
+  return [...stmts].sort((a, b) => (RANK[a.kind] ?? 9) - (RANK[b.kind] ?? 9));
 }
 
 /** DROP DDL for one Postgres object. (Postgres emits per-table, so objects are tables + FK constraints.) */

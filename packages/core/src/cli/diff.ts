@@ -1,8 +1,7 @@
 // The DIALECT-FREE diff DISPLAY + shared types. The SurrealDB statement-diff engine (buildSnapshot/
 // diffSnapshots/renderMigration) lives in `./surreal-diff` and is invoked through the driver; this
 // module is what the CLI shell uses to RENDER any driver's Diff (git-style file groups, word-diff,
-// unified patch, kind summaries). `DefineStatement["kind"]` is the only dialect type referenced.
-import type { DefineStatement } from "@schemic/core";
+// unified patch, kind summaries). Dialect-free: `kind` is an opaque string, not a Surreal kind union.
 import { colorEnabled, plural, style } from "./style";
 
 /**
@@ -14,7 +13,8 @@ import { colorEnabled, plural, style } from "./style";
 export type DiffItem = {
   key: string;
   table: string;
-  kind: DefineStatement["kind"];
+  /** Dialect-defined object kind (e.g. "table"/"field"/"index") — opaque to the display. */
+  kind: string;
   /** The source file this object lives in (or lived in, for a removal). Absent if unknown. */
   file?: string;
 } & (

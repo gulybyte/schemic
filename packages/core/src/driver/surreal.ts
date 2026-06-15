@@ -176,8 +176,10 @@ export const surrealDriver: Driver<Surreal> = {
   },
 
   // SurrealQL replaces in place (DEFINE … OVERWRITE) and removes with REMOVE … IF EXISTS — both
-  // non-destructive, so a changed field doesn't drop column data.
-  remove: (s) => removeStatement(s),
+  // non-destructive, so a changed field doesn't drop column data. The surreal driver only ever
+  // receives statements it emitted, so they ARE DefineStatements (the neutral Statement's `kind`
+  // string narrows back to the surreal kind union here).
+  remove: (s) => removeStatement(s as DefineStatement),
   overwrite: (s) => overwriteStatement(s.ddl),
 
   async introspect(conn: Surreal, exclude?: Set<string>): Promise<PortableDb> {
