@@ -7,7 +7,6 @@ import { getDriver } from "../driver";
 import { lowerDb } from "../driver/surreal-ir";
 import {
   type ConnectionOverrides,
-  connect,
   loadConfig,
   type ResolvedConfig,
 } from "./config";
@@ -74,6 +73,7 @@ import {
 } from "./schema";
 import type { DbStructured } from "./structure";
 import { fail, ok, plural, style } from "./style";
+import { connect } from "./surreal-connect";
 import { buildSnapshot } from "./surreal-diff";
 import { filterStructured } from "./surreal-filter";
 

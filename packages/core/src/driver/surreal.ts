@@ -11,13 +11,13 @@ import type {
   ConnectionOverrides as CfgOverrides,
   ResolvedConfig,
 } from "../cli/config";
-import { connect as surrealConnect } from "../cli/config";
 import type { Diff } from "../cli/diff";
 import { applyStatements, shadowStructured } from "../cli/introspect";
 import { schemaStruct } from "../cli/lower";
 import { deepEqual, normalizeDb } from "../cli/struct";
 import type { Snapshot } from "../cli/structure";
 import { introspectStructured, structuredSnapshot } from "../cli/structure";
+import { connect as surrealConnect } from "../cli/surreal-connect";
 import { diffSnapshots, renderMigration } from "../cli/surreal-diff";
 import {
   type DefineStatement,
