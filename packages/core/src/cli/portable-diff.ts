@@ -23,15 +23,14 @@ type Conn = unknown;
 const keyOf = (s: Statement) => `${s.kind}:${s.table ?? ""}:${s.name}`;
 
 export type PortableDiffItem =
-  | { op: "add"; key: string; ddl: string }
-  | { op: "change"; key: string; before: string; after: string }
-  | { op: "remove"; key: string; ddl: string };
+  | { op: "add"; key: string; stmt: Statement }
+  | { op: "change"; key: string; before: Statement; after: Statement }
+  | { op: "remove"; key: string; stmt: Statement };
 
 /**
  * A driver-neutral STRUCTURAL diff: emit both sides through the driver, key each statement by
  * `kind:table:name`, and compare per object — added / changed / removed. Dialect-free; works for any
- * driver. (Preview-level: `change`/`remove` show the desired/current DDL; turning these into ALTER/
- * DROP `up`/`down` is the next increment, once the Driver gains the change-vocabulary ops.)
+ * driver. Items carry the full {@link Statement} so {@link planPortable} can turn them into up/down.
  */
 export function diffPortable(
   driver: ReturnType<typeof getDriver>,
@@ -39,23 +38,48 @@ export function diffPortable(
   desired: PortableDb,
 ): PortableDiffItem[] {
   const index = (db: PortableDb) => {
-    const m = new Map<string, string>();
-    for (const s of driver.emit(driver.normalize(db))) m.set(keyOf(s), s.ddl);
+    const m = new Map<string, Statement>();
+    for (const s of driver.emit(driver.normalize(db))) m.set(keyOf(s), s);
     return m;
   };
   const cur = index(current);
   const des = index(desired);
   const items: PortableDiffItem[] = [];
-  for (const [key, ddl] of des) {
+  for (const [key, stmt] of des) {
     const before = cur.get(key);
-    if (before === undefined) items.push({ op: "add", key, ddl });
-    else if (before !== ddl)
-      items.push({ op: "change", key, before, after: ddl });
+    if (before === undefined) items.push({ op: "add", key, stmt });
+    else if (before.ddl !== stmt.ddl)
+      items.push({ op: "change", key, before, after: stmt });
   }
-  for (const [key, ddl] of cur) {
-    if (!des.has(key)) items.push({ op: "remove", key, ddl });
+  for (const [key, stmt] of cur) {
+    if (!des.has(key)) items.push({ op: "remove", key, stmt });
   }
   return items;
+}
+
+/**
+ * Turn a structural diff into executable `up`/`down` DDL via the driver's change-vocabulary:
+ * add -> create up / drop down; remove -> drop up / recreate down; change -> overwrite both ways.
+ */
+export function planPortable(
+  driver: ReturnType<typeof getDriver>,
+  items: PortableDiffItem[],
+): { up: string[]; down: string[] } {
+  const up: string[] = [];
+  const down: string[] = [];
+  for (const it of items) {
+    if (it.op === "add") {
+      up.push(it.stmt.ddl);
+      down.push(driver.remove(it.stmt));
+    } else if (it.op === "remove") {
+      up.push(driver.remove(it.stmt));
+      down.push(it.stmt.ddl);
+    } else {
+      up.push(driver.overwrite(it.after));
+      down.push(driver.overwrite(it.before));
+    }
+  }
+  return { up, down };
 }
 
 /**
@@ -84,9 +108,10 @@ export async function portableDiff(
   }
 
   const items = diffPortable(driver, live, desired);
+  const { up, down } = planPortable(driver, items);
 
   if (opts.json) {
-    console.log(JSON.stringify({ driver: driverName, items }));
+    console.log(JSON.stringify({ driver: driverName, up, down }));
     return;
   }
 
@@ -97,9 +122,10 @@ export async function portableDiff(
   }
   const line = (s: string) => (s.includes("\n") ? s : `  ${s}`);
   for (const it of items) {
-    if (it.op === "add") console.log(style.green(`+ ${line(it.ddl)}`));
-    else if (it.op === "remove") console.log(style.red(`- ${line(it.ddl)}`));
-    else console.log(style.yellow(`~ ${line(it.after)}`));
+    if (it.op === "add") console.log(style.green(`+ ${line(it.stmt.ddl)}`));
+    else if (it.op === "remove")
+      console.log(style.red(`- ${line(driver.remove(it.stmt))}`));
+    else console.log(style.yellow(`~ ${line(it.after.ddl)}`));
   }
   const n = (op: PortableDiffItem["op"]) =>
     items.filter((i) => i.op === op).length;

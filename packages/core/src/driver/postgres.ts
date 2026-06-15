@@ -242,6 +242,24 @@ function pgEmit(db: PortableDb, _opts?: EmitOptions): Statement[] {
   return [...stmts].sort((a, b) => RANK[a.kind] - RANK[b.kind]);
 }
 
+/** DROP DDL for one Postgres object. (Postgres emits per-table, so objects are tables + FK constraints.) */
+function pgRemove(s: Statement): string {
+  if (s.kind === "index" && s.table) {
+    // The FK-constraint statements pgEmit produces (ALTER TABLE … ADD CONSTRAINT).
+    return `ALTER TABLE ${escId(s.table)} DROP CONSTRAINT IF EXISTS ${escId(s.name)};`;
+  }
+  return `DROP TABLE IF EXISTS ${escId(s.name)} CASCADE;`;
+}
+
+/**
+ * Replace one Postgres object. Postgres has no in-place CREATE-OR-REPLACE for tables, so a changed
+ * table is drop+recreate (COARSE — destructive of row data). Per-column ALTERs are a future
+ * refinement once the portable diff tracks field-level changes for the pg driver.
+ */
+function pgOverwrite(s: Statement): string {
+  return `${pgRemove(s)}\n${s.ddl}`;
+}
+
 // --- introspect: information_schema -> portable IR ----------------------------------------------
 
 interface ColRow {
@@ -398,6 +416,8 @@ export const postgresDriver: Driver<PgConn> = {
   },
 
   emit: pgEmit,
+  remove: pgRemove,
+  overwrite: pgOverwrite,
   introspect: (conn, exclude) => pgIntrospect(conn, exclude),
   normalize: pgNormalize,
   equal: (a, b) => deepEqualJson(pgNormalize(a), pgNormalize(b)),

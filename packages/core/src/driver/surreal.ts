@@ -16,7 +16,11 @@ import { applyStatements, shadowStructured } from "../cli/introspect";
 import { schemaStruct } from "../cli/lower";
 import { deepEqual, normalizeDb } from "../cli/struct";
 import { introspectStructured, structuredSnapshot } from "../cli/structure";
-import { type DefineStatement, overwriteStatement } from "../ddl";
+import {
+  type DefineStatement,
+  overwriteStatement,
+  removeStatement,
+} from "../ddl";
 import type { Shape, StandaloneDef, TableDef } from "../pure";
 import type {
   ApplyOptions,
@@ -71,6 +75,11 @@ export const surrealDriver: Driver<Surreal> = {
     }
     return stmts;
   },
+
+  // SurrealQL replaces in place (DEFINE … OVERWRITE) and removes with REMOVE … IF EXISTS — both
+  // non-destructive, so a changed field doesn't drop column data.
+  remove: (s) => removeStatement(s),
+  overwrite: (s) => overwriteStatement(s.ddl),
 
   async introspect(conn: Surreal, exclude?: Set<string>): Promise<PortableDb> {
     return liftDb(await introspectStructured(conn, exclude));

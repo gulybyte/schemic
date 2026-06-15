@@ -73,6 +73,10 @@ export interface Driver<Conn = unknown> {
   lower(tables: TableDef<string, Shape>[], defs: StandaloneDef[]): PortableDb;
   /** Portable IR -> ordered DDL statements (a fresh apply / migration `up`). */
   emit(db: PortableDb, opts?: EmitOptions): Statement[];
+  /** DROP/REMOVE DDL for one object — `up` for a removed object, `down` for an added one. */
+  remove(statement: Statement): string;
+  /** ALTER/OVERWRITE DDL for one changed object (replace-in-place where the dialect can). */
+  overwrite(statement: Statement): string;
   /** Live connection -> portable IR (skipping `exclude`d tables). */
   introspect(conn: Conn, exclude?: Set<string>): Promise<PortableDb>;
   /** Portable IR -> canonical portable IR (deterministic; both lowerings converge here). */

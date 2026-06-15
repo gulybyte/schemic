@@ -2,7 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ResolvedConfig } from "../../src/cli/config";
-import { diffPortable, portableDiff } from "../../src/cli/portable-diff";
+import {
+  diffPortable,
+  planPortable,
+  portableDiff,
+} from "../../src/cli/portable-diff";
 import { surrealDriver } from "../../src/driver/surreal";
 import { defineTable, s } from "../../src/pure";
 
@@ -74,17 +78,18 @@ describe("sz diff --driver postgres (CLI portable path)", () => {
     );
     const parsed = JSON.parse(out) as {
       driver: string;
-      items: { op: string; ddl?: string; after?: string }[];
+      up: string[];
+      down: string[];
     };
     expect(parsed.driver).toBe("postgres");
-    const adds = parsed.items.filter((i) => i.op === "add");
-    expect(adds.length).toBeGreaterThan(0);
-    expect(parsed.items.some((i) => i.op === "remove")).toBe(false);
-    const ddl = adds.map((i) => i.ddl).join("\n");
+    expect(parsed.up.length).toBeGreaterThan(0);
+    const ddl = parsed.up.join("\n");
     expect(ddl).toContain('CREATE TABLE "user"');
     expect(ddl).toContain('"id" text PRIMARY KEY');
     expect(ddl).toContain('"age" integer'); // option<int> -> nullable column
     expect(ddl).toContain('"active" boolean NOT NULL');
+    // down rolls it back.
+    expect(parsed.down.join("\n")).toContain('DROP TABLE IF EXISTS "user"');
   });
 });
 
@@ -131,5 +136,22 @@ describe("diffPortable (driver-neutral structural diff)", () => {
       [],
     );
     expect(diffPortable(surrealDriver, db, db)).toEqual([]);
+  });
+
+  test("surreal: plan emits DEFINE up + REMOVE down for an added field", () => {
+    const cur = surrealDriver.lower(
+      [defineTable("user", { name: s.string() })],
+      [],
+    );
+    const des = surrealDriver.lower(
+      [defineTable("user", { name: s.string(), age: s.int().optional() })],
+      [],
+    );
+    const { up, down } = planPortable(
+      surrealDriver,
+      diffPortable(surrealDriver, cur, des),
+    );
+    expect(up.join("\n")).toContain("DEFINE FIELD age ON TABLE user");
+    expect(down.join("\n")).toMatch(/REMOVE FIELD.*age/);
   });
 });
