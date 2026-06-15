@@ -9,19 +9,15 @@
 // kind->PortableType swap graduates from spike to implementation).
 
 import { getDriver } from "../driver";
-// The dialect-free diff engine now lives in the driver layer; re-export so existing CLI/test
-// imports (`diffPortable`/`planPortable`) keep resolving here.
-import {
-  diffPortable,
-  type PortableDiffItem,
-  planPortable,
-} from "../driver/portable-diff";
 import type { PortableDb } from "../driver/portable-ir";
 import { surrealDriver } from "../driver/surreal";
 import type { ResolvedConfig } from "./config";
+import { type DiffItem, formatItems } from "./diff";
 import { loadDefs } from "./schema";
 import { ok, plural, style } from "./style";
 
+// The dialect-free diff engine lives in the driver layer; re-export so existing CLI/test imports
+// (`diffPortable`/`planPortable`) keep resolving here.
 export type { PortableDiffItem } from "../driver/portable-diff";
 export { diffPortable, planPortable } from "../driver/portable-diff";
 
@@ -53,28 +49,25 @@ export async function portableDiff(
     await closeQuietly(conn);
   }
 
-  const items = diffPortable(driver, live, desired);
-  const { up, down } = planPortable(driver, items);
+  // Route through the driver's own diff strategy (field-level where the driver supports it), so the
+  // `diff --driver` display matches exactly what `gen`/`migrate` would emit for that database.
+  const diff = driver.diff(live, desired);
 
   if (opts.json) {
-    console.log(JSON.stringify({ driver: driverName, up, down }));
+    console.log(
+      JSON.stringify({ driver: driverName, up: diff.up, down: diff.down }),
+    );
     return;
   }
 
   console.log(style.dim(`  driver: ${driverName}`));
-  if (!items.length) {
+  if (!diff.up.length) {
     console.log(ok("Schema is in sync with the target database."));
     return;
   }
-  const line = (s: string) => (s.includes("\n") ? s : `  ${s}`);
-  for (const it of items) {
-    if (it.op === "add") console.log(style.green(`+ ${line(it.stmt.ddl)}`));
-    else if (it.op === "remove")
-      console.log(style.red(`- ${line(driver.remove(it.stmt))}`));
-    else console.log(style.yellow(`~ ${line(it.after.ddl)}`));
-  }
-  const n = (op: PortableDiffItem["op"]) =>
-    items.filter((i) => i.op === op).length;
+  const items = diff.items ?? [];
+  console.log(formatItems(items));
+  const n = (op: DiffItem["op"]) => items.filter((i) => i.op === op).length;
   console.log(
     style.dim(
       `\n${plural(items.length, "change")} — ${n("add")} added, ${n("change")} changed, ${n("remove")} removed.`,

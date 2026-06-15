@@ -17,7 +17,7 @@
 //    no Postgres analogue and are dropped by `normalize` with no DDL emitted.
 
 import type { ResolvedConfig } from "../cli/config";
-import type { Diff } from "../cli/diff";
+import type { Diff, DiffItem } from "../cli/diff";
 import type {
   ApplyOptions,
   ConnectionOverrides,
@@ -29,7 +29,6 @@ import type {
 import { registerDriver } from "./driver";
 import type { PortableType, ScalarName } from "./portable";
 import { nullable } from "./portable";
-import { buildDiff } from "./portable-diff";
 import type { PortableDb, PortableField, PortableTable } from "./portable-ir";
 
 // A minimal structural view of a PGlite/node-postgres connection (so core needs no hard pg dep).
@@ -261,6 +260,212 @@ function pgOverwrite(s: Statement): string {
   return `${pgRemove(s)}\n${s.ddl}`;
 }
 
+// --- diff: FIELD-LEVEL Postgres DDL (ALTER TABLE), not whole-table drop+recreate ----------------
+
+/** A column definition body (`"name" type [NOT NULL]`) for ADD COLUMN / CREATE TABLE. */
+function colDef(f: PortableField): string {
+  const c = pgColumn(f.type);
+  return `${escId(f.name)} ${c.sql}${c.nullable ? "" : " NOT NULL"}`;
+}
+const fkName = (table: string, field: string) => `${table}_${field}_fkey`;
+const addColSql = (table: string, f: PortableField) =>
+  `ALTER TABLE ${escId(table)} ADD COLUMN ${colDef(f)};`;
+const dropColSql = (table: string, field: string) =>
+  `ALTER TABLE ${escId(table)} DROP COLUMN IF EXISTS ${escId(field)};`;
+const addFkSql = (table: string, field: string, ref: string) =>
+  `ALTER TABLE ${escId(table)} ADD CONSTRAINT ${escId(fkName(table, field))} FOREIGN KEY (${escId(field)}) REFERENCES ${escId(ref)} (${escId("id")});`;
+const dropFkSql = (table: string, field: string) =>
+  `ALTER TABLE ${escId(table)} DROP CONSTRAINT IF EXISTS ${escId(fkName(table, field))};`;
+const dropTableSql = (table: string) =>
+  `DROP TABLE IF EXISTS ${escId(table)} CASCADE;`;
+
+/** One ordered diff op: forward `up` DDL, the `down` DDL that undoes it (internal order preserved). */
+interface PgOp {
+  up: string[];
+  down: string[];
+  items: DiffItem[];
+}
+
+/**
+ * Field-level Postgres diff. Tables present on BOTH sides diff column-by-column into ALTER TABLE
+ * ADD/DROP/ALTER COLUMN — so adding a column no longer drops the table's rows (the old coarse
+ * drop+recreate). Whole tables added/removed still CREATE / DROP CASCADE. Ops are built in up-
+ * dependency order (all CREATEs before FKs; column drops/table drops last); `down` is the inverse
+ * run backwards (ops reversed, each op's own DDL inverted). A column TYPE change is best-effort —
+ * Postgres attempts the cast and an incompatible change surfaces at apply.
+ */
+function pgDiff(prev: PortableDb, next: PortableDb): Diff {
+  const a = pgNormalize(prev);
+  const b = pgNormalize(next);
+  const prevT = new Map(a.tables.map((t) => [t.name, t]));
+  const nextT = new Map(b.tables.map((t) => [t.name, t]));
+  const refOf = (f: PortableField) => pgColumn(f.type).references;
+
+  const ops: PgOp[] = [];
+  const add = (op: PgOp) => ops.push(op);
+
+  // 1) New tables: CREATE first (all of them), then their FKs — so a cross-table FK finds its target.
+  const newTables = b.tables.filter((t) => !prevT.has(t.name));
+  for (const t of newTables) {
+    const create = `CREATE TABLE ${escId(t.name)} (\n  ${[`${escId("id")} text PRIMARY KEY`, ...t.fields.map((f) => colDef(f))].join(",\n  ")}\n);`;
+    add({
+      up: [create],
+      down: [dropTableSql(t.name)],
+      items: [
+        {
+          op: "add",
+          key: `table:${t.name}:${t.name}`,
+          kind: "table",
+          table: t.name,
+          ddl: create,
+        },
+      ],
+    });
+  }
+  for (const t of newTables) {
+    for (const f of t.fields) {
+      const ref = refOf(f);
+      if (!ref) continue;
+      add({
+        up: [addFkSql(t.name, f.name, ref)],
+        down: [dropFkSql(t.name, f.name)],
+        items: [
+          {
+            op: "add",
+            key: `index:${t.name}:${fkName(t.name, f.name)}`,
+            kind: "index",
+            table: t.name,
+            ddl: addFkSql(t.name, f.name, ref),
+          },
+        ],
+      });
+    }
+  }
+
+  // 2) Tables on BOTH sides: column-level ALTERs.
+  for (const t of b.tables) {
+    const before = prevT.get(t.name);
+    if (!before) continue;
+    const beforeF = new Map(before.fields.map((f) => [f.name, f]));
+    const afterF = new Map(t.fields.map((f) => [f.name, f]));
+
+    // added columns (+ FK)
+    for (const f of t.fields) {
+      if (beforeF.has(f.name)) continue;
+      const ref = refOf(f);
+      const up = [
+        addColSql(t.name, f),
+        ...(ref ? [addFkSql(t.name, f.name, ref)] : []),
+      ];
+      add({
+        up,
+        down: [dropColSql(t.name, f.name)], // DROP COLUMN cascades to its FK
+        items: [
+          {
+            op: "add",
+            key: `field:${t.name}:${f.name}`,
+            kind: "field",
+            table: t.name,
+            ddl: addColSql(t.name, f),
+          },
+        ],
+      });
+    }
+
+    // changed columns (type and/or nullability)
+    for (const f of t.fields) {
+      const bf = beforeF.get(f.name);
+      if (!bf) continue;
+      const ca = pgColumn(f.type);
+      const cb = pgColumn(bf.type);
+      if (ca.sql === cb.sql && ca.nullable === cb.nullable) continue;
+      const upStmts: string[] = [];
+      const downStmts: string[] = [];
+      if (ca.sql !== cb.sql) {
+        upStmts.push(
+          `ALTER TABLE ${escId(t.name)} ALTER COLUMN ${escId(f.name)} TYPE ${ca.sql};`,
+        );
+        downStmts.push(
+          `ALTER TABLE ${escId(t.name)} ALTER COLUMN ${escId(f.name)} TYPE ${cb.sql};`,
+        );
+      }
+      if (ca.nullable !== cb.nullable) {
+        const setNull = (n: boolean) =>
+          `ALTER TABLE ${escId(t.name)} ALTER COLUMN ${escId(f.name)} ${n ? "DROP NOT NULL" : "SET NOT NULL"};`;
+        upStmts.push(setNull(ca.nullable));
+        downStmts.push(setNull(cb.nullable));
+      }
+      add({
+        up: upStmts,
+        down: downStmts,
+        items: [
+          {
+            op: "change",
+            key: `field:${t.name}:${f.name}`,
+            kind: "field",
+            table: t.name,
+            before: `${escId(f.name)} ${cb.sql}${cb.nullable ? "" : " NOT NULL"}`,
+            after: `${escId(f.name)} ${ca.sql}${ca.nullable ? "" : " NOT NULL"}`,
+          },
+        ],
+      });
+    }
+
+    // dropped columns (DROP COLUMN cascades to its FK; recreate adds the column back + FK on down)
+    for (const f of before.fields) {
+      if (afterF.has(f.name)) continue;
+      const ref = refOf(f);
+      add({
+        up: [dropColSql(t.name, f.name)],
+        down: [
+          addColSql(t.name, f),
+          ...(ref ? [addFkSql(t.name, f.name, ref)] : []),
+        ],
+        items: [
+          {
+            op: "remove",
+            key: `field:${t.name}:${f.name}`,
+            kind: "field",
+            table: t.name,
+            ddl: dropColSql(t.name, f.name),
+            old: addColSql(t.name, f),
+          },
+        ],
+      });
+    }
+  }
+
+  // 3) Removed tables: DROP CASCADE up / recreate (table then FKs) down.
+  for (const t of a.tables) {
+    if (nextT.has(t.name)) continue;
+    const create = `CREATE TABLE ${escId(t.name)} (\n  ${[`${escId("id")} text PRIMARY KEY`, ...t.fields.map((f) => colDef(f))].join(",\n  ")}\n);`;
+    const fks = t.fields
+      .map((f) => ({ f, ref: refOf(f) }))
+      .filter((x) => x.ref)
+      .map((x) => addFkSql(t.name, x.f.name, x.ref as string));
+    add({
+      up: [dropTableSql(t.name)],
+      down: [create, ...fks],
+      items: [
+        {
+          op: "remove",
+          key: `table:${t.name}:${t.name}`,
+          kind: "table",
+          table: t.name,
+          ddl: dropTableSql(t.name),
+          old: create,
+        },
+      ],
+    });
+  }
+
+  const up = ops.flatMap((o) => o.up);
+  // `down` undoes `up`: reverse the op order, each op contributing its own (internally-ordered) down.
+  const down = [...ops].reverse().flatMap((o) => o.down);
+  const items = ops.flatMap((o) => o.items);
+  return { up, down, items };
+}
+
 // --- introspect: information_schema -> portable IR ----------------------------------------------
 
 interface ColRow {
@@ -422,8 +627,7 @@ export const postgresDriver: Driver<PgConn> = {
   introspect: (conn, exclude) => pgIntrospect(conn, exclude),
   normalize: pgNormalize,
   equal: (a, b) => deepEqualJson(pgNormalize(a), pgNormalize(b)),
-  diff: (prev: PortableDb, next: PortableDb): Diff =>
-    buildDiff(postgresDriver as Driver<unknown>, prev, next),
+  diff: pgDiff,
 
   connect(
     config: ResolvedConfig,

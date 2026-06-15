@@ -103,4 +103,49 @@ describe("postgres driver (Milestone 4): real round-trip via PGlite", () => {
       await conn.close();
     }
   });
+
+  // g2 keystone: the field-level diff is NON-DESTRUCTIVE — adding a column is an ALTER TABLE ADD
+  // COLUMN, so existing rows survive (the old coarse drop+recreate would have wiped them).
+  test("adding a column via diff is non-destructive (existing rows survive)", async () => {
+    const driver = getDriver("postgres");
+    const conn = (await driver.connect({ db: { url: "" } } as never)) as PgConn;
+    try {
+      const base = liftDb(
+        schemaStruct([defineTable("user", { name: s.string() })], []),
+      );
+      await driver.apply(
+        conn,
+        driver.emit(base).map((s) => s.ddl),
+      );
+      await conn.exec(
+        `INSERT INTO "user" ("id", "name") VALUES ('u1', 'Ada');`,
+      );
+
+      // Author the same table with an added (nullable) column and migrate to it.
+      const next = liftDb(
+        schemaStruct(
+          [defineTable("user", { name: s.string(), age: s.int().optional() })],
+          [],
+        ),
+      );
+      const diff = driver.diff(base, next);
+      expect(diff.up.join("\n")).toContain("ADD COLUMN");
+      expect(diff.up.join("\n")).not.toContain("DROP TABLE");
+      await driver.apply(conn, diff.up);
+
+      // The pre-existing row is intact and the new column reads as NULL.
+      const { rows } = await conn.query<{
+        id: string;
+        name: string;
+        age: number | null;
+      }>(`SELECT "id", "name", "age" FROM "user";`);
+      expect(rows).toEqual([{ id: "u1", name: "Ada", age: null }]);
+
+      // And the migrated DB now matches the desired schema.
+      const live = await driver.introspect(conn);
+      expect(driver.equal(next, live)).toBe(true);
+    } finally {
+      await conn.close();
+    }
+  });
 });

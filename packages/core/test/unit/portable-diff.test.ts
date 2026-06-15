@@ -205,9 +205,9 @@ describe("driver.diff (portable IR -> up/down + display items)", () => {
     expect(diff.items?.length).toBeGreaterThan(0);
   });
 
-  // Dependency ordering (g2): dropping a table that has an FK must drop the constraint BEFORE the
-  // table on `up`, and the rollback must recreate the table BEFORE re-adding the constraint on `down`.
-  test("postgres: dropping an FK-bearing table orders up child-first, down parent-first", () => {
+  // Field-level pg diff (g2): dropping an FK-bearing table drops it with CASCADE on `up`, and the
+  // rollback recreates the table BEFORE re-adding its FK constraint on `down`.
+  test("postgres: dropping an FK-bearing table -> DROP CASCADE up, recreate table-before-FK down", () => {
     const prev = surrealDriver.lower(
       [
         defineTable("user", { name: s.string() }),
@@ -221,13 +221,8 @@ describe("driver.diff (portable IR -> up/down + display items)", () => {
     );
     const { up, down } = postgresDriver.diff(prev, next);
 
-    const upFk = up.findIndex((sql) => sql.includes("DROP CONSTRAINT"));
-    const upTable = up.findIndex((sql) =>
-      sql.includes('DROP TABLE IF EXISTS "post"'),
-    );
-    expect(upFk).toBeGreaterThanOrEqual(0);
-    expect(upTable).toBeGreaterThanOrEqual(0);
-    expect(upFk).toBeLessThan(upTable); // FK dropped before its table
+    // up: a single CASCADE drop handles the table and its FK (no separate DROP CONSTRAINT needed).
+    expect(up.join("\n")).toContain('DROP TABLE IF EXISTS "post" CASCADE');
 
     const downTable = down.findIndex((sql) =>
       sql.includes('CREATE TABLE "post"'),
@@ -236,6 +231,25 @@ describe("driver.diff (portable IR -> up/down + display items)", () => {
     expect(downTable).toBeGreaterThanOrEqual(0);
     expect(downFk).toBeGreaterThanOrEqual(0);
     expect(downTable).toBeLessThan(downFk); // table recreated before its FK
+  });
+
+  // The keystone of the field-level pg diff: adding a column is an ALTER TABLE ADD COLUMN, NOT a
+  // whole-table drop+recreate (which would destroy every row).
+  test("postgres: adding a column -> ALTER TABLE ADD COLUMN (no table drop)", () => {
+    const prev = surrealDriver.lower(
+      [defineTable("user", { name: s.string() })],
+      [],
+    );
+    const next = surrealDriver.lower(
+      [defineTable("user", { name: s.string(), age: s.int().optional() })],
+      [],
+    );
+    const { up, down } = postgresDriver.diff(prev, next);
+    expect(up.join("\n")).toContain('ALTER TABLE "user" ADD COLUMN "age"');
+    expect(up.join("\n")).not.toContain("DROP TABLE");
+    expect(down.join("\n")).toContain(
+      'ALTER TABLE "user" DROP COLUMN IF EXISTS "age"',
+    );
   });
 });
 
