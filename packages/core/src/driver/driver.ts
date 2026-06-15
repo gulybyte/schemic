@@ -184,6 +184,12 @@ export interface Driver<
   close(conn: Conn): Promise<void>;
 
   // --- optional capabilities -----------------------------------------------------------------
+  /**
+   * Upgrade a legacy (pre-portable) on-disk snapshot's stored state into the portable IR. Only the
+   * driver that authored the legacy format knows how to lift it (Surreal lifts its string-kind
+   * struct). Absent -> this driver can't read a legacy snapshot (it predates multi-driver anyway).
+   */
+  upgradeSnapshot?(legacy: unknown): PortableDb;
   readonly shadow?: ShadowCapability<Conn>;
   /** Apply-time migration bookkeeping. Absent -> this driver can't run migrations (diff/gen still do). */
   readonly migrations?: MigrationStore<Conn>;

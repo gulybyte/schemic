@@ -7,7 +7,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { liftDb, type PortableDb } from "../driver/portable-ir";
+import type { Driver } from "../driver";
+import type { PortableDb } from "../driver/portable-ir";
 
 // The legacy STATEMENT snapshot types (Snapshot/SnapshotStatement/EMPTY_SNAPSHOT) now live in
 // cli/structure.ts (the SurrealDB module that produces them) — this file is the NEUTRAL stored-
@@ -31,7 +32,8 @@ export interface StoredSnapshot {
 interface LegacySnapshotV1 {
   version: 1;
   statements?: Record<string, unknown>;
-  struct?: Parameters<typeof liftDb>[0];
+  /** The driver-private legacy struct (Surreal's string-kind IR) — opaque here; the driver lifts it. */
+  struct?: unknown;
 }
 
 /** A migration file on disk. The filename is the source of truth — there's no journal. */
@@ -58,26 +60,41 @@ function emptyStored(): StoredSnapshot {
 /** The empty STORED snapshot — used as `prev` for a `--baseline` generate (diff against nothing). */
 export const EMPTY_STORED: StoredSnapshot = emptyStored();
 
-/** Read the stored snapshot, upgrading a legacy v1 (statement) snapshot to the portable form. */
-export function readSnapshot(metaDir: string): StoredSnapshot {
+/**
+ * Read the stored snapshot, upgrading a legacy v1 (statement) snapshot to the portable form. A v1
+ * upgrade needs the `driver` (only it knows how to lift its legacy struct); v2 reads don't.
+ */
+export function readSnapshot(
+  metaDir: string,
+  driver?: Pick<Driver, "name" | "upgradeSnapshot">,
+): StoredSnapshot {
   const path = join(metaDir, SNAPSHOT_FILE);
   if (!existsSync(path)) return emptyStored();
   const raw = JSON.parse(readFileSync(path, "utf8")) as
     | StoredSnapshot
     | LegacySnapshotV1;
   if (raw.version === 2) return { files: {}, ...raw };
-  return upgradeV1(raw);
+  return upgradeV1(raw, driver);
 }
 
-/** Lift a v1 statement snapshot into the portable form (Surreal-only — v1 predates multi-driver). */
-function upgradeV1(v1: LegacySnapshotV1): StoredSnapshot {
-  if (v1.struct)
+/** Lift a v1 statement snapshot into the portable form via the driver's `upgradeSnapshot` hook. */
+function upgradeV1(
+  v1: LegacySnapshotV1,
+  driver?: Pick<Driver, "name" | "upgradeSnapshot">,
+): StoredSnapshot {
+  if (v1.struct) {
+    if (!driver?.upgradeSnapshot)
+      throw new Error(
+        "This snapshot predates the portable format and the active driver can't upgrade it. " +
+          "Run `schemic snapshot reset` then `schemic gen --baseline` to regenerate it.",
+      );
     return {
       version: 2,
-      driver: "surreal",
-      portable: liftDb(v1.struct),
+      driver: driver.name ?? "surreal",
+      portable: driver.upgradeSnapshot(v1.struct),
       files: {},
     };
+  }
   if (Object.keys(v1.statements ?? {}).length === 0) return emptyStored();
   throw new Error(
     "The migration snapshot predates the portable format and has no recorded Struct. " +

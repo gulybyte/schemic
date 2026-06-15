@@ -112,7 +112,9 @@ export async function planMigration(
   const { tables, defs, fileOf } = await loadDefs(config.schemaPath);
   const driver = getDriver(config.driver ?? "surreal");
   const next = buildStored(driver, tables, defs, { fileOf, root: config.root });
-  const prev = opts.baseline ? EMPTY_STORED : readSnapshot(config.metaDir);
+  const prev = opts.baseline
+    ? EMPTY_STORED
+    : readSnapshot(config.metaDir, driver);
   const diff = driver.diff(
     filterPortable(prev.portable, filter),
     filterPortable(next.portable, filter),
@@ -259,7 +261,7 @@ export async function baseline(
     files: disk.files,
   };
 
-  const prev = readSnapshot(config.metaDir);
+  const prev = readSnapshot(config.metaDir, driver);
   const diff = driver.diff(
     filterPortable(prev.portable, filter),
     pulledPortable,

@@ -29,11 +29,18 @@ export {
   union,
 } from "./portable";
 export type {
+  PortableAccess,
   PortableDb,
+  PortableEvent,
   PortableField,
+  PortableFunction,
+  PortableIndex,
+  PortablePermissions,
   PortableTable,
+  PortableTableKind,
 } from "./portable-ir";
-export { liftDb, lowerDb } from "./portable-ir";
+// liftDb/lowerDb are SURREAL lift/lower (not neutral IR) — they move to @schemic/surreal at the split.
+export { liftDb, lowerDb } from "./surreal-ir";
 // Registers the "postgres" driver as a side effect of import.
 export { type PgConn, postgresDriver } from "./postgres";
 export { emitSurqlType, parseSurqlType } from "./surql-type";

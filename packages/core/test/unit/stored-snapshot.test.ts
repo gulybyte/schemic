@@ -35,7 +35,8 @@ describe("readSnapshot v1 -> v2 read-compat", () => {
     // biome-ignore lint/suspicious/noExplicitAny: bridge the lib/src TableDef duality (see buildSnapshot).
     const v1 = buildSnapshot([User] as any, [], { withStruct: true });
     writeSnap({ version: 1, statements: v1.statements, struct: v1.struct });
-    const out = readSnapshot(META);
+    // v1 -> v2 upgrade is driver-owned now (only the driver can lift its legacy struct).
+    const out = readSnapshot(META, surrealDriver);
     expect(out.version).toBe(2);
     expect(out.driver).toBe("surreal");
     expect(out.portable.tables.map((t) => t.name)).toEqual(["user"]);

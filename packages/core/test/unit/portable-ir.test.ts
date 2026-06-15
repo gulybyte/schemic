@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { surql } from "surrealdb";
 import { schemaStruct } from "../../src/cli/lower";
-import { liftDb, lowerDb } from "../../src/driver/portable-ir";
+import { liftDb, lowerDb } from "../../src/driver/surreal-ir";
 import { defineTable, s } from "../../src/pure";
 
 // Milestone 2 PARITY ORACLE (the gate for flipping equality to structured deep-compare): lifting a

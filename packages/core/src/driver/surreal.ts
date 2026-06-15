@@ -37,7 +37,8 @@ import type {
 } from "./driver";
 import { registerDriver } from "./driver";
 import { keyOf } from "./portable-diff";
-import { liftDb, lowerDb, type PortableDb } from "./portable-ir";
+import type { PortableDb } from "./portable-ir";
+import { liftDb, lowerDb } from "./surreal-ir";
 
 /**
  * Re-derive the legacy (string-DDL) {@link Snapshot} from the portable IR, so the existing clause-
@@ -193,6 +194,11 @@ export const surrealDriver: Driver<
   normalize(db: PortableDb): PortableDb {
     // Reuse the canonicalizer that operates on string kinds: lower -> normalize -> lift.
     return liftDb(normalizeDb(lowerDb(db)));
+  },
+
+  // A legacy (v1) snapshot stored the SurrealQL string-kind struct — lift it to the portable IR.
+  upgradeSnapshot(legacy: unknown): PortableDb {
+    return liftDb(legacy as Parameters<typeof liftDb>[0]);
   },
 
   equal(a: PortableDb, b: PortableDb): boolean {

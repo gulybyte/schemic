@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { Command, Help, Option } from "commander";
 import type { Surreal } from "surrealdb";
 import { getDriver } from "../driver";
-import { lowerDb } from "../driver/portable-ir";
+import { lowerDb } from "../driver/surreal-ir";
 import {
   type ConnectionOverrides,
   connect,
@@ -512,7 +512,10 @@ kindFlags(
             } else {
               // Offline: the snapshot's recorded schema (Struct derived from the portable IR) vs the
               // current schema's Struct.
-              const prev = readSnapshot(config.metaDir);
+              const prev = readSnapshot(
+                config.metaDir,
+                getDriver(config.driver ?? "surreal"),
+              );
               const prevStruct = lowerDb(prev.portable);
               if (
                 !prevStruct.tables.length &&
