@@ -43,6 +43,52 @@ export interface ConnectionOverrides {
   authLevel?: string;
 }
 
+/** The direction a migration is applied in. */
+export type MigrationDirection = "up" | "down";
+
+/** A migration's bookkeeping identity, recorded in the migrations-tracking table. */
+export interface MigrationRecord {
+  tag: string;
+  file: string;
+  /** sha of the migration file at apply time (drift detection). */
+  checksum: string;
+}
+
+/**
+ * The apply-time, dialect-specific half of the migration runner. The orchestration (which
+ * migrations are pending, ordering, the lock-then-loop) stays driver-neutral in cli/migrate.ts;
+ * this capability owns the SQL: the tracking table, the applied-records, the advisory lock, and the
+ * atomic apply+record. A driver WITHOUT it can't run migrations (diff/gen still work). `Conn` is the
+ * driver's own connection type.
+ */
+export interface MigrationStore<Conn = unknown> {
+  /** Ensure the migrations-tracking table exists. */
+  ensure(conn: Conn, table: string): Promise<void>;
+  /** Applied migrations: tag -> checksum recorded at apply time. */
+  applied(conn: Conn, table: string): Promise<Map<string, string>>;
+  /**
+   * Apply one migration's `up`/`down` PROGRAM plus its bookkeeping write atomically: on `up` record
+   * the migration, on `down` erase it — so the record is written iff the DDL actually applied.
+   */
+  apply(
+    conn: Conn,
+    table: string,
+    m: {
+      content: string;
+      direction: MigrationDirection;
+      record: MigrationRecord;
+    },
+  ): Promise<void>;
+  /** Record a migration as applied WITHOUT running its DDL (baseline of an existing DB). */
+  record(conn: Conn, table: string, record: MigrationRecord): Promise<void>;
+  /** Drop all applied records (baseline-squash reconcile). */
+  clear(conn: Conn, table: string): Promise<void>;
+  /** Take an advisory lock so two runs can't race — throws if already held. */
+  lock(conn: Conn, table: string): Promise<void>;
+  /** Release the advisory lock (idempotent). */
+  unlock(conn: Conn, table: string): Promise<void>;
+}
+
 /**
  * An OPTIONAL throwaway-instance capability for round-trip canonicalization and `sz check`'s
  * migration replay. A driver WITHOUT this must provide a `normalize()` strong enough to canonicalize
@@ -96,8 +142,10 @@ export interface Driver<Conn = unknown> {
   connect(config: ResolvedConfig, over?: ConnectionOverrides): Promise<Conn>;
   apply(conn: Conn, statements: string[], opts?: ApplyOptions): Promise<void>;
 
-  // --- optional capability -------------------------------------------------------------------
+  // --- optional capabilities -----------------------------------------------------------------
   readonly shadow?: ShadowCapability<Conn>;
+  /** Apply-time migration bookkeeping. Absent -> this driver can't run migrations (diff/gen still do). */
+  readonly migrations?: MigrationStore<Conn>;
 }
 
 // --- Registry -----------------------------------------------------------------------------------

@@ -6,7 +6,7 @@
 // portable IR the diff core and every other driver speak. In the eventual package split this file
 // becomes `@surreal-zod/surreal`; for now it lives in core, clearly marked.
 
-import type { Surreal } from "surrealdb";
+import { escapeIdent, type Surreal } from "surrealdb";
 import type {
   ConnectionOverrides as CfgOverrides,
   ResolvedConfig,
@@ -29,6 +29,8 @@ import type {
   ConnectionOverrides,
   Driver,
   EmitOptions,
+  MigrationRecord,
+  MigrationStore,
   ShadowCapability,
   Statement,
 } from "./driver";
@@ -67,6 +69,85 @@ const shadow: ShadowCapability<Surreal> = {
     liftDb(normalizeDb(await shadowStructured(conn, config, ddl))),
   // `ephemeral` (full isolated instance for `sz check` replay) is intentionally not wired here —
   // `check` still uses its existing path. A later milestone routes it through this capability.
+};
+
+// --- migration bookkeeping (the apply-time SurrealQL, moved behind the driver) -------------------
+
+/** Record one applied migration: a `_migrations` row keyed by tag, with file + checksum + time. */
+const RECORD_SQL =
+  "CREATE type::record($tbl, $tag) CONTENT { tag: $tag, file: $file, checksum: $sum, applied_at: time::now() }";
+const recordVars = (table: string, r: MigrationRecord) => ({
+  tbl: table,
+  tag: r.tag,
+  file: r.file,
+  sum: r.checksum,
+});
+
+/** `DEFINE TABLE … SCHEMALESS` for an internal tracking table (migrations or its lock). */
+async function ensureTrackTable(conn: Surreal, table: string): Promise<void> {
+  await conn.query(
+    `DEFINE TABLE IF NOT EXISTS ${escapeIdent(table)} TYPE NORMAL SCHEMALESS PERMISSIONS NONE;`,
+  );
+}
+
+const lockTableOf = (table: string) => `${table}_lock`;
+
+const migrations: MigrationStore<Surreal> = {
+  ensure: ensureTrackTable,
+
+  async applied(conn, table) {
+    const [rows] = await conn.query<[{ tag: string; checksum: string }[]]>(
+      "SELECT tag, checksum FROM type::table($tbl)",
+      { tbl: table },
+    );
+    return new Map((rows ?? []).map((r) => [r.tag, r.checksum]));
+  },
+
+  // SurrealDB is natively transactional — run the migration program + its bookkeeping write in one
+  // BEGIN/COMMIT so the record is written iff the DDL applied. `$direction` drives the up/down branch.
+  async apply(conn, table, { content, direction, record }) {
+    const bookkeep =
+      direction === "up"
+        ? { sql: RECORD_SQL, vars: recordVars(table, record) }
+        : {
+            sql: "DELETE type::record($tbl, $tag)",
+            vars: { tbl: table, tag: record.tag },
+          };
+    await conn.query(`BEGIN;\n${content}\n${bookkeep.sql};\nCOMMIT;`, {
+      direction,
+      ...bookkeep.vars,
+    });
+  },
+
+  async record(conn, table, record) {
+    await ensureTrackTable(conn, table);
+    await conn.query(RECORD_SQL, recordVars(table, record));
+  },
+
+  async clear(conn, table) {
+    await conn.query("DELETE type::table($tbl)", { tbl: table });
+  },
+
+  async lock(conn, table) {
+    const tbl = lockTableOf(table);
+    await ensureTrackTable(conn, tbl);
+    try {
+      await conn.query(
+        "CREATE type::record($tbl, 'lock') CONTENT { at: time::now() }",
+        { tbl },
+      );
+    } catch {
+      throw new Error(
+        "Migrations are locked — another run is in progress. If it's stale, run `schemic unlock`.",
+      );
+    }
+  },
+
+  async unlock(conn, table) {
+    await conn.query("DELETE type::record($tbl, 'lock')", {
+      tbl: lockTableOf(table),
+    });
+  },
 };
 
 export const surrealDriver: Driver<Surreal> = {
@@ -142,6 +223,7 @@ export const surrealDriver: Driver<Surreal> = {
   },
 
   shadow,
+  migrations,
 };
 
 registerDriver(surrealDriver as Driver<unknown>);

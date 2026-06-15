@@ -5,6 +5,9 @@ export type {
   ConnectionOverrides,
   Driver,
   EmitOptions,
+  MigrationDirection,
+  MigrationRecord,
+  MigrationStore,
   ShadowCapability,
   Statement,
 } from "./driver";

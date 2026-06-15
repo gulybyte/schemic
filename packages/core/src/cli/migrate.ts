@@ -6,8 +6,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { escapeIdent, type Surreal } from "surrealdb";
-import { type Driver, getDriver } from "../driver";
+import type { Surreal } from "surrealdb";
+import { type Driver, getDriver, type MigrationStore } from "../driver";
 import type { Shape, StandaloneDef, TableDef } from "../pure";
 import type { ResolvedConfig } from "./config";
 import { makeJiti } from "./config";
@@ -57,6 +57,16 @@ function buildStored(
     if (abs) files[d.kind === "event" ? d.table : d.name] = rel(abs);
   }
   return { version: 2, driver: driver.name, portable, files };
+}
+
+/** The driver's apply-time migration bookkeeping (the dialect SQL behind `migrate`/`rollback`/…). */
+function migStore(config: ResolvedConfig): MigrationStore<unknown> {
+  const driver = getDriver(config.driver ?? "surreal");
+  if (!driver.migrations)
+    throw new Error(
+      `The "${driver.name}" driver does not support running migrations.`,
+    );
+  return driver.migrations;
 }
 
 /** Decorate diff items with their source file (from the snapshot `files` maps; driver leaves it unset). */
@@ -200,16 +210,11 @@ async function recordApplied(
   config: ResolvedConfig,
   m: PreparedMigration,
 ): Promise<void> {
-  await ensureMigrationsTable(db, config.migrationsTable);
-  await db.query(
-    "CREATE type::record($tbl, $tag) CONTENT { tag: $tag, file: $file, checksum: $sum, applied_at: time::now() }",
-    {
-      tbl: config.migrationsTable,
-      tag: m.tag,
-      file: m.file,
-      sum: checksum(m.content),
-    },
-  );
+  await migStore(config).record(db, config.migrationsTable, {
+    tag: m.tag,
+    file: m.file,
+    checksum: checksum(m.content),
+  });
 }
 
 /**
@@ -293,93 +298,14 @@ export async function reconcileBaseline(
   prepared: PreparedMigration,
   drift: boolean,
 ): Promise<"applied" | "pending"> {
-  await ensureMigrationsTable(db, config.migrationsTable);
+  const mig = migStore(config);
+  await mig.ensure(db, config.migrationsTable);
   if (drift) return "pending";
   // DB == schema: the squashed objects already exist, so wipe the stale tags and mark the baseline
   // applied rather than re-running its DDL.
-  await db.query("DELETE type::table($tbl)", { tbl: config.migrationsTable });
+  await mig.clear(db, config.migrationsTable);
   await recordApplied(db, config, prepared);
   return "applied";
-}
-
-/** `DEFINE TABLE … SCHEMALESS` for the internal migrations-tracking table. */
-async function ensureMigrationsTable(
-  db: Surreal,
-  table: string,
-): Promise<void> {
-  await db.query(
-    `DEFINE TABLE IF NOT EXISTS ${escapeIdent(table)} TYPE NORMAL SCHEMALESS PERMISSIONS NONE;`,
-  );
-}
-
-/** Applied migrations recorded in the DB, as `tag -> checksum-at-apply-time`. */
-async function appliedRecords(
-  db: Surreal,
-  table: string,
-): Promise<Map<string, string>> {
-  const [rows] = await db.query<[{ tag: string; checksum: string }[]]>(
-    "SELECT tag, checksum FROM type::table($tbl)",
-    { tbl: table },
-  );
-  return new Map((rows ?? []).map((r) => [r.tag, r.checksum]));
-}
-
-const lockTable = (config: ResolvedConfig) => `${config.migrationsTable}_lock`;
-
-/** Take an advisory lock so two `migrate`/`rollback` runs can't race. Throws if already held. */
-async function acquireLock(db: Surreal, config: ResolvedConfig): Promise<void> {
-  const tbl = lockTable(config);
-  await db.query(
-    `DEFINE TABLE IF NOT EXISTS ${escapeIdent(tbl)} TYPE NORMAL SCHEMALESS PERMISSIONS NONE;`,
-  );
-  try {
-    await db.query(
-      "CREATE type::record($tbl, 'lock') CONTENT { at: time::now() }",
-      { tbl },
-    );
-  } catch {
-    throw new Error(
-      "Migrations are locked — another run is in progress. If it's stale, run `schemic unlock`.",
-    );
-  }
-}
-
-async function releaseLock(db: Surreal, config: ResolvedConfig): Promise<void> {
-  await db.query("DELETE type::record($tbl, 'lock')", {
-    tbl: lockTable(config),
-  });
-}
-
-/** Manually clear a stale migration lock. */
-export async function unlock(
-  db: Surreal,
-  config: ResolvedConfig,
-): Promise<void> {
-  await releaseLock(db, config);
-}
-
-/** A bookkeeping write applied together with the migration (so they commit atomically). */
-interface Bookkeep {
-  sql: string;
-  vars: Record<string, unknown>;
-}
-
-/**
- * Run one migration's `up` or `down` plus its bookkeeping write in a single `BEGIN/COMMIT`, so
- * the migration is recorded iff it actually applied.
- */
-async function applyMigration(
-  db: Surreal,
-  config: ResolvedConfig,
-  m: Migration,
-  direction: Direction,
-  bookkeep: Bookkeep,
-): Promise<void> {
-  const sql = readFileSync(join(config.migrationsDir, m.file), "utf8");
-  await db.query(`BEGIN;\n${sql}\n${bookkeep.sql};\nCOMMIT;`, {
-    direction,
-    ...bookkeep.vars,
-  });
 }
 
 export interface MigrateResult {
@@ -393,6 +319,14 @@ function indexOfTag(migrations: Migration[], tag: string): number {
   return i;
 }
 
+/** Manually clear a stale migration lock. */
+export async function unlock(
+  db: Surreal,
+  config: ResolvedConfig,
+): Promise<void> {
+  await migStore(config).unlock(db, config.migrationsTable);
+}
+
 /**
  * Apply pending migrations in order — all, the next `count`, or up to and including `to`.
  * Takes an advisory lock so concurrent runs can't race.
@@ -402,9 +336,11 @@ export async function migrate(
   config: ResolvedConfig,
   opts: { count?: number; to?: string } = {},
 ): Promise<MigrateResult> {
-  await ensureMigrationsTable(db, config.migrationsTable);
+  const mig = migStore(config);
+  const table = config.migrationsTable;
+  await mig.ensure(db, table);
   const migrations = listMigrations(config.migrationsDir);
-  const applied = await appliedRecords(db, config.migrationsTable);
+  const applied = await mig.applied(db, table);
   let pending = migrations.filter((m) => !applied.has(m.tag));
   if (opts.to) {
     const targetIdx = indexOfTag(migrations, opts.to);
@@ -414,21 +350,18 @@ export async function migrate(
   if (opts.count !== undefined)
     pending = pending.slice(0, Math.max(0, opts.count));
 
-  await acquireLock(db, config);
+  await mig.lock(db, table);
   try {
     for (const m of pending) {
-      await applyMigration(db, config, m, "up", {
-        sql: "CREATE type::record($tbl, $tag) CONTENT { tag: $tag, file: $file, checksum: $sum, applied_at: time::now() }",
-        vars: {
-          tbl: config.migrationsTable,
-          tag: m.tag,
-          file: m.file,
-          sum: currentChecksum(config, m),
-        },
+      const content = readFileSync(join(config.migrationsDir, m.file), "utf8");
+      await mig.apply(db, table, {
+        content,
+        direction: "up",
+        record: { tag: m.tag, file: m.file, checksum: checksum(content) },
       });
     }
   } finally {
-    await releaseLock(db, config);
+    await mig.unlock(db, table);
   }
   return { applied: pending };
 }
@@ -455,8 +388,9 @@ export async function status(
   db: Surreal,
   config: ResolvedConfig,
 ): Promise<StatusRow[]> {
-  await ensureMigrationsTable(db, config.migrationsTable);
-  const applied = await appliedRecords(db, config.migrationsTable);
+  const mig = migStore(config);
+  await mig.ensure(db, config.migrationsTable);
+  const applied = await mig.applied(db, config.migrationsTable);
   const files = listMigrations(config.migrationsDir);
   const fileTags = new Set(files.map((m) => m.tag));
   const rows: StatusRow[] = files.map((m) => {
@@ -483,9 +417,11 @@ export async function rollback(
   config: ResolvedConfig,
   opts: { count?: number; to?: string } = {},
 ): Promise<Migration[]> {
-  await ensureMigrationsTable(db, config.migrationsTable);
+  const mig = migStore(config);
+  const table = config.migrationsTable;
+  await mig.ensure(db, table);
   const migrations = listMigrations(config.migrationsDir);
-  const applied = await appliedRecords(db, config.migrationsTable);
+  const applied = await mig.applied(db, table);
   const appliedMigrations = migrations.filter((m) => applied.has(m.tag));
 
   let toRevert: Migration[];
@@ -499,16 +435,18 @@ export async function rollback(
     toRevert = appliedMigrations.slice(-(opts.count ?? 1)).reverse();
   }
 
-  await acquireLock(db, config);
+  await mig.lock(db, table);
   try {
     for (const m of toRevert) {
-      await applyMigration(db, config, m, "down", {
-        sql: "DELETE type::record($tbl, $tag)",
-        vars: { tbl: config.migrationsTable, tag: m.tag },
+      const content = readFileSync(join(config.migrationsDir, m.file), "utf8");
+      await mig.apply(db, table, {
+        content,
+        direction: "down",
+        record: { tag: m.tag, file: m.file, checksum: checksum(content) },
       });
     }
   } finally {
-    await releaseLock(db, config);
+    await mig.unlock(db, table);
   }
   return toRevert;
 }
