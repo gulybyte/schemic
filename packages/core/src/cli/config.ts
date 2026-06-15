@@ -120,9 +120,7 @@ export async function loadConfig(opts?: {
     ? resolve(cwd, opts.config)
     : CONFIG_NAMES.map((n) => resolve(cwd, n)).find((p) => existsSync(p));
   if (!path || !existsSync(path)) {
-    throw new Error(
-      "No schemic.config.ts found — run `schemic init` first.",
-    );
+    throw new Error("No schemic.config.ts found — run `schemic init` first.");
   }
 
   const root = dirname(path);
