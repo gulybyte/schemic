@@ -3,8 +3,8 @@
 // the surrealdb SDK and belongs to @schemic/surrealdb at the physical split.
 
 import type { ConnectionOverrides, ResolvedConfig } from "@schemic/core";
-import type { AuthLevel } from "@schemic/core/config";
 import { escapeIdent, Surreal } from "surrealdb";
+import type { AuthLevel, SurrealParams } from "../config";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -36,13 +36,14 @@ export async function connect(
   config: ResolvedConfig,
   over: ConnectionOverrides = {},
 ): Promise<Surreal> {
-  const url = over.url ?? config.db.url;
-  const namespace = over.namespace ?? config.db.namespace;
-  const database = over.database ?? config.db.database;
-  const username = over.username ?? config.db.username;
-  const password = over.password ?? config.db.password;
+  const params = config.params as unknown as SurrealParams;
+  const url = over.url ?? params.url;
+  const namespace = over.namespace ?? params.namespace;
+  const database = over.database ?? params.database;
+  const username = over.username ?? params.username;
+  const password = over.password ?? params.password;
   const level: AuthLevel = (over.authLevel ??
-    config.db.authLevel ??
+    params.authLevel ??
     "root") as AuthLevel;
 
   const db = new Surreal();
