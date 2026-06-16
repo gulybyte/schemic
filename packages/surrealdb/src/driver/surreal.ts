@@ -29,6 +29,7 @@ import {
   spawnEphemeralServer,
   surrealBinaryAvailable,
 } from "../cli/engine";
+import { initScaffold } from "../cli/scaffold";
 import {
   applyStatements,
   diffAgainstDb,
@@ -319,6 +320,10 @@ export const surrealDriver: Driver<
     }
     return `SurrealDB ${v}`;
   },
+
+  // The files `schemic init` scaffolds for a fresh SurrealDB project (connections-only config + sample
+  // s.* schema + seed + .env.example); the CLI writes them and adds the neutral migration snapshot.
+  initScaffold,
 
   // `check`: replay every migration into a throwaway engine and diff the result against the schema.
   // Owns ephemeral-engine selection — an embedded @surrealdb/node instance, an ephemeral server from
