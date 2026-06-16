@@ -4,12 +4,9 @@ import { createInterface } from "node:readline/promises";
 import {
   actionLabel,
   applyPull,
-  type ConnectionOverrides,
-  loadConfig as coreLoadConfig,
   type Diff,
   type DiffItem,
   type Driver,
-  driverNames,
   duplicateTables,
   EMPTY_STORED,
   existingTables,
@@ -42,6 +39,13 @@ import {
 import { Command, Help, Option } from "commander";
 import { init } from "./init";
 import {
+  collectArg,
+  ensureDriver,
+  type ResolveOpts,
+  resolveOne,
+  resolveTargets,
+} from "./resolve";
+import {
   baseline,
   clearMigrationFiles,
   commitMigration,
@@ -57,56 +61,32 @@ import {
 } from "./migrate";
 import { portableDiff } from "./portable-diff";
 
-/**
- * Dynamically load + register a database driver by name. Drivers are separate packages
- * (`@schemic/<name>`) that self-register with the core registry on import; the CLI itself contains
- * no dialect code and discovers the driver from the project's `driver` config at runtime.
- */
-async function ensureDriver(name: string): Promise<void> {
-  if (driverNames().includes(name)) return;
-  const pkg = `@schemic/${name}`;
-  try {
-    await import(pkg);
-  } catch (e) {
-    throw new Error(
-      `could not load the "${name}" database driver (package ${pkg}). Install it (e.g. \`bun add ${pkg}\`).\n  ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
-  if (!driverNames().includes(name))
-    throw new Error(`package ${pkg} did not register a "${name}" driver.`);
-}
-
-/** Load config AND ensure its driver package is loaded/registered — every command starts here. */
-async function loadConfig(opts: { config?: string }): Promise<ResolvedConfig> {
-  const config = await coreLoadConfig(opts);
-  await ensureDriver(config.driver ?? "surrealdb");
-  return config;
-}
-
-/** The driver configured for this project (the `driver` field, defaulting to surreal). */
+/** The driver a resolved connection uses (its package is loaded by the resolution engine). */
 const activeDriver = (config: ResolvedConfig): Driver<unknown> =>
-  getDriver(config.driver ?? "surrealdb");
+  getDriver(config.driver);
 
-interface CommonOpts extends ConnectionOverrides {
-  config?: string;
-}
+type CommonOpts = ResolveOpts;
 
 /**
- * Load config, connect via the configured driver, run, and always close the handle. The connection
- * is OPAQUE here (`db: unknown`) — the orchestration only ever hands it back to the SAME driver
- * (into a driver capability), so the CLI body never names a dialect's connection type.
+ * Resolve the addressed connection(s), connect each via its driver, run, and always close. With
+ * `--all` (or a `--connection <name>` collection) this fans out over every target, printing a
+ * `[connection]` header per run. The connection is OPAQUE here (`db: unknown`) — the orchestration
+ * only ever hands it back to the SAME driver, so the CLI body never names a dialect's connection type.
  */
 async function withDb(
   opts: CommonOpts,
   fn: (db: unknown, config: ResolvedConfig) => Promise<void>,
 ): Promise<void> {
-  const config = await loadConfig({ config: opts.config });
-  const driver = getDriver(config.driver ?? "surrealdb");
-  const db = await driver.connect(config, opts);
-  try {
-    await fn(db, config);
-  } finally {
-    await driver.close(db);
+  const targets = await resolveTargets(opts);
+  for (const config of targets) {
+    if (targets.length > 1) console.log(style.bold(`\n[${config.connection}]`));
+    const driver = getDriver(config.driver);
+    const db = await driver.connect(config, opts);
+    try {
+      await fn(db, config);
+    } finally {
+      await driver.close(db);
+    }
   }
 }
 
@@ -264,6 +244,17 @@ const configFlag = (cmd: Command): Command =>
 
 const dbFlags = (cmd: Command): Command =>
   configFlag(cmd)
+    .option(
+      "--connection <name>",
+      "target a specific connection (or <name>:<key> within a collection)",
+    )
+    .option("--all", "run against every connection (collections fanned out)")
+    .option(
+      "--arg <key=value>",
+      "value passed to connection resolvers (repeatable)",
+      collectArg,
+      [],
+    )
     .option("--url <url>", "override the connection endpoint")
     .option("--namespace <ns>", "override the namespace")
     .option("--database <db>", "override the database")
@@ -395,7 +386,7 @@ kindFlags(
         },
     ) => {
       run(async () => {
-        const config = await loadConfig({ config: opts.config });
+        const config = await resolveOne(opts);
         const driverName = opts.driver ?? config.driver ?? "surrealdb";
         await ensureDriver(driverName);
         const driver = getDriver(driverName);
@@ -594,7 +585,7 @@ const genAction = (
     FilterOpts & { yes?: boolean; baseline?: boolean; force?: boolean },
 ) => {
   run(async () => {
-    const config = await loadConfig({ config: opts.config });
+    const config = await resolveOne(opts);
     const filter = parseFilter(opts);
     // A baseline regenerates the WHOLE schema from an empty snapshot; existing migrations would
     // clash (they already created those objects), so a baseline must REPLACE them. With --force (or
@@ -716,7 +707,7 @@ configFlag(
     ),
 ).action((opts: CommonOpts) => {
   run(async () => {
-    const config = await loadConfig({ config: opts.config });
+    const config = await resolveOne(opts);
     writeSnapshot(config.metaDir, EMPTY_STORED);
     console.log(ok("Snapshot cleared."));
     const existing = listMigrations(config.migrationsDir);
@@ -821,7 +812,7 @@ dbFlags(
     ),
 ).action((opts: CommonOpts & { schema?: boolean }) => {
   run(async () => {
-    const config = await loadConfig({ config: opts.config });
+    const config = await resolveOne(opts);
     const driver = activeDriver(config);
 
     // 1. Static validation (no connection): no duplicate tables, schemas parse.
@@ -869,7 +860,7 @@ dbFlags(
     .description("Print resolved config and test the connection"),
 ).action((opts: CommonOpts) => {
   run(async () => {
-    const config = await loadConfig({ config: opts.config });
+    const config = await resolveOne(opts);
     const row = (k: string, v: string) =>
       console.log(style.dim(`  ${k.padEnd(11)} ${v}`));
     console.log(style.bold("Project"));
@@ -963,7 +954,7 @@ configFlag(
     .description("Scaffold a blank, hand-written .surql migration"),
 ).action((name: string, opts: CommonOpts) => {
   run(async () => {
-    const config = await loadConfig({ config: opts.config });
+    const config = await resolveOne(opts);
     const { file } = newMigration(config, name);
     console.log(
       `${ok(file)}  ${style.dim("— edit it, then `schemic migrate`")}`,
@@ -1000,7 +991,7 @@ kindFlags(
       FilterOpts & { prune?: boolean; dryRun?: boolean; watch?: boolean },
   ) => {
     run(async () => {
-      const config = await loadConfig({ config: opts.config });
+      const config = await resolveOne(opts);
       const driver = activeDriver(config);
       const filter = parseFilter(opts);
       const diffLive = driver.diffLive;
