@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Diff, ResolvedConfig } from "@schemic/core";
+import type { SurrealParams } from "../config";
 import {
   type Filter,
   listMigrations,
@@ -57,7 +58,7 @@ async function applyToShadow(
   shadowDb: string,
   ddl: string,
 ): Promise<Snapshot> {
-  const { namespace, database } = config.db;
+  const { namespace, database } = config.params as unknown as SurrealParams;
   await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(shadowDb)};`);
   await db.query(`DEFINE DATABASE ${escapeIdent(shadowDb)};`);
   try {
@@ -80,7 +81,7 @@ export async function shadowStructured(
   config: ResolvedConfig,
   ddl: string,
 ): Promise<DbStructured> {
-  const { namespace, database } = config.db;
+  const { namespace, database } = config.params as unknown as SurrealParams;
   await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(SHADOW_DB)};`);
   await db.query(`DEFINE DATABASE ${escapeIdent(SHADOW_DB)};`);
   try {
@@ -128,7 +129,7 @@ async function replayMigrations(
   shadowDb: string,
   onApply?: (tag: string) => void,
 ): Promise<Snapshot> {
-  const { namespace, database } = config.db;
+  const { namespace, database } = config.params as unknown as SurrealParams;
   await db.query(`REMOVE DATABASE IF EXISTS ${escapeIdent(shadowDb)};`);
   await db.query(`DEFINE DATABASE ${escapeIdent(shadowDb)};`);
   try {

@@ -9,28 +9,19 @@ import {
   connectionEntry,
   type ResolveContext,
 } from "@schemic/core/driver";
-
-/** SurrealDB signin scope (mirrors `surreal sql --auth-level`). Defaults to `root`. */
-export type SurrealAuthLevel = "root" | "namespace" | "database";
+import type { SurrealZodCheck, SurrealZodConnection } from "./config";
 
 /**
  * A SurrealDB connection's config: the dialect-neutral base (`schema`, optional `key`/`migrations`)
- * plus the SurrealDB-specific connection params. Read env yourself in a resolver if you need it —
- * there is no implicit `SURREAL_*` magic.
+ * plus the SurrealDB-specific connection params and the optional `check` replay config. Read env
+ * yourself in a resolver if you need it — there is no implicit `SURREAL_*` magic. The resolution engine
+ * strips the neutral base; the surreal half (url/namespace/…/check) lands in `ResolvedConfig.params`.
  */
-export interface SurrealConnectionConfig extends ConnectionConfigBase {
-  /** Server RPC endpoint, e.g. `ws://127.0.0.1:8000/rpc` or `https://db.example.com`. */
-  url: string;
-  /** Namespace to `USE`. */
-  namespace: string;
-  /** Database to `USE`. */
-  database: string;
-  /** Auth user (omit for anonymous / no signin). */
-  username?: string;
-  /** Password paired with `username`. */
-  password?: string;
-  /** Signin scope; defaults to `root`. */
-  authLevel?: SurrealAuthLevel;
+export interface SurrealConnectionConfig
+  extends ConnectionConfigBase,
+    SurrealZodConnection {
+  /** `schemic check` overrides — e.g. a dedicated scratch connection for the migration replay. */
+  check?: SurrealZodCheck;
 }
 
 /**

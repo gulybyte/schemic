@@ -1,7 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:net";
-import type { SurrealZodCheckEmbedded } from "@schemic/core/config";
 import { escapeIdent, Surreal } from "surrealdb";
+import type { SurrealZodCheckEmbedded } from "../config";
 
 /** Pick a free localhost TCP port by binding to :0 and reading it back. */
 function freePort(): Promise<number> {

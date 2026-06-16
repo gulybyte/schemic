@@ -23,6 +23,7 @@ import type {
 } from "@schemic/core";
 import { keyOf, registerDriver } from "@schemic/core";
 import { escapeIdent, type Surreal } from "surrealdb";
+import type { SurrealParams } from "../config";
 import {
   connectEmbedded,
   spawnEphemeralServer,
@@ -324,10 +325,12 @@ export const surrealDriver: Driver<
   // the local `surreal` binary, or a configured scratch server — and the replay never touches the
   // real database. Progress lines go to `log`; the empty/non-empty diff is reported by the caller.
   async checkReplay(config, over, filter, log) {
-    const engine = config.checkEngine;
+    const params = config.params as unknown as SurrealParams;
+    const check = params.check;
+    const engine = check?.engine ?? "auto";
     const useBinary =
       engine === "binary" ||
-      (engine === "auto" && surrealBinaryAvailable(config.checkBinary));
+      (engine === "auto" && surrealBinaryAvailable(check?.binary));
     if (engine === "binary" && !useBinary) {
       throw new Error(
         'check.engine "binary" needs the `surreal` CLI on PATH (or set `check.binary`). Run `schemic check --schema` to skip the replay.',
@@ -342,29 +345,29 @@ export const surrealDriver: Driver<
       db = embedded.db;
       checkCfg = {
         ...config,
-        db: {
+        params: {
           url: embedded.url,
           namespace: "check",
           database: "check",
           authLevel: "root",
-        },
+        } satisfies SurrealParams,
       };
       cleanup = embedded.stop;
       log(
         `  replaying on an ${embedded.url} SurrealDB (@surrealdb/node) — no server, your data untouched`,
       );
     } else if (useBinary) {
-      const server = await spawnEphemeralServer(config.checkBinary);
+      const server = await spawnEphemeralServer(check?.binary);
       checkCfg = {
         ...config,
-        db: {
+        params: {
           url: server.url,
           namespace: "check",
           database: "check",
           username: server.username,
           password: server.password,
           authLevel: "root",
-        },
+        } satisfies SurrealParams,
       };
       db = await surrealConnect(checkCfg, {});
       cleanup = async () => {
@@ -375,7 +378,9 @@ export const surrealDriver: Driver<
         "  replaying on an ephemeral in-memory SurrealDB (local `surreal` binary) — your server is untouched",
       );
     } else {
-      checkCfg = { ...config, db: config.checkDb };
+      // Scratch connection for the `remote` engine: check.db merged over the connection's own params.
+      const remote: SurrealParams = { ...params, ...(check?.db ?? {}) };
+      checkCfg = { ...config, params: remote as unknown as Record<string, unknown> };
       try {
         db = await surrealConnect(checkCfg, over as CfgOverrides);
       } catch (e) {
@@ -387,7 +392,7 @@ export const surrealDriver: Driver<
         await db.close().catch(() => {});
       };
       log(
-        `  replaying on ${config.checkDb.url} (${config.checkDb.namespace}) — isolated scratch databases; your data is untouched`,
+        `  replaying on ${remote.url} (${remote.namespace}) — isolated scratch databases; your data is untouched`,
       );
     }
 
