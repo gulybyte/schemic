@@ -141,7 +141,11 @@ Everything *object-kind-specific* moves to the drivers.
    - **Grouping (`DEFINE INDEX` right after its `DEFINE TABLE`) is a separate READABILITY pass**, not
      correctness. Model it with an optional `owner(portable): Ref` (a field/index/event's table) and
      cluster owned objects next to their owner *within* what the topo order permits — but correctness can
-     force a function ahead of a table (the event case), so grouping yields to the graph.
+     force a function ahead of a table (the event case), so grouping yields to the graph. **Proven** in
+     the POC (Kahn's sort, owner-preference among ready nodes): it emits
+     `user → user_email → post → post_author → fmt → audit` — each index right after its table, `post`
+     after `user` (FK), and `fn::fmt` before `audit` (its event). Exactly the drawn layout, correctness
+     intact.
    - This is also the backlog's "edge-aware dependency topo-sort across definable types" — the registry
      forces us to finally solve it properly, once, for every kind.
 2. **Snapshot format v2 → v3.** `PortableDb` fixed slots → `{ kinds: Record<string, PortableObject[]> }`.
