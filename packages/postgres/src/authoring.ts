@@ -12,7 +12,7 @@
 //  - DX FIRST: native types + `$`-methods ($default/$check/$generated/$identity/$unique/$primaryKey/
 //    $references/$comment) + the full Zod wrapper/passthrough chain, all type-preserving.
 
-import { SFieldBase } from "@schemic/core/authoring";
+import { type AnyField, SFieldBase, toZod } from "@schemic/core/authoring";
 import * as z from "zod";
 
 // --- PgMeta: the pg-native metadata bag carried on every field ----------------------------------
@@ -147,8 +147,12 @@ const mk = (
   params?: (string | number)[],
 ): PgField => new PgField(schema, { pg: params ? { type, params } : { type } });
 
-/** The Postgres authoring namespace. Native pg types + the `$postgres` escape hatch. */
+/** The Postgres authoring namespace. Zod drop-ins (string/number/…) + native pg types + `$postgres`. */
 export const s = {
+  // Zod drop-ins (the canonical superset; each maps to a sensible pg default). Native aliases below
+  // (text/varchar/int/numeric/…) give precise control.
+  string: () => mk("text", z.string()),
+  number: () => mk("double precision", z.number()),
   // text
   text: () => mk("text", z.string()),
   varchar: (n?: number) =>
@@ -208,8 +212,22 @@ export const s = {
           : "text",
       z.literal(value),
     ),
-  // object -> jsonb (opaque on disk)
-  object: <T extends z.ZodRawShape>(shape: T) => mk("jsonb", z.object(shape)),
+  // object -> jsonb (opaque on disk). Accepts field OR raw-Zod values (a Zod drop-in superset).
+  object: (shape: Record<string, AnyField | z.ZodType>) =>
+    mk(
+      "jsonb",
+      z.object(
+        Object.fromEntries(
+          Object.entries(shape).map(([k, v]) => [k, toZod(v)]),
+        ),
+      ),
+    ),
+  // array(elem) -> `<elem>[]`; carries the element's pg metadata so it lowers to an array of that type.
+  array: (elem: AnyField | z.ZodType): PgField =>
+    new PgField(
+      z.array(toZod(elem)),
+      elem instanceof PgField ? elem.native : {},
+    ),
   // foreign key: `text` column + FK to `table(id)`
   references: (
     table: string,
