@@ -131,3 +131,18 @@ export type {
   PortableTable,
   PortableTableKind,
 } from "./driver/portable-ir";
+// --- kind registry (core-v2) — generic, open object kinds (docs/kind-registry.md) -------------
+export {
+  type Definable,
+  emitKinds,
+  introspectKinds,
+  type KindEngine,
+  type KindPlan,
+  KindRegistry,
+  type KindSpec,
+  type OrderNode,
+  orderObjects,
+  type PortableObject,
+  planKinds,
+  type Ref,
+} from "./kind";

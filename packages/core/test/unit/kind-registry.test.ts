@@ -1,0 +1,296 @@
+// Slice 1 of core-v2 (docs/kind-registry.md): prove the generic kind registry + spine reproduce the
+// fixed-slot engine's behavior, with NO driver dependency. A throwaway in-test "driver" registers
+// THREE kinds against one KindRegistry — `table` (structured, field-level diff), `index` (owned,
+// clustered after its table), and `function` (opaque/native) — and we assert:
+//   - the builder passthrough keeps each kind's own DX (shape-based table, chained function);
+//   - planKinds produces exactly the hand-written up/down DDL for add / change / remove (parity);
+//   - field-level diff happens INSIDE the table kind's overwrite;
+//   - cross-kind ordering is the dependency graph: an index follows its table, an FK child follows its
+//     parent, and a function emits BEFORE the table whose event calls it (the case an ordinal gets
+//     wrong) — exactly the ordering POC's proven output, now through the real planKinds;
+//   - drops reverse the order; down recreates parent-first;
+//   - introspect fans out across kinds off one connection.
+
+import { describe, expect, test } from "bun:test";
+import {
+  emitKinds,
+  introspectKinds,
+  type KindEngine,
+  KindRegistry,
+  orderObjects,
+  planKinds,
+  type Ref,
+} from "../../src/kind";
+
+// --- a throwaway driver: three kinds on one registry --------------------------------------------
+
+interface PField {
+  name: string;
+  type: string;
+}
+interface PTable {
+  kind: "table";
+  name: string;
+  fields: PField[];
+  deps: Ref[]; // FK parents / functions an event calls
+}
+interface PIndex {
+  kind: "index";
+  name: string;
+  table: string;
+  cols: string[];
+}
+interface PFunction {
+  kind: "function";
+  name: string;
+  body: string;
+}
+
+const registry = new KindRegistry();
+
+// kind 1 (ordinal 0): table — shape-based authoring, field-level diff in `overwrite`.
+const tableEngine: KindEngine<PTable, PTable> = {
+  lower: (t) => t,
+  emit: (t) => [
+    `DEFINE TABLE ${t.name}`,
+    ...t.fields.map(
+      (f) => `DEFINE FIELD ${f.name} ON ${t.name} TYPE ${f.type}`,
+    ),
+  ],
+  remove: (t) => [`REMOVE TABLE ${t.name}`],
+  overwrite: (prev, next) => {
+    const before = new Map(prev.fields.map((f) => [f.name, f.type]));
+    const after = new Map(next.fields.map((f) => [f.name, f.type]));
+    const lines: string[] = [];
+    for (const [n, t] of after)
+      if (!before.has(n))
+        lines.push(`DEFINE FIELD ${n} ON ${next.name} TYPE ${t}`);
+      else if (before.get(n) !== t)
+        lines.push(`ALTER FIELD ${n} ON ${next.name} TYPE ${t}`);
+    for (const [n] of before)
+      if (!after.has(n)) lines.push(`REMOVE FIELD ${n} ON ${next.name}`);
+    return lines;
+  },
+  deps: (t) => t.deps,
+};
+const defineTable = registry.define({
+  name: "table",
+  build: (name: string, fields: PField[], opts?: { deps?: Ref[] }): PTable => ({
+    kind: "table",
+    name,
+    fields,
+    deps: opts?.deps ?? [],
+  }),
+  ...tableEngine,
+});
+
+// kind 2 (ordinal 1): index — owned by its table (clusters after it), depends on it.
+const indexEngine: KindEngine<PIndex, PIndex> = {
+  lower: (i) => i,
+  emit: (i) => [
+    `DEFINE INDEX ${i.name} ON ${i.table} FIELDS ${i.cols.join(", ")}`,
+  ],
+  remove: (i) => [`REMOVE INDEX ${i.name} ON ${i.table}`],
+  deps: (i) => [{ kind: "table", name: i.table }],
+  owner: (i) => ({ kind: "table", name: i.table }),
+};
+const defineIndex = registry.define({
+  name: "index",
+  build: (name: string, table: string, cols: string[]): PIndex => ({
+    kind: "index",
+    name,
+    table,
+    cols,
+  }),
+  ...indexEngine,
+});
+
+// kind 3 (ordinal 2): function — opaque/native, multi-stage chained authoring.
+const functionEngine: KindEngine<PFunction, PFunction> = {
+  lower: (f) => f,
+  emit: (f) => [`DEFINE FUNCTION fn::${f.name} { ${f.body} }`],
+  remove: (f) => [`REMOVE FUNCTION fn::${f.name}`],
+  // no `overwrite` -> the spine recreates (remove + emit), the opaque-kind default.
+};
+const defineFunction = registry.define({
+  name: "function",
+  build: (name: string) => ({
+    body: (sql: string): PFunction => ({ kind: "function", name, body: sql }),
+  }),
+  ...functionEngine,
+});
+
+// --- builder DX (the passthrough keeps each kind's own authoring shape) --------------------------
+
+describe("createKind preserves each kind's authoring DX", () => {
+  test("shape-based table builder returns a typed table def", () => {
+    const user = defineTable("user", [{ name: "name", type: "string" }]);
+    expect(user.kind).toBe("table");
+    expect(user.name).toBe("user");
+    expect(user.fields).toEqual([{ name: "name", type: "string" }]);
+  });
+
+  test("chained function builder threads through `.body(...)`", () => {
+    const fmt = defineFunction("fmt").body("RETURN $v");
+    expect(fmt).toEqual({ kind: "function", name: "fmt", body: "RETURN $v" });
+  });
+});
+
+// --- parity: planKinds reproduces hand-written fixed-slot DDL ------------------------------------
+
+describe("planKinds parity (add / change / remove)", () => {
+  test("adding a field -> DEFINE up, REMOVE down (field-level diff in the table kind)", () => {
+    const prev = [defineTable("user", [{ name: "name", type: "string" }])];
+    const next = [
+      defineTable("user", [
+        { name: "name", type: "string" },
+        { name: "age", type: "int" },
+      ]),
+    ];
+    const { up, down } = planKinds(registry, prev, next);
+    expect(up).toEqual(["DEFINE FIELD age ON user TYPE int"]);
+    expect(down).toEqual(["REMOVE FIELD age ON user"]);
+  });
+
+  test("changing a field type -> ALTER both ways", () => {
+    const prev = [defineTable("user", [{ name: "age", type: "int" }])];
+    const next = [defineTable("user", [{ name: "age", type: "float" }])];
+    const { up, down } = planKinds(registry, prev, next);
+    expect(up).toEqual(["ALTER FIELD age ON user TYPE float"]);
+    expect(down).toEqual(["ALTER FIELD age ON user TYPE int"]);
+  });
+
+  test("removing a table -> REMOVE up, full recreate down (table before its fields)", () => {
+    const prev = [
+      defineTable("user", [{ name: "name", type: "string" }]),
+      defineTable("post", [{ name: "title", type: "string" }]),
+    ];
+    const next = [defineTable("user", [{ name: "name", type: "string" }])];
+    const { up, down } = planKinds(registry, prev, next);
+    expect(up).toEqual(["REMOVE TABLE post"]);
+    expect(down).toEqual([
+      "DEFINE TABLE post",
+      "DEFINE FIELD title ON post TYPE string",
+    ]);
+  });
+
+  test("an opaque function change recreates (remove + emit), no overwrite", () => {
+    const prev = [defineFunction("fmt").body("RETURN 1")];
+    const next = [defineFunction("fmt").body("RETURN 2")];
+    const { up, down } = planKinds(registry, prev, next);
+    expect(up).toEqual([
+      "REMOVE FUNCTION fn::fmt",
+      "DEFINE FUNCTION fn::fmt { RETURN 2 }",
+    ]);
+    expect(down).toEqual([
+      "REMOVE FUNCTION fn::fmt",
+      "DEFINE FUNCTION fn::fmt { RETURN 1 }",
+    ]);
+  });
+
+  test("identical schemas plan to nothing", () => {
+    const db = [
+      defineTable("user", [{ name: "name", type: "string" }]),
+      defineFunction("fmt").body("RETURN 1"),
+    ];
+    expect(planKinds(registry, db, db)).toEqual({ up: [], down: [] });
+  });
+});
+
+// --- cross-kind ordering: the graph, not an ordinal ---------------------------------------------
+
+const headers = (ddl: string[]) =>
+  ddl.filter((l) => /^DEFINE (TABLE|INDEX|FUNCTION)/.test(l));
+
+describe("cross-kind dependency ordering", () => {
+  // The ordering POC's scenario, now driven through the real planKinds:
+  //   user, user_email(idx), post(FK->user), post_author(idx), fmt(fn), audit(event calls fn::fmt)
+  const schema = () => [
+    defineTable("user", [{ name: "name", type: "string" }]),
+    defineIndex("user_email", "user", ["name"]),
+    defineTable("post", [{ name: "title", type: "string" }], {
+      deps: [{ kind: "table", name: "user" }],
+    }),
+    defineIndex("post_author", "post", ["title"]),
+    defineFunction("fmt").body("RETURN $v"),
+    defineTable("audit", [{ name: "at", type: "string" }], {
+      deps: [{ kind: "function", name: "fmt" }],
+    }),
+  ];
+
+  test("emit order matches the proven layout (index after table, FK order, fn before its table)", () => {
+    const up = emitKinds(registry, schema());
+    expect(headers(up)).toEqual([
+      "DEFINE TABLE user",
+      "DEFINE INDEX user_email ON user FIELDS name",
+      "DEFINE TABLE post",
+      "DEFINE INDEX post_author ON post FIELDS title",
+      "DEFINE FUNCTION fn::fmt { RETURN $v }",
+      "DEFINE TABLE audit",
+    ]);
+  });
+
+  test("dropping the whole schema reverses the order (children/FKs first, fn after its table)", () => {
+    const { up } = planKinds(registry, schema(), []);
+    expect(up.filter((l) => /^REMOVE (TABLE|INDEX|FUNCTION)/.test(l))).toEqual([
+      "REMOVE TABLE audit",
+      "REMOVE FUNCTION fn::fmt",
+      "REMOVE INDEX post_author ON post",
+      "REMOVE TABLE post",
+      "REMOVE INDEX user_email ON user",
+      "REMOVE TABLE user",
+    ]);
+  });
+
+  test("a dependency cycle is a named error", () => {
+    const a = defineTable("a", [], { deps: [{ kind: "table", name: "b" }] });
+    const b = defineTable("b", [], { deps: [{ kind: "table", name: "a" }] });
+    expect(() => planKinds(registry, [], [a, b])).toThrow(/cycle/);
+  });
+});
+
+describe("orderObjects (the graph primitive in isolation)", () => {
+  test("an external dep (object not in the set) is not a constraint", () => {
+    const nodes = [
+      { kind: "index", name: "i", deps: [{ kind: "table", name: "gone" }] },
+    ];
+    expect(orderObjects(nodes, () => 0).map((n) => n.name)).toEqual(["i"]);
+  });
+});
+
+// --- introspect fan-out -------------------------------------------------------------------------
+
+describe("introspectKinds fans out across kinds off one connection", () => {
+  test("each introspectable kind contributes its objects; others are skipped", async () => {
+    const reg = new KindRegistry();
+    reg.define({
+      name: "table",
+      build: (name: string): PTable => ({
+        kind: "table",
+        name,
+        fields: [],
+        deps: [],
+      }),
+      lower: (t: PTable) => t,
+      emit: () => [],
+      remove: () => [],
+      introspect: async () => [
+        { kind: "table", name: "user", fields: [], deps: [] } as PTable,
+      ],
+    });
+    reg.define({
+      name: "function",
+      build: (name: string): PFunction => ({
+        kind: "function",
+        name,
+        body: "",
+      }),
+      lower: (f: PFunction) => f,
+      emit: () => [],
+      remove: () => [],
+      // no `introspect` -> contributes nothing.
+    });
+    const found = await introspectKinds(reg, /* conn */ {});
+    expect(found.map((o) => `${o.kind}:${o.name}`)).toEqual(["table:user"]);
+  });
+});
