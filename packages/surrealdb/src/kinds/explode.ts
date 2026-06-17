@@ -24,6 +24,7 @@ import { normalizeDb } from "../cli/struct";
 import type {
   DbStructured,
   StructAccess,
+  StructAnalyzer,
   StructFunction,
   StructTable,
 } from "../cli/structure";
@@ -94,8 +95,19 @@ export function fromStructured(db: DbStructured): SurrealPortable[] {
     out.push({ kind: "table", name: st.name, head, fields, deps, struct: st });
   }
 
-  for (const s of of("index"))
-    out.push({ kind: "index", name: s.name, table: s.table ?? "", stmt: s });
+  for (const s of of("index")) {
+    // A FULLTEXT index depends on its analyzer (so the analyzer emits first); all indexes -> their table.
+    const deps: Ref[] = [{ kind: "table", name: s.table ?? "" }];
+    const ft = /FULLTEXT ANALYZER (\S+)/.exec(s.ddl);
+    if (ft) deps.push({ kind: "analyzer", name: ft[1] });
+    out.push({
+      kind: "index",
+      name: s.name,
+      table: s.table ?? "",
+      stmt: s,
+      deps,
+    });
+  }
   for (const s of of("event"))
     out.push({
       kind: "event",
@@ -129,6 +141,12 @@ export function fromStructured(db: DbStructured): SurrealPortable[] {
         native,
       });
   }
+  const anByName = new Map(db.analyzers.map((a) => [a.name, a]));
+  for (const s of of("analyzer")) {
+    const native = anByName.get(s.name);
+    if (native)
+      out.push({ kind: "analyzer", name: s.name, stmt: s, deps: [], native });
+  }
 
   return out;
 }
@@ -140,12 +158,14 @@ export function toStructured(objects: SurrealPortable[]): DbStructured {
   const tables: StructTable[] = [];
   const functions: StructFunction[] = [];
   const accesses: StructAccess[] = [];
+  const analyzers: StructAnalyzer[] = [];
   for (const o of objects) {
     if (o.kind === "table") tables.push(o.struct);
     else if (o.kind === "function") functions.push(o.native);
     else if (o.kind === "access") accesses.push(o.native);
+    else if (o.kind === "analyzer") analyzers.push(o.native);
   }
-  return { tables, functions, accesses };
+  return { tables, functions, accesses, analyzers };
 }
 
 /**

@@ -32,6 +32,7 @@ describe("renderPerFile", () => {
     ],
     functions: [],
     accesses: [],
+    analyzers: [],
   };
 
   test("renders one module per object, keyed by file path", () => {
@@ -86,6 +87,7 @@ describe("renderPerFile", () => {
       ],
       functions: [],
       accesses: [],
+      analyzers: [],
     };
     const out = renderPerFile(withDefaults, (_k, n) => `${n}.ts`).get(
       "thing.ts",
@@ -134,6 +136,7 @@ describe("renderPerFile", () => {
       ],
       functions: [],
       accesses: [],
+      analyzers: [],
     };
     const out =
       renderPerFile(withRef, (_k, n) => `${n}.ts`).get("comment.ts") ?? "";
@@ -173,6 +176,7 @@ describe("pull reverses native codecs / string formats", () => {
       ],
       functions: [],
       accesses: [],
+      analyzers: [],
     };
     return renderPerFile(db, (_k, n) => `${n}.ts`).get("t.ts") ?? "";
   };

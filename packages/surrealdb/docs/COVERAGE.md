@@ -96,7 +96,7 @@ live parity suites (`test/parity/{struct,live,canonical}-parity.test.ts`) and th
 - [x] `COMMENT <string>` — `table.index(name, fields, { comment })`
 - [x] vector `HNSW DIMENSION … [DIST/TYPE/EFC/M]` — `table.index(name, [field], { hnsw: {…} })` (defaults stripped → round-trips)
 - [x] vector `DISKANN DIMENSION … [DIST/TYPE/DEGREE/L_BUILD/ALPHA]` — `table.index(name, [field], { diskann: {…} })`
-- [~] `FULLTEXT ANALYZER … [BM25] [HIGHLIGHTS]` (full-text) — `table.index(name, [field], { fulltext: {…} })`; needs `defineAnalyzer` (in progress)
+- [x] `FULLTEXT ANALYZER … [BM25] [HIGHLIGHTS]` (full-text) — `table.index(name, [field], { fulltext: { analyzer, bm25?, highlights? } })` (with `defineAnalyzer`; default BM25 stripped → round-trips)
 - [n/a] index build hints `CONCURRENTLY` / `DEFER` — apply-time only; not part of the stored schema (`INFO` doesn't return them)
 
 ## Events
@@ -129,7 +129,7 @@ live parity suites (`test/parity/{struct,live,canonical}-parity.test.ts`) and th
 
 - [ ] `DEFINE PARAM`
 - [ ] `DEFINE SEQUENCE`
-- [ ] `DEFINE ANALYZER` (standalone — also blocks full-text indexes above)
+- [x] `DEFINE ANALYZER TOKENIZERS … [FILTERS …]` — `defineAnalyzer(name, { tokenizers, filters? })` (its own kind; a FULLTEXT index `deps` on it)
 - [ ] `DEFINE USER`
 - [ ] `DEFINE CONFIG` / `DEFINE API` / `DEFINE BUCKET` / `DEFINE MODEL`
 - [n/a] `DEFINE NAMESPACE` / `DEFINE DATABASE` — managed at connect time, not part of the schema
@@ -169,7 +169,8 @@ This is where the honesty lives — projections, redactions, and emit-but-don't-
 | Tables (schema mode, type, perms, changefeed, comment, drop, relations, views) | `[x]` — full `DEFINE TABLE` head |
 | Field types (scalars, geometry, containers, records, literals, unions, tuples, optionality) | `[x]` — range/regex `[ ]`, object-unions/open-maps `[~]` |
 | Field clauses (default/value/computed/assert/readonly/comment/flexible/permissions/reference) | `[x]` |
-| Indexes (plain, unique, composite, count) | `[x]` — full-text/vector/modifiers `[ ]` |
+| Indexes (plain, unique, composite, count, COMMENT, vector HNSW/DISKANN, full-text) | `[x]` — full `DEFINE INDEX` (modifiers CONCURRENTLY/DEFER n/a) |
+| Analyzers (`DEFINE ANALYZER`) | `[x]` |
 | Events | `[x]` — `ASYNC` `[ ]` |
 | Functions | `[x]` (body-format caveat) |
 | Access/Auth (RECORD) | `[x]` |

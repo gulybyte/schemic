@@ -29,7 +29,14 @@ import { diffSnapshots } from "../cli/surreal-diff";
 import type { DefineStatement } from "../ddl";
 import { overwriteStatement, removeStatement } from "../ddl";
 import { explodeSchema } from "./explode";
-import type { PAccess, PEvent, PFunction, PIndex, PTable } from "./portable";
+import type {
+  PAccess,
+  PAnalyzer,
+  PEvent,
+  PFunction,
+  PIndex,
+  PTable,
+} from "./portable";
 
 /** Statement key matching the legacy engine's `keyOf` (`kind:table:name`). */
 const keyOf = (s: Pick<DefineStatement, "kind" | "name" | "table">) =>
@@ -75,7 +82,8 @@ const indexEngine: KindEngine<PIndex, PIndex> = {
   remove: (i) => [removeStatement(i.stmt)],
   // No `overwrite` -> the spine recreates (remove + emit): `REMOVE INDEX … ; DEFINE INDEX …`,
   // exactly the legacy `changeUp` for an index (ALTER INDEX can't change fields/kind).
-  deps: (i) => [{ kind: "table", name: i.table }],
+  // -> its table (owner) + a FULLTEXT index's analyzer (so the analyzer emits first).
+  deps: (i) => i.deps,
   owner: (i) => ({ kind: "table", name: i.table }),
 };
 
@@ -114,6 +122,17 @@ const accessEngine: KindEngine<PAccess, PAccess> = {
   deps: (a) => a.deps,
 };
 
+// --- analyzer: db-level OPAQUE kind (a FULLTEXT index depends on it) -----------------------------
+
+const analyzerEngine: KindEngine<PAnalyzer, PAnalyzer> = {
+  lower: (a) => a,
+  emit: (a) => [a.stmt.ddl],
+  remove: (a) => [removeStatement(a.stmt)],
+  // DEFINE ANALYZER OVERWRITE in place.
+  overwrite: (_prev, next) => [overwriteStatement(next.stmt.ddl)],
+  deps: (a) => a.deps,
+};
+
 /**
  * The SurrealDB driver's kind registry. Registration order == kind ordinal (the tie-break among
  * objects with no dependency relation): table < index < event < function < access. Correctness is the
@@ -137,6 +156,11 @@ surrealKinds.define({
   name: "access",
   build: (a: PAccess) => a,
   ...accessEngine,
+});
+surrealKinds.define({
+  name: "analyzer",
+  build: (a: PAnalyzer) => a,
+  ...analyzerEngine,
 });
 
 /** Author -> portable via the registry: explode tables/defs into per-kind objects, then lower each. */

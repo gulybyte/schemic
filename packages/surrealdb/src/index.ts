@@ -59,6 +59,7 @@ export {
 } from "./ddl";
 export { surrealDriver } from "./driver/surreal";
 export type {
+  AnalyzerConfig,
   App,
   Create,
   DiskannOptions,
@@ -76,7 +77,9 @@ export type {
 } from "./pure";
 export {
   AccessDef,
+  AnalyzerDef,
   defineAccess,
+  defineAnalyzer,
   defineEvent,
   defineFunction,
   defineRelation,

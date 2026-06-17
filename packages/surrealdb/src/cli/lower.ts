@@ -20,6 +20,7 @@ import {
 } from "../ddl";
 import type {
   AccessDef,
+  AnalyzerDef,
   FieldPermissions,
   FunctionDef,
   PermOp,
@@ -35,6 +36,7 @@ import { normalizeDb } from "./struct";
 import type {
   DbStructured,
   StructAccess,
+  StructAnalyzer,
   StructEvent,
   StructField,
   StructFunction,
@@ -318,13 +320,25 @@ function lowerAccess(a: AccessDef): StructAccess {
   return out;
 }
 
-/** Lower a standalone def (`defineFunction`/`defineAccess`/`defineEvent`) to its `Struct` IR shape. */
+/** Lower a `defineAnalyzer` to a `StructAnalyzer` (tokenizers/filters uppercased to match INFO). */
+function lowerAnalyzer(a: AnalyzerDef): StructAnalyzer {
+  const out: StructAnalyzer = {
+    name: a.name,
+    tokenizers: a.config.tokenizers.map((t) => t.toUpperCase()),
+  };
+  if (a.config.filters?.length)
+    out.filters = a.config.filters.map((f) => f.toUpperCase());
+  return out;
+}
+
+/** Lower a standalone def (`defineFunction`/`defineAccess`/`defineEvent`/`defineAnalyzer`) to its `Struct` IR. */
 export function fromStandalone(
   def: StandaloneDef,
-): StructFunction | StructAccess | StructEvent {
+): StructFunction | StructAccess | StructEvent | StructAnalyzer {
   // An `EventDef` already carries `name`/`when`/`then` — the `TableEvent` shape `lowerEvent` reads.
   if (def.kind === "event") return lowerEvent(def.table, def);
   if (def.kind === "function") return lowerFunction(def);
+  if (def.kind === "analyzer") return lowerAnalyzer(def);
   return lowerAccess(def);
 }
 
@@ -341,13 +355,16 @@ export function schemaStruct(
   const byName = new Map(structTables.map((t) => [t.name, t]));
   const functions: StructFunction[] = [];
   const accesses: StructAccess[] = [];
+  const analyzers: StructAnalyzer[] = [];
   for (const d of defs) {
     if (d.kind === "function")
       functions.push(fromStandalone(d) as StructFunction);
     else if (d.kind === "access")
       accesses.push(fromStandalone(d) as StructAccess);
+    else if (d.kind === "analyzer")
+      analyzers.push(fromStandalone(d) as StructAnalyzer);
     else if (d.kind === "event")
       byName.get(d.table)?.events.push(fromStandalone(d) as StructEvent);
   }
-  return normalizeDb({ tables: structTables, functions, accesses });
+  return normalizeDb({ tables: structTables, functions, accesses, analyzers });
 }

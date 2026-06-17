@@ -16,10 +16,10 @@ import { planKinds } from "@schemic/core";
 import { Surreal } from "surrealdb";
 import { renderPerFile } from "../../src/cli/pull";
 import { introspectStructured } from "../../src/cli/structure";
-import { emitTable } from "../../src/ddl";
+import { emitDefStatement, emitTable } from "../../src/ddl";
 import { introspectAll } from "../../src/kinds/explode";
 import { lowerAll, surrealKinds } from "../../src/kinds/registry";
-import { defineTable, s, type TableDef } from "../../src/pure";
+import { defineAnalyzer, defineTable, s, type TableDef } from "../../src/pure";
 
 const NS = "__sz_defindex";
 const DB = "defindex";
@@ -188,5 +188,73 @@ live("DISKANN vector index", () => {
     expect(await roundTrip(t, "d2")).toContain(
       '  .index("vec", ["emb"], { diskann: { dimension: 8, dist: "cosine", degree: 32, l_build: 50, alpha: 1.5 } })',
     );
+  });
+});
+
+live("FULLTEXT search index + DEFINE ANALYZER", () => {
+  test("an analyzer + a default FULLTEXT index round-trip", async () => {
+    const english = defineAnalyzer("english", {
+      tokenizers: ["blank", "class"],
+      filters: ["lowercase", "snowball(english)"],
+    });
+    const Doc = defineTable("ftdoc", {
+      id: s.string(),
+      content: s.string(),
+    }).index("ft", ["content"], {
+      fulltext: { analyzer: "english", highlights: true },
+    });
+    await applyEach(db!, emitDefStatement(english).ddl);
+    await applyEach(db!, emitTable(Doc, { exists: "overwrite" }));
+
+    // PUSH: the analyzer + index round-trip (BM25 default + materialized analyzer-list match).
+    const plan = planKinds(
+      surrealKinds,
+      await introspectAll(db!),
+      lowerAll([Doc], [english]),
+    );
+    expect({ up: plan.up, down: plan.down }).toEqual({ up: [], down: [] });
+
+    // PULL: both regenerate.
+    const files = renderPerFile(
+      await introspectStructured(db!),
+      (_k, n) => `${n}.ts`,
+    );
+    expect(files.get("english.ts") ?? "").toContain(
+      'defineAnalyzer("english", { tokenizers: ["blank", "class"], filters: ["lowercase", "snowball(english)"] })',
+    );
+    const idx = (files.get("ftdoc.ts") ?? "")
+      .split("\n")
+      .filter((l) => l.includes(".index("))
+      .join("\n");
+    expect(idx).toContain(
+      'fulltext: { analyzer: "english", highlights: true }',
+    );
+  });
+
+  test("a tuned BM25 fulltext index round-trips (non-default kept)", async () => {
+    const a = defineAnalyzer("simple", { tokenizers: ["blank"] });
+    const Doc = defineTable("ftdoc2", {
+      id: s.string(),
+      body: s.string(),
+    }).index("ft", ["body"], {
+      fulltext: { analyzer: "simple", bm25: [1.5, 0.5] },
+    });
+    await applyEach(db!, emitDefStatement(a).ddl);
+    await applyEach(db!, emitTable(Doc, { exists: "overwrite" }));
+    const plan = planKinds(
+      surrealKinds,
+      await introspectAll(db!),
+      lowerAll([Doc], [a]),
+    );
+    expect({ up: plan.up, down: plan.down }).toEqual({ up: [], down: [] });
+    const idx = (
+      renderPerFile(await introspectStructured(db!), (_k, n) => `${n}.ts`).get(
+        "ftdoc2.ts",
+      ) ?? ""
+    )
+      .split("\n")
+      .filter((l) => l.includes(".index("))
+      .join("\n");
+    expect(idx).toContain("bm25: [1.5, 0.5]");
   });
 });

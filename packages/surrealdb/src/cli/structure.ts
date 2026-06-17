@@ -113,6 +113,13 @@ export interface StructAccess {
   duration?: { grant?: string; token?: string; session?: string };
 }
 
+/** A text-search `DEFINE ANALYZER` — `INFO … STRUCTURE` returns uppercase tokenizer/filter lists. */
+export interface StructAnalyzer {
+  name: string;
+  tokenizers: string[];
+  filters?: string[];
+}
+
 export interface StructTableKind {
   kind: "NORMAL" | "ANY" | "RELATION";
   in?: string[];
@@ -148,13 +155,15 @@ interface DbStructure {
   })[];
   functions?: StructFunction[];
   accesses?: StructAccess[];
+  analyzers?: StructAnalyzer[];
 }
 
-/** The structured database: tables (with their fields/indexes/events) and db-level functions/access. */
+/** The structured database: tables (with their fields/indexes/events) and db-level functions/access/analyzers. */
 export interface DbStructured {
   tables: StructTable[];
   functions: StructFunction[];
   accesses: StructAccess[];
+  analyzers: StructAnalyzer[];
 }
 interface TableStructure {
   fields?: StructField[];
@@ -488,6 +497,13 @@ function canonicalAccess(a: StructAccess): string {
   return `${parts.join(" ")};`;
 }
 
+/** Canonical `DEFINE ANALYZER …` — tokenizer/filter lists joined `, ` (uppercase, as INFO returns them). */
+function canonicalAnalyzer(a: StructAnalyzer): string {
+  let s = `DEFINE ANALYZER ${a.name} TOKENIZERS ${a.tokenizers.join(", ")}`;
+  if (a.filters?.length) s += ` FILTERS ${a.filters.join(", ")}`;
+  return `${s};`;
+}
+
 /**
  * Fold an array element type into a BARE `array`/`set` kind, so a field stored as `array` with an
  * `array.* TYPE object` element compares equal to `array<object>` (the typed form @schemic/core
@@ -539,6 +555,7 @@ export function structuredSnapshot({
   tables,
   functions,
   accesses,
+  analyzers,
 }: DbStructured): Snapshot {
   const statements: Record<string, DefineStatement> = {};
   for (const t of tables) {
@@ -619,6 +636,14 @@ export function structuredSnapshot({
     };
     statements[keyOf(s)] = s;
   }
+  for (const an of analyzers) {
+    const s: DefineStatement = {
+      kind: "analyzer",
+      name: an.name,
+      ddl: canonicalAnalyzer(an),
+    };
+    statements[keyOf(s)] = s;
+  }
   return { version: 1, statements };
 }
 
@@ -666,5 +691,6 @@ export async function introspectStructured(
     tables,
     functions: dbInfo.functions ?? [],
     accesses: dbInfo.accesses ?? [],
+    analyzers: dbInfo.analyzers ?? [],
   };
 }

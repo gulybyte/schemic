@@ -168,6 +168,7 @@ live("struct-parity", () => {
         (x): x is Parameters<typeof normalizeFunction>[0] => "block" in x,
       ),
       accesses: [],
+      analyzers: [],
     };
     // Restrict the live side to the corpus objects (the scratch DB holds only these).
     const names = new Set(schema.tables.map((t) => t.name));
@@ -177,6 +178,7 @@ live("struct-parity", () => {
         schema.functions.some((s) => s.name === f.name),
       ),
       accesses: [],
+      analyzers: [],
     };
     expect(renderSchemaToTS(normalizeDb(schema))).toBe(
       renderSchemaToTS(normalizeDb(liveCorpus)),
