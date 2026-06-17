@@ -30,12 +30,13 @@ export {
 export {
   type Filter,
   type FilterOpts,
-  filterPortable,
+  filterKinds,
   inCat,
-  intersectPortable,
+  intersectKinds,
   kindFlags,
   mergeStored,
   parseFilter,
+  passesFilter,
 } from "./cli/filter";
 // --- pull plan + magicast merge (neutral codegen support) -------------------------------------
 export {
@@ -114,22 +115,11 @@ export {
   scalar,
   union,
 } from "./driver/portable";
-export {
-  diffPortable,
-  keyOf,
-  type PortableDiffItem,
-  planPortable,
-} from "./driver/portable-diff";
+// (the Statement-level portable-diff is retired — superseded by the kind registry's
+// planKinds/buildKindDiff in ./kind/plan.ts.)
 export type {
-  PortableAccess,
-  PortableDb,
-  PortableEvent,
   PortableField,
-  PortableFunction,
-  PortableIndex,
   PortablePermissions,
-  PortableTable,
-  PortableTableKind,
 } from "./driver/portable-ir";
 // --- kind registry (core-v2) — generic, open object kinds (docs/kind-registry.md) -------------
 export {
