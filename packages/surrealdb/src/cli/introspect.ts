@@ -25,6 +25,7 @@ const SHADOW_MIG_DB = "__surreal_zod_shadow_mig";
 
 // Apply order: tables, then fields, then indexes.
 const RANK: Record<DefineStatement["kind"], number> = {
+  analyzer: 0, // db-level; defined first (a FULLTEXT index references its analyzer)
   function: 0, // db-level; defined first (tables/events may reference fn::…)
   table: 1,
   field: 2,

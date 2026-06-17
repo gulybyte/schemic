@@ -2602,8 +2602,36 @@ export function defineAccess(name: string): AccessDef {
   return new AccessDef(name);
 }
 
+/** A text-search `DEFINE ANALYZER`'s config: an ordered tokenizer + filter pipeline. */
+export interface AnalyzerConfig {
+  /** `TOKENIZERS …` — e.g. `["blank", "class", "camel", "punct"]` (at least one). */
+  tokenizers: string[];
+  /** `FILTERS …` — e.g. `["lowercase", "ascii", "snowball(english)", "ngram(1,3)"]`. */
+  filters?: string[];
+}
+
+/**
+ * A text-search analyzer (`DEFINE ANALYZER`), referenced by a `FULLTEXT` index. Declared standalone:
+ * `export const english = defineAnalyzer("english", { tokenizers: ["blank"], filters: ["lowercase", "snowball(english)"] })`.
+ */
+export class AnalyzerDef {
+  readonly kind = "analyzer" as const;
+  constructor(
+    readonly name: string,
+    readonly config: AnalyzerConfig,
+  ) {}
+}
+
+/** Declare a text-search analyzer. See {@link AnalyzerConfig}; reference it from a `fulltext` index. */
+export function defineAnalyzer(
+  name: string,
+  config: AnalyzerConfig,
+): AnalyzerDef {
+  return new AnalyzerDef(name, config);
+}
+
 /** A schema object declared apart from a table (collected by the CLI loader and emitted on its own). */
-export type StandaloneDef = EventDef | FunctionDef | AccessDef;
+export type StandaloneDef = EventDef | FunctionDef | AccessDef | AnalyzerDef;
 
 /**
  * The underlying Zod schema of any s value: a field (`SField`), a table/relation def

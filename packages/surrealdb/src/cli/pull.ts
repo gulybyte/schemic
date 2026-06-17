@@ -18,6 +18,7 @@ import {
   type DbStructured,
   introspectStructured,
   type StructAccess,
+  type StructAnalyzer,
   type StructField,
   type StructFunction,
   type StructPerm,
@@ -730,7 +731,7 @@ export async function planPull(
     db,
     new Set([config.migrationsTable, `${config.migrationsTable}_lock`]),
   );
-  const { tables, functions, accesses } = filterStructured(
+  const { tables, functions, accesses, analyzers } = filterStructured(
     introspected,
     opts.filter ?? parseFilter({}),
   );
@@ -744,11 +745,12 @@ export async function planPull(
       ...tables.map((t) => tableUnit(t, makeCtx(t))),
       ...functions.map(functionUnit),
       ...accesses.map(accessUnit),
+      ...analyzers.map(analyzerUnit),
     ];
     return {
       files: [
         planFile(config.schemaPath, units, keepLocal, config, () =>
-          assembleCombined({ tables, functions, accesses }, makeCtx),
+          assembleCombined({ tables, functions, accesses, analyzers }, makeCtx),
         ),
       ],
     };
@@ -773,6 +775,8 @@ export async function planPull(
     add(join(dir, "functions", `${fn.name}.ts`), functionUnit(fn));
   for (const a of accesses)
     add(join(dir, "access", `${a.name}.ts`), accessUnit(a));
+  for (const an of analyzers)
+    add(join(dir, "analyzers", `${an.name}.ts`), analyzerUnit(an));
 
   const files = [...groups].map(([abs, units]) =>
     planFile(abs, units, keepLocal, config, () =>
@@ -794,6 +798,7 @@ export async function planPull(
     ...tables.map((t) => t.name),
     ...functions.map((f) => f.name),
     ...accesses.map((a) => a.name),
+    ...analyzers.map((a) => a.name),
   ]);
   const planned = new Set(files.map((f) => f.abs));
   for (const [file, info] of await scanLocalEntities(dir)) {
@@ -885,6 +890,28 @@ function accessUnit(a: StructAccess): RenderedUnit {
   };
 }
 
+/** Reverse a `StructAnalyzer` into a `defineAnalyzer(name, { tokenizers, filters })` const (lowercased
+ *  to the authored form; `lowerAnalyzer` re-uppercases for the canonical/diff comparison). */
+function renderAnalyzerConst(a: StructAnalyzer): string {
+  const list = (xs: string[]) =>
+    `[${xs.map((x) => JSON.stringify(x.toLowerCase())).join(", ")}]`;
+  let cfg = `{ tokenizers: ${list(a.tokenizers)}`;
+  if (a.filters?.length) cfg += `, filters: ${list(a.filters)}`;
+  cfg += " }";
+  return `export const ${fnConst(a.name)} = defineAnalyzer(${JSON.stringify(a.name)}, ${cfg});`;
+}
+
+function analyzerUnit(a: StructAnalyzer): RenderedUnit {
+  return {
+    // core `RenderedUnit.kind` lacks "analyzer" yet — group with the other db-level objects for now.
+    kind: "access",
+    name: a.name,
+    exportName: fnConst(a.name),
+    code: renderAnalyzerConst(a),
+    imports: [`import { defineAnalyzer } from "@schemic/surrealdb";`],
+  };
+}
+
 /** Build the per-table {@link RenderCtx} factory: cycle-aware ref resolution + import accumulation. */
 function ctxFactory(tables: StructTable[]): (t: StructTable) => RenderCtx {
   // Reference graph (record<…> targets + relation endpoints) → cycle-aware imports / ordering.
@@ -962,6 +989,8 @@ export function renderPerFile(
   for (const fn of db.functions)
     add(fileFor("function", fn.name), functionUnit(fn));
   for (const a of db.accesses) add(fileFor("access", a.name), accessUnit(a));
+  for (const an of db.analyzers)
+    add(fileFor("access", an.name), analyzerUnit(an));
 
   const out = new Map<string, string>();
   for (const [file, units] of byFile)
@@ -976,7 +1005,7 @@ export function renderPerFile(
 
 /** Assemble the single-file combined module (tables ordered so same-file refs resolve). */
 function assembleCombined(
-  { tables, functions, accesses }: DbStructured,
+  { tables, functions, accesses, analyzers }: DbStructured,
   makeCtx: (t: StructTable) => RenderCtx,
 ): string {
   // Render each const (collecting its same-file direct deps via ctx.imports), then order so deps
@@ -995,9 +1024,11 @@ function assembleCombined(
   const ordered = topoSort(rendered);
   const fnCode = functions.map(renderFunctionConst);
   const accessCode = accesses.map(renderAccessConst);
+  const analyzerCode = analyzers.map(renderAnalyzerConst);
   const factories = [...new Set(ordered.map((r) => r.factory))];
   if (functions.length) factories.push("defineFunction");
   if (accesses.length) factories.push("defineAccess");
+  if (analyzers.length) factories.push("defineAnalyzer");
   factories.sort();
   const usesSurql =
     functions.length > 0 ||
@@ -1007,8 +1038,12 @@ function assembleCombined(
   const imports = [`import { ${names.join(", ")} } from "@schemic/surrealdb";`];
   // `surql` from surrealdb on its own line (see tableUnit), kept out of the @schemic/surrealdb import.
   if (usesSurql) imports.push(`import { surql } from "surrealdb";`);
-  const body = [...ordered.map((r) => r.code), ...fnCode, ...accessCode].join(
-    "\n\n",
-  );
+  // Analyzers first — a FULLTEXT index references its analyzer.
+  const body = [
+    ...analyzerCode,
+    ...ordered.map((r) => r.code),
+    ...fnCode,
+    ...accessCode,
+  ].join("\n\n");
   return `${imports.join("\n")}\n\n${body}\n`;
 }

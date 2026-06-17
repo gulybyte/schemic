@@ -21,6 +21,9 @@ export function included(f: Filter, s: DefineStatement): boolean {
       return inCat(f.functions, s.name);
     case "access":
       return inCat(f.access, s.name);
+    case "analyzer":
+      // Analyzers are shared infra a FULLTEXT index depends on — always kept (no filter category).
+      return true;
   }
 }
 
@@ -60,5 +63,5 @@ export function filterStructured(db: DbStructured, f: Filter): DbStructured {
     }));
   const functions = db.functions.filter((fn) => inCat(f.functions, fn.name));
   const accesses = db.accesses.filter((a) => inCat(f.access, a.name));
-  return { tables, functions, accesses };
+  return { tables, functions, accesses, analyzers: db.analyzers };
 }

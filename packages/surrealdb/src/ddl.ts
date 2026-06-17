@@ -2,6 +2,7 @@ import { BoundQuery, escapeIdent, toSurqlString } from "surrealdb";
 import type { z } from "zod";
 import {
   type AccessDef,
+  type AnalyzerDef,
   type Expr,
   type FieldPermissions,
   type FunctionDef,
@@ -379,7 +380,14 @@ export function renderPermissions(
  * individually. `emitTable`/`emitField` are the string-joined views of these.
  */
 export interface DefineStatement {
-  kind: "table" | "field" | "index" | "event" | "function" | "access";
+  kind:
+    | "table"
+    | "field"
+    | "index"
+    | "event"
+    | "function"
+    | "access"
+    | "analyzer";
   name: string;
   table?: string;
   ddl: string;
@@ -493,7 +501,17 @@ function emitAccess(a: AccessDef, opts?: DefineOptions): string {
   return `${parts.join(" ")};`;
 }
 
-/** The `DefineStatement` for a standalone def — `defineEvent`/`defineFunction`/`defineAccess`. */
+/** `DEFINE ANALYZER <name> TOKENIZERS … [FILTERS …]`. Tokenizers/filters are uppercased to match
+ *  `INFO … STRUCTURE`, so an authored analyzer compares equal to the introspected one. */
+function emitAnalyzer(a: AnalyzerDef, opts?: DefineOptions): string {
+  const toks = a.config.tokenizers.map((t) => t.toUpperCase()).join(", ");
+  let s = `DEFINE ANALYZER ${existsPrefix(opts)}${escapeIdent(a.name)} TOKENIZERS ${toks}`;
+  if (a.config.filters?.length)
+    s += ` FILTERS ${a.config.filters.map((f) => f.toUpperCase()).join(", ")}`;
+  return `${s};`;
+}
+
+/** The `DefineStatement` for a standalone def — `defineEvent`/`defineFunction`/`defineAccess`/`defineAnalyzer`. */
 export function emitDefStatement(
   def: StandaloneDef,
   opts?: DefineOptions,
@@ -508,6 +526,9 @@ export function emitDefStatement(
   }
   if (def.kind === "access") {
     return { kind: "access", name: def.name, ddl: emitAccess(def, opts) };
+  }
+  if (def.kind === "analyzer") {
+    return { kind: "analyzer", name: def.name, ddl: emitAnalyzer(def, opts) };
   }
   return { kind: "function", name: def.name, ddl: emitFunction(def, opts) };
 }
@@ -782,6 +803,9 @@ export function removeStatement(
   }
   if (s.kind === "access") {
     return `REMOVE ACCESS IF EXISTS ${escapeIdent(s.name)} ON DATABASE;`;
+  }
+  if (s.kind === "analyzer") {
+    return `REMOVE ANALYZER IF EXISTS ${escapeIdent(s.name)};`;
   }
   return `REMOVE FIELD IF EXISTS ${s.name} ON TABLE ${escapeIdent(s.table ?? "")};`;
 }

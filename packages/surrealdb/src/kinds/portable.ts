@@ -13,6 +13,7 @@
 import type { PortableObject, Ref } from "@schemic/core";
 import type {
   StructAccess,
+  StructAnalyzer,
   StructFunction,
   StructTable,
 } from "../cli/structure";
@@ -40,12 +41,14 @@ export interface PTable extends PortableObject {
   readonly struct: StructTable;
 }
 
-/** An index's portable form: the `DEFINE INDEX` statement + its owning table. */
+/** An index's portable form: the `DEFINE INDEX` statement + its owning table. `deps` carries the table
+ *  and, for a FULLTEXT index, its analyzer (so the analyzer emits BEFORE the index). */
 export interface PIndex extends PortableObject {
   readonly kind: "index";
   readonly name: string;
   readonly table: string;
   readonly stmt: DefineStatement;
+  readonly deps: Ref[];
 }
 
 /** An event's portable form: the `DEFINE EVENT` statement + its owning table. `deps` carries any
@@ -84,8 +87,26 @@ export interface PAccess extends PortableObject {
   readonly native: StructAccess;
 }
 
+/**
+ * A db-level text-search analyzer's portable form — OPAQUE. A FULLTEXT index `deps` on it.
+ */
+export interface PAnalyzer extends PortableObject {
+  readonly kind: "analyzer";
+  readonly name: string;
+  readonly stmt: DefineStatement;
+  readonly deps: Ref[];
+  /** The structured analyzer (the opaque kind's `native` payload) — for `renderSchema` TS codegen. */
+  readonly native: StructAnalyzer;
+}
+
 /** Every portable object a SurrealDB schema lowers to. */
-export type SurrealPortable = PTable | PIndex | PEvent | PFunction | PAccess;
+export type SurrealPortable =
+  | PTable
+  | PIndex
+  | PEvent
+  | PFunction
+  | PAccess
+  | PAnalyzer;
 
 /**
  * The authoring-side definables the explode produces. They ALREADY carry the normalized, canonical
