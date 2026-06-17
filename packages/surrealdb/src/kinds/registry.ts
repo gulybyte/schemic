@@ -17,13 +17,14 @@
 import {
   type AnyTable,
   type AuthoredDef,
+  type DiffItem,
   type KindEngine,
   KindRegistry,
   lowerSchema,
   type PortableObject,
   type Ref,
 } from "@schemic/core";
-import type { Snapshot } from "../cli/structure";
+import { EMPTY_SNAPSHOT, type Snapshot } from "../cli/structure";
 import { diffSnapshots } from "../cli/surreal-diff";
 import type { DefineStatement } from "../ddl";
 import { overwriteStatement, removeStatement } from "../ddl";
@@ -56,6 +57,14 @@ const tableEngine: KindEngine<PTable, PTable> = {
       snapOf(next.head, next.fields),
     ).up,
   deps: (t) => t.deps,
+  // PER-FIELD display (Manuel's call): the table's diff items are its head + per-field statements
+  // (each carrying its `table` so the display groups under it) — exactly `diffSnapshots().items`.
+  // `full` uses displayItems(undefined, next) -> the per-field add items.
+  displayItems: (prev, next): DiffItem[] =>
+    diffSnapshots(
+      prev ? snapOf(prev.head, prev.fields) : EMPTY_SNAPSHOT,
+      next ? snapOf(next.head, next.fields) : EMPTY_SNAPSHOT,
+    ).items ?? [],
 };
 
 // --- index: own kind, owned by its table, recreated on change -----------------------------------
