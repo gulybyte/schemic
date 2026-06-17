@@ -179,19 +179,42 @@ The contract is **per-kind** (`KindEngine.introspect`). Introspection is usually
 across kinds at the cost of that one round-trip. A kind that omits `introspect` simply isn't
 introspectable.
 
-## 6. Coexistence during migration
+## 6. CLI integration — facade NOW, coordinated flip LAST (RESOLVED)
 
-The registry path is now **feature-complete** vs what the CLI consumes — `lowerSchema` (author →
-portable), `buildKindDiff` (the full `Diff`: up/down/items/full), `snapshotKinds`/`snapshotObjects`
-(the stored snapshot), `emitKinds` (fresh apply). So a driver **flips wholesale**: once your kinds are
-registered, swap your `Driver.lower`/`emit`/`diff` + snapshot for the registry calls **in one step** —
-there is no half-on/half-off production engine to bridge. "Kind by kind" is the **development + parity
-cadence** (build + green-test one kind at a time on your branch), not a shipped intermediate state.
+The registry path is **feature-complete** vs what the CLI consumes — `lowerSchema` (author → portable),
+`buildKindDiff` (the full `Diff`: up/down/items/full), `emitKinds` (fresh apply), `snapshotKinds`/
+`snapshotObjects`, `introspectKinds`. But the CLI today still calls the **fixed-slot** `Driver`
+(`lower → PortableDb`, `emit(db)`, `diff(prev, next)`) and stores a `PortableDb` snapshot. So we
+migrate in two stages:
 
-If you do want to land kinds incrementally, `planKinds`/`buildKindDiff` only touch objects whose `kind`
-is **registered** (unregistered ones are skipped), so you can run the registry path beside the legacy
-path during development and concatenate. But the target is the clean swap — DM `core-dev` if your
-dialect makes a true interim coexistence necessary and we'll add the merge.
+**Stage 1 — facade (NOW, each driver, independently).** Keep your `Driver` boundary and the
+`PortableDb` snapshot **unchanged** (CLI + every command stays green), and implement those methods on
+top of your registry internally. The kind engines you write now are **permanent**; only a thin
+`PortableDb ↔ PortableObject[]` adapter at the boundary is temporary. Most of it is free, because the
+spine already returns the `Driver` shapes:
+
+```ts
+// inside your Driver:
+diff(prev, next)      = buildKindDiff(this.registry, decompose(prev), decompose(next)); // Diff -> Diff
+emit(db, opts)        = ... emitKinds(this.registry, decompose(db)) ...                  // string[] -> Statement[]
+lower(tables, defs)   = assemble(lowerSchema(this.registry, this.explode(tables, defs))); // -> PortableDb
+introspect(conn, ex)  = assemble(await introspectKinds(this.registry, conn));             // -> PortableDb
+// decompose: PortableTable -> [table, ...index, ...event/constraint]   (your inline-authoring split)
+// assemble:  the inverse — fold the kind objects back into PortableDb's slots for the boundary
+```
+
+Anything beyond the fixed slots (Surreal `param`/`analyzer`/`model`; PG `sequence`/`enum`/`domain`)
+maps to the existing generic `natives` slot for now. The snapshot stays `PortableDb`.
+
+**Stage 2 — the flip (LAST, ONCE, coordinated by core-dev).** After **both** drivers are
+registry-internal and table-kind parity-green, core does the real Option-A flip in one coordinated
+slice: the `Driver` contract gains a `registry`, the CLI routes schema ops through
+`lowerSchema`/`buildKindDiff`/`emitKinds`/`introspectKinds`, the stored snapshot becomes a
+`KindSnapshot`, and the fixed `PortableDb` slots retire — at which point your facade adapter is
+deleted and your kind engines plug straight in, and new kinds become first-class (no longer `natives`).
+This is §8's last step; it's driven by core against your **real, green** kind engines, not speculatively.
+
+**Ping `core-dev` when your table kind is parity-green** and we line up the flip together.
 
 ## 7. Boundary decisions — RESOLVED (surrealdb review, 2026-06-16)
 
