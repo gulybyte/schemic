@@ -11,6 +11,44 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 
 ---
 
+## Kind inventory (registry migration)
+
+> Per the kind-registry contract (`packages/core/docs/kind-registry-contract.md`): core no longer
+> hard-codes object kinds — each driver **registers** its kinds on a per-driver `KindRegistry` and core
+> orchestrates generically. This table tracks **every** PostgreSQL object kind, its registration status,
+> and round-trip coverage, so gaps stay visible. **Migration has not started yet** — the driver still
+> runs entirely on the fixed-slot `Driver` path (untouched + green); the `emit`/`introspect`/`diff`
+> columns therefore reflect what the *current fixed-slot path* does today, and `createKind'd?` is `[ ]`
+> across the board until each kind is flipped onto the registry. Order (per contract): `table` first,
+> then `index`/`constraint`, then opaque/native kinds.
+>
+> `column` and the field-level clauses are **substrate** (shared `PortableField`/`PortableType`), nested
+> inside the `table` kind — **not a kind**. Inline FK/UNIQUE/CHECK/index will be **driver-side exploded**
+> out of `PgTableDef` in `Driver.lower` into their own kind objects (`deps`→table(s)), per core-dev's
+> sanctioned explode pattern — this is what lets the dependency graph break FK cycles.
+
+| kind | `createKind'd?` | emit | introspect | diff | notes |
+|---|---|---|---|---|---|
+| `table` | [ ] | [x] | [x] | [~] | first kind to flip (slice 2); columns nest as substrate; `overwrite` does clause-level column ALTER |
+| `column`* (substrate) | [n/a] | [x] | [x] | [~] | not a kind — `PortableField`/`PortableType` nested in `table`; substrate keeps `native{params}`+`check` |
+| `index` | [ ] | [~] | [ ] | [ ] | own kind, `deps`→table; today only UNIQUE index emits (`$unique`/`.index`), not introspected back |
+| `constraint` (PK/FK/UNIQUE/CHECK/EXCLUDE) | [ ] | [~] | [~] | [ ] | own kind, `deps`→table(s) to break FK cycles; PK+FK emit inline today; CHECK emit-only (excluded from equality); EXCLUDE not impl |
+| `view` | [ ] | [ ] | [ ] | [ ] | not implemented |
+| `materialized_view` | [ ] | [ ] | [ ] | [ ] | not implemented |
+| `sequence` (standalone) | [ ] | [ ] | [ ] | [ ] | identity-backed sequences are implicit today; standalone `CREATE SEQUENCE` not impl |
+| `type`/`enum`/`domain` (`CREATE TYPE`) | [ ] | [ ] | [ ] | [ ] | `PortableDb.natives[]` slot exists; `s.enum` projects to `text` App-side today; native `CREATE TYPE` not impl |
+| `extension` | [ ] | [ ] | [ ] | [ ] | needed for citext/postgis/pgvector; not impl |
+| `function` | [ ] | [ ] | [ ] | [ ] | opaque kind (no `overwrite`/`deps`); trivial once structured path proven; not impl |
+| `procedure` | [ ] | [ ] | [ ] | [ ] | opaque kind; not impl |
+| `trigger` | [ ] | [ ] | [ ] | [ ] | own kind, `deps`→table + any function it calls; not impl |
+| `schema` | [ ] | [ ] | [ ] | [ ] | hardcoded `public` today; not impl |
+| `role`/`grant` | [ ] | [ ] | [ ] | [ ] | out of scope for now |
+| `policy` (RLS) | [ ] | [ ] | [ ] | [ ] | own kind, `deps`→table; not impl |
+
+\* `column` is substrate nested in `table`, listed for completeness — it is never registered as a kind.
+
+---
+
 ### Authoring (`s.*`, pg-native)
 - [x] `PgField extends SFieldBase` — Zod drop-in + `PgMeta` side-channel; full Zod wrapper/passthrough chain, type-preserving
 - [x] `defineTable(name, { col: s.* })` → `PgTableDef` (an `Authored`); `.primaryKey(...)`, `.check(expr)`, `.index([...])`
