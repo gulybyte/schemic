@@ -133,22 +133,19 @@ restoring today's emit/equal asymmetry exactly; emit stays faithful for fresh ap
 unaffected (omits it). Shipped on `feat/kind-registry` with tests; carries the multi-DB spike's
 normalize/equal knowledge into the kind model (risk §6, bullet 1).
 
-## 6b. RESOLVED during sanity-check — `renderSchema` input is the authoring side
+## 6b. RESOLVED — `renderSchema(PortableObject[])` (revised at implementation)
 
-Surrealdb flagged: `renderSchema` (offline TS codegen behind `diff --ts` / `gen` / `pull`) regenerates
-`s.*` source, which needs the rich authoring `StructField` — strictly richer than the DDL a driver's
-portable objects carry. So `renderSchema`'s input CANNOT just become `PortableObject[]`. **Decision —
-option (a):** the TS-render capability re-derives its structured form **driver-internally from the
-authoring `Definable[]`** (the desired side core already has); the live/conn paths
-(`diffTsLive`/`planPull`/`checkReplay`) re-introspect internally as today. So at the flip,
-`renderSchema`'s signature changes from `renderSchema(db: PortableDb, …)` to `renderSchema(defs:
-Definable[], …)` (authoring), NOT `PortableObject[]`. Rationale: lowering is lossy for TS-richness, so
-TS-render belongs UPSTREAM of lowering (the authoring side) — strictly better than today's PortableDb
-path. Rejected (b) "portable objects carry the Struct substrate" — it would bloat every portable object
-for one capability. **Driver caveat:** render the desired and current/snapshot sides at MATCHING
-fidelity (route both through the same `DbStructured` derivation) so an in-sync schema yields no spurious
-TS diff; for the offline `diff --ts` current side (no authoring, no conn), derive from the stored
-snapshot via the driver's own parse. This updates the §2 `renderSchema` row.
+Surrealdb flagged: `renderSchema` (offline TS codegen behind `diff --ts` / `pull`) regenerates `s.*`
+source, needing more than a driver's DDL-carrying portable objects expose. The first cut took the
+authoring `Definable[]`, but implementing the offline `diff --ts` showed that breaks the SNAPSHOT side
+(stored as `PortableObject[]`, with no authoring available). **Final decision — `renderSchema(objects:
+PortableObject[], …)`:** core passes the SNAPSHOT objects for the current side and
+`lowerSchema(explode(...))` for the desired side, so BOTH render at matching portable fidelity (no
+spurious TS diff) — exactly the old `renderSchema(PortableDb)` fidelity. The driver re-derives its
+structured form from the portable objects (parsing its own DDL where needed). No consumer needs
+authoring fidelity: today's snapshot was already `PortableType`-level, not full-Zod, so this is no
+regression. Rejected the authoring-`Definable[]` input (can't render the snapshot side) and "carry the
+Struct substrate in portable objects" (bloat). Shipped in `driver.ts` (the §2 `renderSchema` row).
 
 Also confirmed by surreal (no core change): `introspectAll` canonicalizes IDENTICALLY to `lower` (both
 route through the dialect's canonical snapshot — Surreal `structuredSnapshot` / the `INFO STRUCTURE`
