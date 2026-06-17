@@ -65,8 +65,10 @@ export interface StructIndex {
   name: string;
   /** Indexed columns/fields. */
   cols: string[];
-  /** `"UNIQUE"`, `""` (plain), or a `SEARCH …`/`MTREE …`/`HNSW …` spec. */
+  /** `"UNIQUE"`, `""` (plain), `"COUNT"`, or a `FULLTEXT …`/`HNSW …`/`DISKANN …` spec (canonicalized). */
   index: string;
+  /** `COMMENT <string>` on the index. */
+  comment?: string;
 }
 
 export interface StructEvent {
@@ -331,12 +333,93 @@ function canonicalTableHead(t: StructTable): string {
   return tail ? `${head} ${tail};` : `${head};`;
 }
 
-/** Canonical `DEFINE INDEX …` (`index` is `"UNIQUE"`, `""`, or a `SEARCH …`/`MTREE …` spec). */
+// SurrealDB MATERIALIZES default vector/fulltext index clauses on apply — e.g. `HNSW DIMENSION 4` is
+// stored as `HNSW DIMENSION 4 DIST EUCLIDEAN TYPE F32 EFC 150 M 12 M0 24 LM <1/ln(M)>f`, and `FULLTEXT
+// ANALYZER a` always carries `BM25(1.2,0.75)`. So the CANONICAL form strips default-valued + derived
+// clauses and normalizes numbers (drops the SurrealQL `f` float suffix), making an authored MINIMAL
+// spec compare equal to the introspected FULL one. Non-default values are kept.
+
+/** Normalize a SurrealQL number token: drop a trailing `f`, collapse float noise (`1.20` -> `1.2`). */
+function normNum(v: string): string {
+  const n = Number(v.replace(/f$/i, ""));
+  return Number.isFinite(n) ? String(n) : v;
+}
+
+/** Default-valued clauses SurrealDB fills in (stripped from canonical when they match). */
+const VECTOR_DEFAULTS: Record<string, Record<string, string>> = {
+  HNSW: { DIST: "EUCLIDEAN", TYPE: "F32", EFC: "150", M: "12" },
+  DISKANN: {
+    DIST: "EUCLIDEAN",
+    TYPE: "F32",
+    DEGREE: "64",
+    L_BUILD: "100",
+    ALPHA: "1.2",
+  },
+};
+/** Clauses fully DERIVED from others (never authored, always stripped): HNSW `M0`=2·M, `LM`=1/ln(M). */
+const VECTOR_DERIVED: Record<string, Set<string>> = {
+  HNSW: new Set(["M0", "LM"]),
+  DISKANN: new Set(),
+};
+/** Canonical clause order (matches the authoring emit). */
+const VECTOR_ORDER: Record<string, string[]> = {
+  HNSW: ["DIMENSION", "DIST", "TYPE", "EFC", "M"],
+  DISKANN: ["DIMENSION", "DIST", "TYPE", "DEGREE", "L_BUILD", "ALPHA"],
+};
+
+/** Canonicalize an `HNSW …`/`DISKANN …` spec: drop derived + default clauses, normalize numbers. */
+function normVector(algo: "HNSW" | "DISKANN", spec: string): string {
+  const toks = spec.slice(algo.length).trim().split(/\s+/).filter(Boolean);
+  const kept = new Map<string, string>();
+  for (let i = 0; i < toks.length; i += 2) {
+    const key = toks[i];
+    let val = toks[i + 1] ?? "";
+    if (VECTOR_DERIVED[algo].has(key)) continue;
+    if (/^[\d.]/.test(val) || /f$/i.test(val)) val = normNum(val);
+    if (VECTOR_DEFAULTS[algo][key] === val) continue;
+    kept.set(key, val);
+  }
+  const parts: string[] = [algo];
+  for (const k of VECTOR_ORDER[algo]) {
+    const v = kept.get(k);
+    if (v !== undefined) parts.push(k, v);
+  }
+  return parts.join(" ");
+}
+
+/** Canonicalize a `FULLTEXT ANALYZER … [BM25[(k,b)]] [HIGHLIGHTS]` spec: drop the default BM25(1.2,0.75). */
+function normFulltext(spec: string): string {
+  const m = /^FULLTEXT ANALYZER (\S+)(.*)$/.exec(spec);
+  if (!m) return spec;
+  let out = `FULLTEXT ANALYZER ${m[1]}`;
+  const bm = /BM25(?:\(([^)]*)\))?/.exec(m[2]);
+  if (bm?.[1]) {
+    const args = bm[1].split(",").map((a) => normNum(a.trim()));
+    if (!(args.length === 2 && args[0] === "1.2" && args[1] === "0.75"))
+      out += ` BM25(${args.join(",")})`; // a non-default BM25 is kept
+  }
+  if (/\bHIGHLIGHTS\b/.test(m[2])) out += " HIGHLIGHTS";
+  return out;
+}
+
+/** Strip SurrealDB's materialized defaults from a vector/fulltext index spec (passthrough otherwise). */
+function normalizeIndexSpec(spec: string): string {
+  if (spec.startsWith("HNSW")) return normVector("HNSW", spec);
+  if (spec.startsWith("DISKANN")) return normVector("DISKANN", spec);
+  if (spec.startsWith("FULLTEXT")) return normFulltext(spec);
+  return spec; // "", UNIQUE, COUNT (or a legacy SEARCH/MTREE spec) — left as-is
+}
+
+/** Canonical `DEFINE INDEX …`. `index` is `"UNIQUE"`/`""`/`"COUNT"`, or a FULLTEXT/HNSW/DISKANN spec —
+ *  the latter normalized (materialized defaults stripped) so authored and introspected sides match. */
 function canonicalIndex(t: StructTable, idx: StructIndex): string {
   // A COUNT index has no columns → no `FIELDS` clause (`idx.index` carries `COUNT`).
   const fields = idx.cols.length ? ` FIELDS ${idx.cols.join(", ")}` : "";
-  const spec = idx.index ? ` ${idx.index}` : "";
-  return `DEFINE INDEX ${idx.name} ON TABLE ${t.name}${fields}${spec};`;
+  const norm = normalizeIndexSpec(idx.index);
+  const spec = norm ? ` ${norm}` : "";
+  const comment =
+    idx.comment !== undefined ? ` COMMENT ${JSON.stringify(idx.comment)}` : "";
+  return `DEFINE INDEX ${idx.name} ON TABLE ${t.name}${fields}${spec}${comment};`;
 }
 
 /**
@@ -571,7 +654,11 @@ export async function introspectStructured(
       // INFO STRUCTURE stores a view as `AS SELECT …`; strip the keyword to match the lowered form.
       view: t.view?.replace(/^AS\s+/i, ""),
       fields: tinfo.fields ?? [],
-      indexes: tinfo.indexes ?? [],
+      // Strip SurrealDB's materialized vector/fulltext defaults so the spec matches the authored form.
+      indexes: (tinfo.indexes ?? []).map((i) => ({
+        ...i,
+        index: normalizeIndexSpec(i.index),
+      })),
       events: tinfo.events ?? [],
     });
   }

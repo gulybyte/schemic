@@ -725,14 +725,22 @@ export function emitStatements(
     }
   // Composite indexes declared via `.index(name, fields, …)`. A `count` index has no FIELDS.
   for (const idx of t.config.indexes ?? []) {
-    const spec = idx.count
-      ? "COUNT"
-      : `FIELDS ${idx.fields.map(escapeIdent).join(", ")}${idx.unique ? " UNIQUE" : ""}`;
+    let spec: string;
+    if (idx.count) {
+      spec = "COUNT";
+    } else {
+      spec = `FIELDS ${idx.fields.map(escapeIdent).join(", ")}`;
+      if (idx.unique) spec += " UNIQUE";
+      if (idx.spec) spec += ` ${idx.spec}`; // HNSW/DISKANN/FULLTEXT
+    }
+    const comment = idx.comment
+      ? ` COMMENT ${JSON.stringify(idx.comment)}`
+      : "";
     out.push({
       kind: "index",
       name: idx.name,
       table: t.name,
-      ddl: `DEFINE INDEX ${existsPrefix(opts)}${escapeIdent(idx.name)} ON TABLE ${escapeIdent(t.name)} ${spec};`,
+      ddl: `DEFINE INDEX ${existsPrefix(opts)}${escapeIdent(idx.name)} ON TABLE ${escapeIdent(t.name)} ${spec}${comment};`,
     });
   }
   // Row-change events declared via `.event(name, { when?, then })`.

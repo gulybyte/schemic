@@ -1352,6 +1352,74 @@ export interface TableIndex {
   unique?: boolean;
   /** A materialized row-count index (`DEFINE INDEX … COUNT`, no fields). */
   count?: boolean;
+  /** `COMMENT <string>` on the index. */
+  comment?: string;
+  /**
+   * A special index spec appended after `FIELDS` — a vector (`HNSW …`/`DISKANN …`) or full-text
+   * (`FULLTEXT ANALYZER …`) index. Built from the `.index()` opts; minimal form (SurrealDB
+   * materializes the rest), so it round-trips against the introspected, canonicalized spec.
+   */
+  spec?: string;
+}
+
+/** Options for a HNSW vector index (`.index(name, [field], { hnsw: {…} })`). */
+export interface HnswOptions {
+  dimension: number;
+  dist?: "euclidean" | "cosine" | "manhattan" | "minkowski" | "hamming";
+  type?: "f64" | "f32" | "i64" | "i32" | "i16";
+  efc?: number;
+  m?: number;
+}
+/** Options for a DISKANN vector index (`.index(name, [field], { diskann: {…} })`). */
+export interface DiskannOptions {
+  dimension: number;
+  dist?: "euclidean" | "cosine" | "manhattan";
+  type?: "f64" | "f32" | "i64" | "i32" | "i16";
+  degree?: number;
+  l_build?: number;
+  alpha?: number;
+}
+/** Options for a FULL-TEXT search index (`.index(name, [field], { fulltext: {…} })`). Needs a
+ *  `defineAnalyzer` of the same name. `bm25: [k1, b]` tunes scoring; `true` uses the defaults. */
+export interface FulltextOptions {
+  analyzer: string;
+  bm25?: boolean | [number, number];
+  highlights?: boolean;
+}
+
+/** Build the special index spec string (minimal — SurrealDB fills in the rest). */
+function buildIndexSpec(opts: {
+  hnsw?: HnswOptions;
+  diskann?: DiskannOptions;
+  fulltext?: FulltextOptions;
+}): string | undefined {
+  if (opts.hnsw) {
+    const h = opts.hnsw;
+    let s = `HNSW DIMENSION ${h.dimension}`;
+    if (h.dist) s += ` DIST ${h.dist.toUpperCase()}`;
+    if (h.type) s += ` TYPE ${h.type.toUpperCase()}`;
+    if (h.efc !== undefined) s += ` EFC ${h.efc}`;
+    if (h.m !== undefined) s += ` M ${h.m}`;
+    return s;
+  }
+  if (opts.diskann) {
+    const d = opts.diskann;
+    let s = `DISKANN DIMENSION ${d.dimension}`;
+    if (d.dist) s += ` DIST ${d.dist.toUpperCase()}`;
+    if (d.type) s += ` TYPE ${d.type.toUpperCase()}`;
+    if (d.degree !== undefined) s += ` DEGREE ${d.degree}`;
+    if (d.l_build !== undefined) s += ` L_BUILD ${d.l_build}`;
+    if (d.alpha !== undefined) s += ` ALPHA ${d.alpha}`;
+    return s;
+  }
+  if (opts.fulltext) {
+    const f = opts.fulltext;
+    let s = `FULLTEXT ANALYZER ${f.analyzer}`;
+    if (Array.isArray(f.bm25)) s += ` BM25(${f.bm25[0]},${f.bm25[1]})`;
+    if (f.highlights) s += " HIGHLIGHTS";
+    return s;
+  }
+  return undefined;
 }
 
 /** A SurrealQL expression: a `surql\`…\`` bound query (bindings inlined) or a raw string. */
@@ -1882,13 +1950,25 @@ export class TableDef<Name extends string, S extends Shape> {
   index(
     name: string,
     fields: (keyof S & string)[],
-    opts: { unique?: boolean; count?: boolean } = {},
+    opts: {
+      unique?: boolean;
+      count?: boolean;
+      comment?: string;
+      /** A HNSW vector index over the field. */
+      hnsw?: HnswOptions;
+      /** A DISKANN vector index over the field. */
+      diskann?: DiskannOptions;
+      /** A full-text search index — needs a `defineAnalyzer` of `analyzer`'s name. */
+      fulltext?: FulltextOptions;
+    } = {},
   ) {
     const index: TableIndex = {
       name,
       fields,
       unique: opts.unique,
       count: opts.count,
+      comment: opts.comment,
+      spec: buildIndexSpec(opts),
     };
     return this.withConfig({
       indexes: [...(this.config.indexes ?? []), index],

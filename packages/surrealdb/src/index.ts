@@ -61,7 +61,10 @@ export { surrealDriver } from "./driver/surreal";
 export type {
   App,
   Create,
+  DiskannOptions,
   Expr,
+  FulltextOptions,
+  HnswOptions,
   Shape,
   StandaloneDef,
   SurrealMeta,

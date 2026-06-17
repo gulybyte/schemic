@@ -225,7 +225,8 @@ export function fromTableDef(t: TableDef<string, Shape>): StructTable {
     indexes.push({
       name: idx.name,
       cols: idx.count ? [] : idx.fields.map(escapeIdent),
-      index: idx.count ? "COUNT" : idx.unique ? "UNIQUE" : "",
+      index: idx.count ? "COUNT" : (idx.spec ?? (idx.unique ? "UNIQUE" : "")), // HNSW/DISKANN/FULLTEXT or UNIQUE/plain
+      ...(idx.comment !== undefined ? { comment: idx.comment } : {}),
     });
   }
 
