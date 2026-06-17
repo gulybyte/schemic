@@ -428,3 +428,104 @@ describe("KindEngine.canonical separates change-detection from faithful emit", (
     ]);
   });
 });
+
+// --- displayItems: per-field display granularity (grouped under the table) -----------------------
+
+describe("KindEngine.displayItems decomposes a change into per-field items", () => {
+  interface PTbl extends PortableObject {
+    kind: "tbl";
+    name: string;
+    cols: { name: string; type: string }[];
+  }
+  const reg = new KindRegistry();
+  const defineTbl = reg.define({
+    name: "tbl",
+    build: (name: string, cols: { name: string; type: string }[]): PTbl => ({
+      kind: "tbl",
+      name,
+      cols,
+    }),
+    lower: (t: PTbl) => t,
+    emit: (t: PTbl) => [
+      `DEFINE TABLE ${t.name}`,
+      ...t.cols.map(
+        (c) => `DEFINE FIELD ${c.name} ON ${t.name} TYPE ${c.type}`,
+      ),
+    ],
+    remove: (t: PTbl) => [`REMOVE TABLE ${t.name}`],
+    overwrite: (_p: PTbl, n: PTbl) => [`ALTER TABLE ${n.name}`],
+    // per-FIELD display items, each carrying its owning table for hierarchical grouping.
+    displayItems: (prev: PTbl | undefined, next: PTbl | undefined) => {
+      const before = new Map((prev?.cols ?? []).map((c) => [c.name, c.type]));
+      const after = new Map((next?.cols ?? []).map((c) => [c.name, c.type]));
+      const table = (next ?? prev)?.name ?? "";
+      const out: DiffItemLike[] = [];
+      for (const [n, t] of after) {
+        const b = before.get(n);
+        const key = `field:${table}:${n}`;
+        const ddl = `DEFINE FIELD ${n} ON ${table} TYPE ${t}`;
+        if (b === undefined)
+          out.push({ key, table, kind: "field", op: "add", ddl });
+        else if (b !== t)
+          out.push({
+            key,
+            table,
+            kind: "field",
+            op: "change",
+            before: `DEFINE FIELD ${n} ON ${table} TYPE ${b}`,
+            after: ddl,
+          });
+      }
+      for (const [n, t] of before)
+        if (!after.has(n))
+          out.push({
+            key: `field:${table}:${n}`,
+            table,
+            kind: "field",
+            op: "remove",
+            ddl: `REMOVE FIELD ${n} ON ${table}`,
+            old: `DEFINE FIELD ${n} ON ${table} TYPE ${t}`,
+          });
+      return out;
+    },
+  });
+
+  test("a field change yields a per-field item (grouped by table), not a whole-table item", () => {
+    const prev = [defineTbl("user", [{ name: "name", type: "string" }])];
+    const next = [defineTbl("user", [{ name: "name", type: "int" }])];
+    const diff = buildKindDiff(reg, prev, next);
+    expect(diff.items).toHaveLength(1);
+    const it = (diff.items ?? [])[0];
+    expect(it.key).toBe("field:user:name");
+    expect(it.table).toBe("user"); // hierarchy: the field is grouped under its table
+    expect(it.op).toBe("change");
+    // up/down stay whole-object (the kind's overwrite), unaffected by display granularity.
+    expect(diff.up).toEqual(["ALTER TABLE user"]);
+  });
+
+  test("`full` is per-field too (the displayItems(undefined, p) projection)", () => {
+    const next = [
+      defineTbl("user", [
+        { name: "id", type: "string" },
+        { name: "name", type: "string" },
+      ]),
+    ];
+    const full = buildKindDiff(reg, [], next).full ?? [];
+    expect(full.map((s) => s.key)).toEqual([
+      "field:user:id",
+      "field:user:name",
+    ]);
+    expect(full[1].ddl).toBe("DEFINE FIELD name ON user TYPE string");
+  });
+});
+
+// A loose shape mirroring core's DiffItem for the test's displayItems return (kept local + minimal).
+type DiffItemLike = {
+  key: string;
+  table: string;
+  kind: string;
+} & (
+  | { op: "add"; ddl: string }
+  | { op: "remove"; ddl: string; old: string }
+  | { op: "change"; before: string; after: string }
+);

@@ -43,6 +43,10 @@ export interface Ref {
   readonly name: string;
 }
 
+// `DiffItem` is a type-only import (erased at compile) — the display contract the `displayItems` hook
+// produces; no runtime cli->kind coupling, same arrangement as ./plan.ts.
+import type { DiffItem } from "../cli/diff";
+
 /**
  * What core needs to orchestrate ONE kind generically — it never inspects the specifics. The
  * change-vocabulary (`emit`/`remove`/`overwrite`) mirrors the Driver contract's, so a kind's behavior
@@ -76,6 +80,17 @@ export interface KindEngine<
    * migration needed". Affects ONLY classification; `emit`/`overwrite` (the DDL) are unaffected.
    */
   canonical?(portable: P): string;
+  /**
+   * Fine-grained DISPLAY items for a change of this object — so `schemic diff` shows per-SUB-OBJECT
+   * changes (a table decomposes into per-FIELD items: `field:user:name` changed), each carrying its
+   * owner `table` so the display GROUPS them hierarchically under it, instead of one coarse whole-object
+   * item. Called `(prev, next)`: a change diffs the two; `(undefined, next)` lists the object's
+   * sub-items as adds — the `--full` projection core uses for the full desired-state view. Default
+   * (omitted) = ONE whole-object item. DISPLAY ONLY — never affects up/down DDL (that is
+   * `emit`/`overwrite`); a structured driver reuses the per-field diff it already computes. Leave
+   * `DiffItem.file` unset (the caller attaches source linkage).
+   */
+  displayItems?(prev: P | undefined, next: P | undefined): DiffItem[];
   /**
    * Objects this one must be emitted AFTER — the cross-kind dependency edges (a field/index -> its
    * table; an edge table -> its in/out tables; an event -> its table + any function it calls). Drives

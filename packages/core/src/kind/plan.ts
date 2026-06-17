@@ -259,7 +259,11 @@ export function planKinds(
   return { up, down };
 }
 
-/** Per-object display items for a change set, in up order (creates/changes parent-first, drops child-first). */
+/**
+ * Display items for a change set, in up order (creates/changes parent-first, drops child-first). A kind
+ * with `displayItems` decomposes into FINE-grained sub-items (per-field, each carrying its `table` so
+ * the display groups them under it); otherwise it falls back to ONE whole-object item.
+ */
 function diffItems(
   registry: KindRegistry,
   nonRemoves: Change[],
@@ -269,6 +273,10 @@ function diffItems(
   const push = (c: Change) => {
     const e = registry.engine(c.kind);
     if (!e) return;
+    if (e.displayItems) {
+      items.push(...e.displayItems(c.prev, c.next));
+      return;
+    }
     const base = { key: itemKey(c), table: itemTable(c), kind: c.kind };
     if (c.op === "add" && c.next)
       items.push({ ...base, op: "add", ddl: e.emit(c.next).join("\n") });
@@ -305,12 +313,24 @@ export function buildKindDiff(
 ): Diff {
   const { nonRemoves, removes } = orderedChanges(registry, prev, next);
   const { up, down } = planKinds(registry, prev, next);
-  const full = orderedSchema(registry, next).map(
-    ({ engine, portable, node }) => ({
-      key: itemKey(node),
-      table: itemTable(node),
-      ddl: engine.emit(portable).join("\n"),
-    }),
+  // `full` mirrors the items' granularity: a kind with `displayItems` projects its object as per-
+  // sub-object adds (displayItems(undefined, portable)); otherwise one whole-object entry.
+  const full = orderedSchema(registry, next).flatMap(
+    ({ engine, portable, node }) => {
+      if (engine.displayItems)
+        return engine.displayItems(undefined, portable).map((it) => ({
+          key: it.key,
+          table: it.table,
+          ddl: it.op === "add" ? it.ddl : "",
+        }));
+      return [
+        {
+          key: itemKey(node),
+          table: itemTable(node),
+          ddl: engine.emit(portable).join("\n"),
+        },
+      ];
+    },
   );
   return { up, down, items: diffItems(registry, nonRemoves, removes), full };
 }

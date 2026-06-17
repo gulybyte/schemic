@@ -155,6 +155,20 @@ route through the dialect's canonical snapshot — Surreal `structuredSnapshot` 
 forms), so no introspect phantom-diff; `normalize`/`equal` stay fully generic (per-object compare ==
 structural equal); `exclude` stays `Set<string>` table-names.
 
+## 6c. RESOLVED during sanity-check — `displayItems` (per-field diff display)
+
+Both drivers flagged: `buildKindDiff` up/down is byte-exact, but `items`/`full` are per-OBJECT
+(table-level) while the fixed-slot engine is per-FIELD (`field:user:name`) — so wiring `Driver.diff` to
+production would coarsen `schemic diff` and break per-field display goldens. **Manuel's call: keep
+per-field display.** Fixed (additive): `KindEngine` gains optional `displayItems(prev, next):
+DiffItem[]`, used by `buildKindDiff` for `items` (a change diffs the two) and `full` (`displayItems(
+undefined, next)` projects per-sub-object adds); default = one whole-object item. A structured kind
+returns per-field items, each carrying its owner `table` so the display GROUPS them under it (the
+hierarchy Manuel wants — note it's a DISPLAY grouping via the item's `table`, distinct from the
+`deps`/`owner` ORDERING system). DISPLAY ONLY — up/down DDL untouched. Per-kind (so per-driver):
+Surreal reuses `diffSnapshots().items`, Postgres its per-column `overwrite` deltas; surreal omits it
+until the flip (facade stays test-only). Shipped on `feat/kind-registry` with tests.
+
 ## 7. Open items to finalize at execution
 
 - `introspectAll` signature — does `exclude` stay a `Set<string>` of table names, or generalize to a

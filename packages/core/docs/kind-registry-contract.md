@@ -66,6 +66,7 @@ interface KindEngine<A extends Definable, P extends PortableObject> {
   remove(portable: P): string[];                  // DROP DDL (removed object's `up`, added object's `down`)
   overwrite?(prev: P, next: P): string[];         // in-place CHANGE prev->next; omit => recreate (remove+emit)
   canonical?(portable: P): string;                // change-detection key; omit => emit(p).join("\n")
+  displayItems?(prev: P|undefined, next: P|undefined): DiffItem[];  // per-field DISPLAY items; omit => 1 whole-object item
   deps?(portable: P): Ref[];                       // objects this must emit AFTER (cross-kind edges)
   owner?(portable: P): Ref | undefined;           // cluster next to this (readability only; never beats deps)
   introspect?(conn: unknown): Promise<P[]>;       // live conn -> all objects of THIS kind (reverse)
@@ -89,6 +90,15 @@ Semantics core relies on:
   (`remove(prev)` + `emit(next)`). A structured kind (table) implements it for clause-level
   `ALTER`/`OVERWRITE` that preserves data.
 - **`deps` is correctness; `owner`/ordinal are presentation.** See §4.
+- **`displayItems` keeps per-field diff DISPLAY** (optional). The spine's default display is ONE item
+  per portable object — so a table change shows as a single `table:…` item. A structured kind overrides
+  `displayItems` to decompose a change into per-SUB-OBJECT items (per-FIELD: `field:user:name`), each
+  carrying its owner `table` so `schemic diff` GROUPS them hierarchically under their table — preserving
+  today's per-field output. Called `(prev, next)` for a change; `(undefined, next)` lists the object's
+  sub-items as adds (the `--full` projection). **DISPLAY ONLY** — never affects up/down DDL
+  (`emit`/`overwrite`). Reuse the per-field diff you already compute (Surreal `diffSnapshots().items`;
+  Postgres per-column from `overwrite`). Manuel's call: per-field display is the product behavior; both
+  drivers implement `displayItems` at the flip so the diff UX is unchanged.
 
 ### `KindRegistry.define` — registration preserves your DX
 
