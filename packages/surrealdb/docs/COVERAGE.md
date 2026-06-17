@@ -93,9 +93,11 @@ live parity suites (`test/parity/{struct,live,canonical}-parity.test.ts`) and th
 - [x] `DEFINE INDEX … FIELDS …` — `field.index()` (single) / `table.index(name, fields)` (composite)
 - [x] `UNIQUE` (single + composite) — `field.unique()` / `table.index(name, fields, { unique: true })`
 - [x] `COUNT` (materialized row-count, no `FIELDS`) — `table.index(name, [], { count: true })`
-- [ ] `SEARCH ANALYZER … BM25 …` (full-text) — no builder; not introspected
-- [ ] vector `MTREE | HNSW | DISKANN` — no builder; not introspected
-- [ ] index modifiers `CONCURRENTLY` / `DEFER`
+- [x] `COMMENT <string>` — `table.index(name, fields, { comment })`
+- [x] vector `HNSW DIMENSION … [DIST/TYPE/EFC/M]` — `table.index(name, [field], { hnsw: {…} })` (defaults stripped → round-trips)
+- [x] vector `DISKANN DIMENSION … [DIST/TYPE/DEGREE/L_BUILD/ALPHA]` — `table.index(name, [field], { diskann: {…} })`
+- [~] `FULLTEXT ANALYZER … [BM25] [HIGHLIGHTS]` (full-text) — `table.index(name, [field], { fulltext: {…} })`; needs `defineAnalyzer` (in progress)
+- [n/a] index build hints `CONCURRENTLY` / `DEFER` — apply-time only; not part of the stored schema (`INFO` doesn't return them)
 
 ## Events
 

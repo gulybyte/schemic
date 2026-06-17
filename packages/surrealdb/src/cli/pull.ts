@@ -464,6 +464,41 @@ function wireEndpoints(names: string[], ctx: RenderCtx): string | null {
     : `[${resolved.join(", ")}]`;
 }
 
+/**
+ * A vector/full-text index spec (canonical/minimal form) -> the `.index()` opts fragment, e.g.
+ * `HNSW DIMENSION 4 DIST COSINE` -> `hnsw: { dimension: 4, dist: "cosine" }`. Returns null for a
+ * plain/UNIQUE/COUNT spec (those are handled separately).
+ */
+function indexSpecOpts(spec: string): string | null {
+  if (spec.startsWith("HNSW ") || spec.startsWith("DISKANN ")) {
+    const algo = spec.startsWith("HNSW") ? "hnsw" : "diskann";
+    const toks = spec.split(/\s+/).slice(1);
+    const kv: Record<string, string> = {};
+    for (let i = 0; i < toks.length; i += 2) kv[toks[i]] = toks[i + 1] ?? "";
+    const f: string[] = [`dimension: ${kv.DIMENSION}`];
+    if (kv.DIST) f.push(`dist: ${JSON.stringify(kv.DIST.toLowerCase())}`);
+    if (kv.TYPE) f.push(`type: ${JSON.stringify(kv.TYPE.toLowerCase())}`);
+    if (kv.EFC) f.push(`efc: ${kv.EFC}`);
+    if (kv.M) f.push(`m: ${kv.M}`);
+    if (kv.DEGREE) f.push(`degree: ${kv.DEGREE}`);
+    if (kv.L_BUILD) f.push(`l_build: ${kv.L_BUILD}`);
+    if (kv.ALPHA) f.push(`alpha: ${kv.ALPHA}`);
+    return `${algo}: { ${f.join(", ")} }`;
+  }
+  const ft = /^FULLTEXT ANALYZER (\S+)(.*)$/.exec(spec);
+  if (ft) {
+    const f: string[] = [`analyzer: ${JSON.stringify(ft[1])}`];
+    const bm = /BM25\(([^)]*)\)/.exec(ft[2]);
+    if (bm) {
+      const [k, b] = bm[1].split(",").map((x) => x.trim());
+      f.push(`bm25: [${k}, ${b}]`);
+    }
+    if (/\bHIGHLIGHTS\b/.test(ft[2])) f.push("highlights: true");
+    return `fulltext: { ${f.join(", ")} }`;
+  }
+  return null;
+}
+
 /** Render just the `export const … = define…(…);` for one table (no import lines). */
 function renderTableConst(
   t: StructTable,
@@ -536,12 +571,16 @@ function renderTableConst(
   }
   for (const idx of t.indexes) {
     const cols = idx.cols.map((c) => JSON.stringify(c)).join(", ");
-    const opts =
-      idx.index === "UNIQUE"
-        ? ", { unique: true }"
-        : idx.index === "COUNT"
-          ? ", { count: true }"
-          : "";
+    const parts: string[] = [];
+    if (idx.index === "UNIQUE") parts.push("unique: true");
+    else if (idx.index === "COUNT") parts.push("count: true");
+    else {
+      const so = indexSpecOpts(idx.index); // HNSW/DISKANN/FULLTEXT -> hnsw/diskann/fulltext opts
+      if (so) parts.push(so);
+    }
+    if (idx.comment !== undefined)
+      parts.push(`comment: ${JSON.stringify(idx.comment)}`);
+    const opts = parts.length ? `, { ${parts.join(", ")} }` : "";
     close += `\n  .index(${JSON.stringify(idx.name)}, [${cols}]${opts})`;
   }
   for (const ev of t.events) {
