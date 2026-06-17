@@ -65,6 +65,7 @@ interface KindEngine<A extends Definable, P extends PortableObject> {
   emit(portable: P): string[];                    // CREATE DDL (fresh apply / added object's `up`)
   remove(portable: P): string[];                  // DROP DDL (removed object's `up`, added object's `down`)
   overwrite?(prev: P, next: P): string[];         // in-place CHANGE prev->next; omit => recreate (remove+emit)
+  canonical?(portable: P): string;                // change-detection key; omit => emit(p).join("\n")
   deps?(portable: P): Ref[];                       // objects this must emit AFTER (cross-kind edges)
   owner?(portable: P): Ref | undefined;           // cluster next to this (readability only; never beats deps)
   introspect?(conn: unknown): Promise<P[]>;       // live conn -> all objects of THIS kind (reverse)
@@ -73,9 +74,17 @@ interface KindEngine<A extends Definable, P extends PortableObject> {
 
 Semantics core relies on:
 
-- **Change detection** is `emit(prev).join("\n") === emit(next).join("\n")`. If your `emit` is stable
-  for an unchanged object, core classifies add/change/remove for free. (Same idea as the fixed-slot
-  engine's `before.ddl !== after.ddl`.)
+- **Change detection** defaults to `emit(prev).join("\n") === emit(next).join("\n")`. If your `emit` is
+  stable for an unchanged object, core classifies add/change/remove for free. (Same idea as the
+  fixed-slot engine's `before.ddl !== after.ddl`.)
+- **`canonical` separates change-detection from emit** (optional). Override it when your `emit` is
+  FAITHFUL but some clauses must be EXCLUDED from equality — the DB rewrites them on read (Postgres
+  `'x'` -> `'x'::text`, `a>0` -> `(a>0)`) or never introspects them (a COMMENT, an index) — so a
+  faithful `emit` would phantom-diff a freshly-applied schema against `introspect`. Return `emit` MINUS
+  those clauses: they stay create-time faithful in `emit` but don't count as changes. `canonical(a) ===
+  canonical(b)` MUST mean "no migration needed". Affects ONLY classification; the emitted DDL is
+  unaffected. (Surreal doesn't need it — its `INFO STRUCTURE` forms are introspect-matchable, so emit
+  IS canonical; Postgres does, for `DEFAULT`/`CHECK`/`GENERATED`/`COMMENT`/`UNIQUE`-index.)
 - **`overwrite` is optional.** An opaque kind (function/access) omits it and core recreates
   (`remove(prev)` + `emit(next)`). A structured kind (table) implements it for clause-level
   `ALTER`/`OVERWRITE` that preserves data.

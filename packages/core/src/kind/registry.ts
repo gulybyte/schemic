@@ -66,6 +66,17 @@ export interface KindEngine<
    */
   overwrite?(prev: P, next: P): string[];
   /**
+   * The CANONICAL change-detection key: the spine treats prev/next of the same object as a CHANGE iff
+   * their `canonical` differs. Default (omitted) = `emit(portable).join("\n")` — so a kind whose `emit`
+   * is already its canonical form needs nothing. Override when `emit` is FAITHFUL but some clauses must
+   * be EXCLUDED from equality — because the DB rewrites them on read (PG `'x'` -> `'x'::text`, `a>0` ->
+   * `(a>0)`) or never introspects them (a COMMENT, an index) — so a faithful `emit` would phantom-diff a
+   * freshly-applied schema against `introspect`. Return `emit` MINUS those clauses: they stay create-time
+   * faithful in `emit`, but don't count as changes. `canonical(a) === canonical(b)` MUST mean "no
+   * migration needed". Affects ONLY classification; `emit`/`overwrite` (the DDL) are unaffected.
+   */
+  canonical?(portable: P): string;
+  /**
    * Objects this one must be emitted AFTER — the cross-kind dependency edges (a field/index -> its
    * table; an edge table -> its in/out tables; an event -> its table + any function it calls). Drives
    * the topological sort in ./plan.ts. Omitted = no dependencies.

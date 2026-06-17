@@ -366,3 +366,65 @@ describe("buildKindDiff produces up/down + display items + full", () => {
     expect(full[0].ddl).toContain("DEFINE FIELD age ON user TYPE int");
   });
 });
+
+// --- canonical change-detection hook (emit faithful, equality normalized) ------------------------
+
+describe("KindEngine.canonical separates change-detection from faithful emit", () => {
+  // A kind whose emit is FAITHFUL (carries a COMMENT the DB never introspects), but whose canonical
+  // EXCLUDES it — so a comment-only delta, or a faithful-vs-introspected (comment-less) pair, is NOT a
+  // phantom change. Mirrors postgres: DEFAULT/CHECK/COMMENT emit-faithful but dropped from equality.
+  interface PDoc extends PortableObject {
+    kind: "doc";
+    name: string;
+    body: string;
+    comment?: string;
+  }
+  const reg = new KindRegistry();
+  const defineDoc = reg.define({
+    name: "doc",
+    build: (name: string, body: string, comment?: string): PDoc => ({
+      kind: "doc",
+      name,
+      body,
+      ...(comment !== undefined ? { comment } : {}),
+    }),
+    lower: (d: PDoc) => d,
+    // emit is FAITHFUL — includes the comment (create-time).
+    emit: (d: PDoc) => [
+      `DEFINE DOC ${d.name} BODY ${d.body}`,
+      ...(d.comment !== undefined
+        ? [`COMMENT ON DOC ${d.name} ${d.comment}`]
+        : []),
+    ],
+    remove: (d: PDoc) => [`REMOVE DOC ${d.name}`],
+    overwrite: (_p: PDoc, n: PDoc) => [`REDEFINE DOC ${n.name} BODY ${n.body}`],
+    // canonical EXCLUDES the comment — it's create-time-only, never a change.
+    canonical: (d: PDoc) => `DEFINE DOC ${d.name} BODY ${d.body}`,
+  });
+
+  test("a comment-only delta is NOT a change (faithful emit, normalized equality)", () => {
+    const prev = [defineDoc("a", "x")];
+    const next = [defineDoc("a", "x", "a note")];
+    expect(planKinds(reg, prev, next)).toEqual({ up: [], down: [] });
+  });
+
+  test("introspected (comment-less) vs authored (commented) does not phantom-diff", () => {
+    const authored = [defineDoc("a", "x", "a note")];
+    const introspected = [defineDoc("a", "x")]; // DB never read the comment back
+    expect(planKinds(reg, introspected, authored)).toEqual({
+      up: [],
+      down: [],
+    });
+  });
+
+  test("a real body change IS detected (and emit stays faithful for a fresh apply)", () => {
+    const prev = [defineDoc("a", "x", "a note")];
+    const next = [defineDoc("a", "y", "a note")];
+    expect(planKinds(reg, prev, next).up).toEqual(["REDEFINE DOC a BODY y"]);
+    // fresh apply emits the comment (faithful), even though canonical ignores it.
+    expect(emitKinds(reg, [defineDoc("a", "x", "a note")])).toEqual([
+      "DEFINE DOC a BODY x",
+      "COMMENT ON DOC a a note",
+    ]);
+  });
+});

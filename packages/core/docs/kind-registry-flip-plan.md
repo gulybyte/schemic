@@ -112,6 +112,18 @@ shared CLI can't speak two contracts). So:
 - **Hidden PortableDb consumers.** Audit for any non-command consumer of `PortableDb`/`diffPortable`
   before deleting; shim only if found.
 
+## 6a. RESOLVED during sanity-check — `canonical` change-detection hook
+
+Postgres surfaced a real gap: the spine detected change via emit-string equality, but pg's `emit` is
+FAITHFUL (DEFAULT/CHECK/GENERATED/COMMENT/UNIQUE-index) while its equality DROPS those (PG rewrites
+exprs on read; comment/index aren't introspected) — so every such table would phantom-diff a clean
+apply against `introspectAll`, losing `diff`/`check` idempotency. **Fixed (additive):** `KindEngine`
+gains an optional `canonical(portable): string` used for change-detection, defaulting to
+`emit(p).join("\n")`. Pg's table kind returns emit MINUS the rewrite-prone/non-introspected clauses,
+restoring today's emit/equal asymmetry exactly; emit stays faithful for fresh apply. Surreal is
+unaffected (omits it). Shipped on `feat/kind-registry` with tests; carries the multi-DB spike's
+normalize/equal knowledge into the kind model (risk §6, bullet 1).
+
 ## 7. Open items to finalize at execution
 
 - `introspectAll` signature — does `exclude` stay a `Set<string>` of table names, or generalize to a

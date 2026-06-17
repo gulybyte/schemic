@@ -151,6 +151,10 @@ export interface KindPlan {
   down: string[];
 }
 
+/** The canonical change-detection key for an object — the kind's `canonical`, else its emitted DDL. */
+const canonicalOf = (engine: KindEngine, p: PortableObject): string =>
+  engine.canonical?.(p) ?? engine.emit(p).join("\n");
+
 const orderNodeOf = (
   engine: KindEngine,
   portable: PortableObject,
@@ -191,7 +195,7 @@ function orderedChanges(
     const node = orderNodeOf(engine, portable);
     if (p && !n) changes.push({ op: "remove", prev: p, ...node });
     else if (!p && n) changes.push({ op: "add", next: n, ...node });
-    else if (p && n && engine.emit(p).join("\n") !== engine.emit(n).join("\n"))
+    else if (p && n && canonicalOf(engine, p) !== canonicalOf(engine, n))
       changes.push({ op: "change", prev: p, next: n, ...node });
   }
   const ord = (kind: string) => registry.ordinal(kind);
