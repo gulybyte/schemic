@@ -17,14 +17,18 @@
 // calling another fn::). Edges to functions outside the diff are ignored by the spine, so over-reporting
 // is harmless. (SEARCH index -> analyzer edges land when the analyzer kind is registered.)
 
-import type { AnyTable, AuthoredDef, PortableDb, Ref } from "@schemic/core";
+import type { AnyTable, AuthoredDef, Ref } from "@schemic/core";
 import type { Surreal } from "surrealdb";
 import { schemaStruct } from "../cli/lower";
 import { normalizeDb } from "../cli/struct";
-import type { DbStructured } from "../cli/structure";
+import type {
+  DbStructured,
+  StructAccess,
+  StructFunction,
+  StructTable,
+} from "../cli/structure";
 import { introspectStructured, structuredSnapshot } from "../cli/structure";
 import type { DefineStatement } from "../ddl";
-import { lowerDb } from "../driver/surreal-ir";
 import type { Shape, StandaloneDef, TableDef } from "../pure";
 import type { SurrealPortable } from "./portable";
 
@@ -56,11 +60,13 @@ function depsOf(ddls: string[], base: Ref[] = [], self?: string): Ref[] {
  * The shared core: a NORMALIZED Struct IR -> per-kind portable objects. Renders each object's canonical
  * `DEFINE` statement(s) via `structuredSnapshot`, then partitions: a {@link PTable} per table (head +
  * nested fields), a {@link PIndex} per index, a {@link PEvent} per event, and the db-level
- * {@link PFunction}/{@link PAccess} objects — each carrying its `fn::`/endpoint dependency edges.
- * Both entry points ({@link explodeSchema} from authoring, {@link decompose} from a {@link PortableDb})
- * feed their normalized Struct here, so they produce byte-identical portable objects.
+ * {@link PFunction}/{@link PAccess} objects — each carrying its `fn::`/endpoint dependency edges. A
+ * table also carries its normalized {@link StructTable} and the opaque kinds their `native` struct, so
+ * `renderSchema` reconstructs `DbStructured` without re-parsing DDL. Both entry points
+ * ({@link explodeSchema} from authoring, {@link introspectAll} from a live DB) feed their normalized
+ * Struct here, so they produce byte-identical portable objects.
  */
-function fromStructured(db: DbStructured): SurrealPortable[] {
+export function fromStructured(db: DbStructured): SurrealPortable[] {
   const stmts = Object.values(structuredSnapshot(db).statements);
   const of = (kind: DefineStatement["kind"]) =>
     stmts.filter((s) => s.kind === kind);
@@ -85,7 +91,7 @@ function fromStructured(db: DbStructured): SurrealPortable[] {
     for (const t of st.kind.out ?? [])
       endpoints.push({ kind: "table", name: t });
     const deps = depsOf([head.ddl, ...fields.map((f) => f.ddl)], endpoints);
-    out.push({ kind: "table", name: st.name, head, fields, deps });
+    out.push({ kind: "table", name: st.name, head, fields, deps, struct: st });
   }
 
   for (const s of of("index"))
@@ -98,17 +104,48 @@ function fromStructured(db: DbStructured): SurrealPortable[] {
       stmt: s,
       deps: depsOf([s.ddl], [{ kind: "table", name: s.table ?? "" }]),
     });
-  for (const s of of("function"))
-    out.push({
-      kind: "function",
-      name: s.name,
-      stmt: s,
-      deps: depsOf([s.ddl], [], s.name),
-    });
-  for (const s of of("access"))
-    out.push({ kind: "access", name: s.name, stmt: s, deps: depsOf([s.ddl]) });
+  // The opaque kinds carry their structured `native` (matched by name) for renderSchema.
+  const fnByName = new Map(db.functions.map((f) => [f.name, f]));
+  const accByName = new Map(db.accesses.map((a) => [a.name, a]));
+  for (const s of of("function")) {
+    const native = fnByName.get(s.name);
+    if (native)
+      out.push({
+        kind: "function",
+        name: s.name,
+        stmt: s,
+        deps: depsOf([s.ddl], [], s.name),
+        native,
+      });
+  }
+  for (const s of of("access")) {
+    const native = accByName.get(s.name);
+    if (native)
+      out.push({
+        kind: "access",
+        name: s.name,
+        stmt: s,
+        deps: depsOf([s.ddl]),
+        native,
+      });
+  }
 
   return out;
+}
+
+/** Reassemble `DbStructured` from per-kind portable objects — the inverse of {@link fromStructured},
+ *  for `renderSchema` TS codegen. Tables carry their full normalized struct; the opaque kinds their
+ *  `native`. (No DDL re-parsing: the structured data rides on the objects per flip-plan §6b.) */
+export function toStructured(objects: SurrealPortable[]): DbStructured {
+  const tables: StructTable[] = [];
+  const functions: StructFunction[] = [];
+  const accesses: StructAccess[] = [];
+  for (const o of objects) {
+    if (o.kind === "table") tables.push(o.struct);
+    else if (o.kind === "function") functions.push(o.native);
+    else if (o.kind === "access") accesses.push(o.native);
+  }
+  return { tables, functions, accesses };
 }
 
 /**
@@ -126,16 +163,6 @@ export function explodeSchema(
       defs as unknown as StandaloneDef[],
     ),
   );
-}
-
-/**
- * The FACADE adapter: a fixed-slot {@link PortableDb} -> per-kind portable objects. This is what
- * `Driver.diff(prev, next)` will route through at the flip — `buildKindDiff(registry, decompose(prev),
- * decompose(next))`. We normalize the same way the legacy snapshot does (`normalizeDb(lowerDb(db))`) so
- * a decomposed `PortableDb` and an `explodeSchema`'d authoring side converge to identical objects.
- */
-export function decompose(db: PortableDb): SurrealPortable[] {
-  return fromStructured(normalizeDb(lowerDb(db)));
 }
 
 /**

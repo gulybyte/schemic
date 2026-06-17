@@ -11,6 +11,11 @@
 // table kind owns field-level diff inside its `overwrite`.
 
 import type { PortableObject, Ref } from "@schemic/core";
+import type {
+  StructAccess,
+  StructFunction,
+  StructTable,
+} from "../cli/structure";
 import type { DefineStatement } from "../ddl";
 
 /**
@@ -27,6 +32,12 @@ export interface PTable extends PortableObject {
   readonly fields: DefineStatement[];
   /** Objects this table must be emitted AFTER — a RELATION's in/out tables. */
   readonly deps: Ref[];
+  /**
+   * The NORMALIZED structured table (fields/indexes/events nested) — carried so `renderSchema` can
+   * reconstruct `DbStructured` for TS codegen WITHOUT re-parsing rendered DDL (the robust read of
+   * flip-plan §6b's "derive structured from your portable objects"; emit/diff still use head/fields).
+   */
+  readonly struct: StructTable;
 }
 
 /** An index's portable form: the `DEFINE INDEX` statement + its owning table. */
@@ -56,6 +67,8 @@ export interface PFunction extends PortableObject {
   readonly name: string;
   readonly stmt: DefineStatement;
   readonly deps: Ref[];
+  /** The structured function (the opaque kind's `native` payload) — for `renderSchema` TS codegen. */
+  readonly native: StructFunction;
 }
 
 /**
@@ -67,6 +80,8 @@ export interface PAccess extends PortableObject {
   readonly name: string;
   readonly stmt: DefineStatement;
   readonly deps: Ref[];
+  /** The structured access (the opaque kind's `native` payload) — for `renderSchema` TS codegen. */
+  readonly native: StructAccess;
 }
 
 /** Every portable object a SurrealDB schema lowers to. */

@@ -1,8 +1,10 @@
 // Kind-registry parity (docs/kind-registry-contract.md §3): the generic kind-registry path must reproduce
-// the fixed-slot `surrealDriver.diff` for the `table`/`index`/`event`/`function`/`access` kinds. We assert the STRONGEST
-// statement — that `planKinds(registry, lowerAll(prev), lowerAll(next)).{up,down}` equals
-// `surrealDriver.diff(lower(prev), lower(next)).{up,down}` — across add/change/remove of every kind, so
-// the engines stay byte-exact with the production path (and the test self-maintains: no hand-written DDL).
+// the driver's INTERNAL clause-level engine (`diffSnapshots` over `buildSnapshot`) for the
+// `table`/`index`/`event`/`function`/`access` kinds. We assert the STRONGEST statement — that
+// `planKinds(registry, lowerAll(prev), lowerAll(next)).{up,down}` equals the `diffSnapshots` up/down —
+// across add/change/remove of every kind, so the kind engines stay byte-exact with the engine they
+// delegate to (and the test self-maintains: no hand-written DDL). At the Option-A flip the registry IS
+// the production diff path (the old whole-DB `surrealDriver.diff` is gone), so this pins the wrapper.
 //
 // Each diff scenario touches ONE table, so statement order is unambiguous. Cross-table EMIT ordering is
 // asserted separately via `emitKinds` (the registry uses dependency ordering — strictly more correct
@@ -25,22 +27,25 @@ import {
   surql,
   surrealDriver,
 } from "@schemic/surrealdb";
-import { decompose } from "../../src/kinds/explode";
+import { schemaStruct } from "../../src/cli/lower";
+import { structuredSnapshot } from "../../src/cli/structure";
+import { diffSnapshots } from "../../src/cli/surreal-diff";
 import { lowerAll, surrealKinds } from "../../src/kinds/registry";
 
-// Lib-authored tables/defs vs the driver's src-typed signatures: cast at the seam (as buildSnapshot does).
+// Lib-authored tables/defs vs the src-typed signatures: cast at the seam (as buildSnapshot does).
 // biome-ignore lint/suspicious/noExplicitAny: bridge the src-vs-lib TableDef duality at the test seam.
 type AnyArr = any[];
+// The driver's INTERNAL clause-level engine over the CANONICAL snapshot (`structuredSnapshot` — the
+// SAME renderer the registry's `explode` uses, so divergences like DEFAULT quote style match).
 const legacy = (
   prevT: AnyArr,
   nextT: AnyArr,
   prevD: AnyArr = [],
   nextD: AnyArr = [],
 ) => {
-  const prev = surrealDriver.lower(prevT, prevD);
-  const next = surrealDriver.lower(nextT, nextD);
-  const d = surrealDriver.diff(prev, next);
-  return { up: d.up, down: d.down };
+  const snap = (t: AnyArr, d: AnyArr) => structuredSnapshot(schemaStruct(t, d));
+  const diff = diffSnapshots(snap(prevT, prevD), snap(nextT, nextD));
+  return { up: diff.up, down: diff.down };
 };
 const registry = (
   prevT: AnyArr,
@@ -277,10 +282,14 @@ describe("buildKindDiff + snapshot round-trip", () => {
     expect({ up: diff.up, down: diff.down }).toEqual(
       planKinds(surrealKinds, prev, next),
     );
+    // PER-FIELD display (Manuel's call, via the table kind's displayItems): a changed table reports
+    // FIELD-level items (not a coarse whole-table item) — name changed, email added.
     const items = diff.items ?? [];
-    expect(items.find((i) => i.key === "table::user")?.op).toBe("change");
+    expect(items.find((i) => i.key === "field:user:name")?.op).toBe("change");
+    expect(items.find((i) => i.key === "field:user:email")?.op).toBe("add");
+    // A freshly-added table still surfaces its head + fields as add items.
     expect(items.find((i) => i.key === "table::post")?.op).toBe("add");
-    expect((diff.full ?? []).map((s) => s.key)).toContain("table::post");
+    expect((diff.full ?? []).map((s) => s.key)).toContain("field:post:title");
   });
 
   test("snapshotKinds -> JSON -> snapshotObjects round-trips to a zero diff", () => {
@@ -387,80 +396,35 @@ describe("fn:: dependency ordering (function emits before its caller)", () => {
   });
 });
 
-// The FACADE path the flip will use: Driver.diff(prev,next) = buildKindDiff(registry,
-// decompose(prevDb), decompose(nextDb)). decompose takes a fixed-slot PortableDb (the snapshot/lowered
-// side), so this exercises the real adapter — not just the authoring `explode`. Must equal surrealDriver.diff.
-describe("facade decompose parity (PortableDb -> registry)", () => {
-  const facade = (
-    prevT: AnyArr,
-    nextT: AnyArr,
-    prevD: AnyArr = [],
-    nextD: AnyArr = [],
-  ) => {
-    const prevDb = surrealDriver.lower(prevT, prevD);
-    const nextDb = surrealDriver.lower(nextT, nextD);
-    const d = buildKindDiff(surrealKinds, decompose(prevDb), decompose(nextDb));
-    return { up: d.up, down: d.down };
-  };
-  const facadeParity = (
-    prevT: AnyArr,
-    nextT: AnyArr,
-    prevD: AnyArr = [],
-    nextD: AnyArr = [],
-  ) =>
-    expect(facade(prevT, nextT, prevD, nextD)).toEqual(
-      legacy(prevT, nextT, prevD, nextD),
-    );
-
-  test("field change", () => {
-    facadeParity(
-      [defineTable("user", { id: s.string(), name: s.string() })],
-      [defineTable("user", { id: s.string(), name: s.string().optional() })],
-    );
-  });
-
-  test("add a table", () => {
-    facadeParity(
-      [User()],
-      [User(), defineTable("post", { id: s.string(), title: s.string() })],
-    );
-  });
-
-  test("add an index", () => {
-    facadeParity(
-      [defineTable("t", { id: s.string(), code: s.string() })],
-      [defineTable("t", { id: s.string(), code: s.string().unique() })],
-    );
-  });
-
-  test("add an event", () => {
-    facadeParity(
-      [defineTable("user", { id: s.string(), n: s.int() })],
+// The flipped Driver shape: the production surreal driver IS the kind registry now — the whole-DB
+// `lower`/`emit`/`diff`/`introspect`/`normalize`/`equal` methods are GONE, replaced by
+// `registry`/`explode`/`introspectAll`. Smoke-test the new surface.
+describe("flipped surrealDriver shape", () => {
+  test("exposes registry + explode + introspectAll; drops the retired IR methods", () => {
+    expect(surrealDriver.registry).toBe(surrealKinds);
+    const objs = surrealDriver.explode(
       [
-        defineTable("user", { id: s.string(), n: s.int() }).event("on_n", {
-          // biome-ignore lint/suspicious/noThenProperty: event DSL "then" clause, not a thenable.
-          then: surql`UPDATE $after.id SET touched = true`,
+        defineTable("user", {
+          id: s.string(),
+          name: s.string().unique(),
         }),
-      ],
+      ] as never,
+      [] as never,
     );
-  });
-
-  test("change a function", () => {
-    const a = defineFunction("add", { a: s.int(), b: s.int() })
-      .returns(s.int())
-      .body(surql`RETURN $a + $b`);
-    const b = defineFunction("add", { a: s.int(), b: s.int() })
-      .returns(s.int())
-      .body(surql`RETURN $a * $b`);
-    facadeParity([], [], [a], [b]);
-  });
-
-  test("add an access", () => {
-    facadeParity(
-      [],
-      [],
-      [],
-      [defineAccess("acct").record().signin(surql`SELECT 1`)],
-    );
+    // explode fans the table into a table object + its index, each tagged by kind.
+    expect(objs.map((o) => o.kind).sort()).toEqual(["index", "table"]);
+    expect(typeof surrealDriver.introspectAll).toBe("function");
+    for (const m of [
+      "lower",
+      "emit",
+      "diff",
+      "introspect",
+      "normalize",
+      "equal",
+    ]) {
+      expect(
+        (surrealDriver as unknown as Record<string, unknown>)[m],
+      ).toBeUndefined();
+    }
   });
 });

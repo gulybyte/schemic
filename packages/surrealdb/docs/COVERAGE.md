@@ -181,19 +181,20 @@ not registered yet — so the gaps stay visible. `field` is **substrate nested i
 A kind is `[x]` in a column only when that capability round-trips through the **registry path**
 (`KindEngine` on `src/kinds/`), independently of the still-live fixed-slot path.
 
-**Status:** every kind SurrealDB currently emits — `table`, `index`, `event`, `function`, `access` — is
-**registry-complete + parity-green**: the registry path reproduces `surrealDriver.diff` byte-for-byte
-across add/change/remove of every one, asserted in `test/unit/kind-parity.test.ts`. The kinds run
-**alongside** the legacy `Driver` (facade-test phase — not wired into production). Built + proven:
-- the facade adapter (`decompose`: `PortableDb → PortableObject[]`) — `buildKindDiff(registry,
-  decompose(prev), decompose(next))` equals `surrealDriver.diff` on `up`/`down`;
-- the reverse hook (`introspectAll`) — live round-trips on SurrealDB 3.1.3 (zero phantom diff).
+**Status: FLIPPED (Option-A).** The production `surrealDriver` IS the kind registry — the whole-DB
+`lower`/`emit`/`diff`/`introspect`/`normalize`/`equal` methods are GONE, replaced by
+`registry`/`explode`/`introspectAll` + the command capabilities. Core orchestrates schema ops
+(`lowerSchema`/`buildKindDiff`/`emitKinds`/`orderObjects`) generically over the registry; the Struct-IR
+(`DbStructured`) + `diffSnapshots` remain the driver's INTERNAL clause-level engine the kinds delegate
+to. Every kind SurrealDB emits — `table`, `index`, `event`, `function`, `access` — round-trips:
+- the kind engines stay byte-exact with the internal `diffSnapshots` engine (`test/unit/kind-parity.test.ts`);
+- `introspectAll` live round-trips on SurrealDB 3.1.3 (zero phantom diff, `test/parity/introspect-kinds.test.ts`);
+- per-field diff display via the table kind's `displayItems` (Manuel's call — field-level items grouped under their table);
+- `renderSchema` reconstructs `DbStructured` from the portable objects (the normalized struct rides on
+  them — `PTable.struct` + the opaque kinds' `native`), no DDL re-parse.
 
-Wiring the facade into the production `Driver` is **deferred to the coordinated Option-A flip**: the
-registry's diff `up`/`down` is byte-exact, but its `items`/`full` are per-kind-object (a field change is
-one `table::user` item) where the legacy display is per-statement (`field:user:name`). Swapping
-`Driver.diff` now would change `schemic diff`'s display — a UX call being settled before the flip — so per
-the "residual delta → facade test-only" rule it stays test-only until then.
+Verified green on the flip base: typecheck 0, unit 354, live parity 61, live 11, e2e 19/19 (the real CLI
+through the generic registry path).
 
 Introspect is via the registry's reverse hook `introspectAll` (one `INFO … STRUCTURE` read fanned per
 kind, canonicalized through `structuredSnapshot` like `lower`), live-validated to round-trip on SurrealDB
