@@ -105,6 +105,15 @@ shared CLI can't speak two contracts). So:
   normalize/equal problem the multi-DB spike already solved per-driver; preserve it inside each
   `KindEngine.lower` + the driver's introspect. The facade's PGlite/live round-trip tests already guard
   it — keep them.
+- **`introspectAll` COMPLETENESS (presence parity).** Two distinct phantom-diff failure modes — keep
+  them straight: (1) CONTENT — an object present on both sides whose emit carries clauses the DB rewrites
+  or doesn't introspect → fixed by `canonical` (strip those clauses from equality). (2) PRESENCE — a
+  registered kind that `emit` creates but `introspectAll` doesn't return → a phantom add/remove vs live
+  that `canonical` CANNOT touch. **Rule: `introspectAll` must return objects for every registered kind
+  that participates in diff** (e.g. pg reads unique indexes from `pg_catalog` so the `index` kind
+  round-trips, rather than folding indexes into the table as create-only). A kind that is genuinely
+  create-only-and-uninspectable should not be diffed against live at all — flag it to core-dev if such a
+  case exists; the default expectation is full round-trip.
 - **CLI breadth.** Many command paths touch `PortableDb`. Mitigate with the in-core fake-driver test
   (step 2) exercising each re-routed path before real drivers, so the contract is proven generically.
 - **Big-bang coordination.** Both drivers + core must converge on one branch. Mitigate by drafting this
