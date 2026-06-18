@@ -14,6 +14,12 @@ live parity suites (`test/parity/{struct,live,canonical}-parity.test.ts`) and th
 > Scope: this tracks the **schema/DDL** surface (the things a migration defines). Runtime query
 > features (SELECT/graph traversal/LIVE/etc.) are out of scope — they belong to the query layer.
 
+> **Worked examples:** every `[x]` feature below has a runnable, verified entry in the
+> [reference cookbook](../examples) (`examples/*.ts`) pairing the `s.*` / `define*` authoring with the
+> exact SurrealQL it emits — asserted by `test/examples/reference.test.ts` (`emit(defs) === ddl`), so
+> the catalog can't drift. See the per-driver
+> [example-cookbook convention](../../core/docs/EXAMPLE-COOKBOOK-CONVENTION.md).
+
 ---
 
 ## Tables
