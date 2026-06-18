@@ -3,25 +3,22 @@
  * FULLTEXT index depends on the analyzer it names (see `04-indexes.ts`). Tokenizers + filters are
  * uppercased on emit to match SurrealDB's stored form.
  */
-import { defineAnalyzer } from "../src/pure";
-import type { Example, ExampleGroup } from "./_kit";
+import { type ExampleGroup, ex } from "./_kit";
 
-const examples: Example[] = [
-  {
+const examples = [
+  ex({
     title: "Analyzer with tokenizers + filters",
-    defs: [
-      defineAnalyzer("english", {
-        tokenizers: ["blank", "class"],
-        filters: ["lowercase", "snowball(english)"],
-      }),
-    ],
+    code: `defineAnalyzer("english", {
+  tokenizers: ["blank", "class"],
+  filters: ["lowercase", "snowball(english)"],
+})`,
     ddl: `DEFINE ANALYZER english TOKENIZERS BLANK, CLASS FILTERS LOWERCASE, SNOWBALL(ENGLISH);`,
-  },
-  {
+  }),
+  ex({
     title: "Analyzer with tokenizers only",
-    defs: [defineAnalyzer("simple", { tokenizers: ["blank"] })],
+    code: `defineAnalyzer("simple", { tokenizers: ["blank"] })`,
     ddl: `DEFINE ANALYZER simple TOKENIZERS BLANK;`,
-  },
+  }),
 ];
 
 export const group: ExampleGroup = {

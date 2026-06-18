@@ -6,10 +6,9 @@
  * chainable escape hatch — see packages/core/docs/ESCAPE-HATCH-CONVENTION.md). `.$internal()` keeps a
  * field DB-managed and hidden from the public surface (PERMISSIONS NONE).
  */
-import { defineTable, s } from "../src/pure";
-import type { Example, ExampleGroup } from "./_kit";
+import { type ExampleGroup, ex } from "./_kit";
 
-/** A domain type with no wire representation of its own. */
+/** A domain type with no wire representation of its own — referenced by the snippets below (via `scope`). */
 class Money {
   constructor(readonly cents: number) {}
   toString() {
@@ -17,47 +16,39 @@ class Money {
   }
 }
 
-const examples: Example[] = [
-  {
+const examples = [
+  ex({
     title: ".$surreal(wire, codec) — store an instanceof type as a string",
     note: "App type = Money, wire/DDL type = string; the codec maps both ways. Clears the no-DDL brand.",
-    defs: [
-      defineTable("wallet", {
-        id: s.string(),
-        price: s.instanceof(Money).$surreal(s.string(), {
-          encode: (m) => m.toString(),
-          decode: (v) => new Money(Math.round(Number(v) * 100)),
-        }),
-      }),
-    ],
+    scope: { Money },
+    code: `defineTable("wallet", {
+  id: s.string(),
+  price: s.instanceof(Money).$surreal(s.string(), {
+    encode: (m) => m.toString(),
+    decode: (v) => new Money(Math.round(Number(v) * 100)),
+  }),
+})`,
     ddl: `DEFINE TABLE wallet TYPE NORMAL SCHEMAFULL;
 DEFINE FIELD price ON TABLE wallet TYPE string;`,
-  },
-  {
+  }),
+  ex({
     title: ".$surreal on s.custom — store a Set as array<string>",
-    defs: [
-      defineTable("bag", {
-        id: s.string(),
-        tags: s.custom<Set<string>>().$surreal(s.array(s.string()), {
-          encode: (set) => [...set],
-          decode: (arr) => new Set(arr),
-        }),
-      }),
-    ],
+    code: `defineTable("bag", {
+  id: s.string(),
+  tags: s.custom<Set<string>>().$surreal(s.array(s.string()), {
+    encode: (set) => [...set],
+    decode: (arr) => new Set(arr),
+  }),
+})`,
     ddl: `DEFINE TABLE bag TYPE NORMAL SCHEMAFULL;
 DEFINE FIELD tags ON TABLE bag TYPE array<string>;`,
-  },
-  {
+  }),
+  ex({
     title: ".$internal() — DB-managed, client-hidden field (PERMISSIONS NONE)",
-    defs: [
-      defineTable("account", {
-        id: s.string(),
-        passhash: s.string().$internal(),
-      }),
-    ],
+    code: `defineTable("account", { id: s.string(), passhash: s.string().$internal() })`,
     ddl: `DEFINE TABLE account TYPE NORMAL SCHEMAFULL;
 DEFINE FIELD passhash ON TABLE account TYPE string PERMISSIONS NONE;`,
-  },
+  }),
 ];
 
 export const group: ExampleGroup = {

@@ -1,9 +1,10 @@
 /**
  * The @schemic/surrealdb REFERENCE example suite — a verified cookbook of authoring -> SurrealQL DDL.
  *
- * Every entry pairs `s.*` / `define*` authoring with the EXACT DDL it emits; `test/examples/reference.test.ts`
- * asserts `emit(defs) === ddl` for all of them, so this catalog can never drift from the driver. Browse
- * the per-area files for quick reference; run the test to verify everything still emits as documented.
+ * Every entry is authored as a `code` snippet whose `defs` are derived from it; `test/examples/
+ * reference.test.ts` asserts `emit(defs) === ddl` (i.e. `emit(eval(code)) === ddl`), so `code`, `defs`,
+ * and the golden DDL can never drift apart. Browse the per-area files for quick reference; the `code`
+ * string is also what the website examples gallery renders (via the generated manifest over `allGroups`).
  *
  * See packages/core/docs/EXAMPLE-COOKBOOK-CONVENTION.md for the standing per-driver convention.
  */
@@ -19,7 +20,7 @@ import { group as analyzers } from "./08-analyzers";
 import { group as escapeHatch } from "./09-escape-hatch";
 
 export type { Definable, Example, ExampleGroup } from "./_kit";
-export { emit } from "./_kit";
+export { emit, evalSnippet, ex } from "./_kit";
 
 /** Every example group, in reading order. The reference test iterates this. */
 export const allGroups: ExampleGroup[] = [
