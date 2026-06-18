@@ -1,29 +1,45 @@
 /**
- * Shared kit for the @schemic/surrealdb REFERENCE example suite.
+ * Shared kit for the @schemic/surrealdb REFERENCE example cookbook.
  *
- * Each example pairs the TypeScript authoring (`s.*` / `define*`) with the exact SurrealQL DDL it
- * emits. The `ddl` field is the GOLDEN — `test/examples/reference.test.ts` asserts `emit(defs) === ddl`
- * for every example, so the catalog can never drift from what the driver actually produces: change the
- * emit and the suite fails until the reference is updated.
+ * Each example is authored ONCE as a `code` string — the verbatim `s.*` / `define*` snippet — and its
+ * `defs` are DERIVED by evaluating that snippet (`ex()` below). So `code`, `defs`, and the golden `ddl`
+ * can never disagree: `test/examples/reference.test.ts` asserts `emit(defs) === ddl`, which (since
+ * `defs = eval(code)`) is exactly `emit(eval(code)) === ddl` — the strong honesty check from the
+ * per-driver cookbook convention (packages/core/docs/EXAMPLE-COOKBOOK-CONVENTION.md). The `code` string
+ * is also what the website examples gallery renders for the TypeScript side.
  *
- * This is a pure-emit catalog (no live database) — it documents authoring -> DDL. Round-trip fidelity
+ * Pure-emit catalog (no live database) — it documents authoring -> DDL. Round-trip fidelity
  * (apply -> introspect -> diff = 0, and `pull` regeneration) is proven separately by the live parity
  * suites in `test/parity/*` against SurrealDB 3.1.3.
  */
+import { surql } from "surrealdb";
 import { emitDefStatement, emitTable } from "../src/ddl";
-import { type StandaloneDef, TableDef } from "../src/pure";
+import {
+  defineAccess,
+  defineAnalyzer,
+  defineEvent,
+  defineFunction,
+  defineRelation,
+  defineTable,
+  defineView,
+  type StandaloneDef,
+  s,
+  TableDef,
+} from "../src/pure";
 
 /** A top-level schema object: a table/relation/view (a `TableDef`) or a standalone `define*`. */
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous example schemas — the Shape varies per table.
 export type Definable = TableDef<string, any> | StandaloneDef;
 
-/** One catalog entry: authoring + the SurrealQL it emits (the asserted golden). */
+/** One catalog entry: the authoring snippet, the schema objects it produces, and the SurrealQL golden. */
 export interface Example {
   /** The feature / syntax this entry demonstrates (also the test name). */
   title: string;
   /** Optional caveat — round-trip behavior, a known gap, or a `[~]`/`[ ]` note from COVERAGE.md. */
   note?: string;
-  /** The authored schema objects, in emit order. */
+  /** The verbatim authoring source (the website gallery renders this). Single source of truth. */
+  code: string;
+  /** The schema objects, DERIVED from `code` via `evalSnippet`. */
   defs: Definable[];
   /** The exact SurrealQL `defs` emit. Asserted by the reference test. */
   ddl: string;
@@ -31,11 +47,65 @@ export interface Example {
 
 /** A named group of examples (one source file in this folder). */
 export interface ExampleGroup {
-  /** The file these examples live in (for the test's `describe` label). */
+  /** The file these examples live in (for the test's `describe` label / the manifest group slug). */
   file: string;
   /** What the file covers. */
   about: string;
   examples: Example[];
+}
+
+/** The driver authoring API a `code` snippet may reference. Extra bindings come in per-example. */
+const BASE_SCOPE = {
+  s,
+  surql,
+  defineTable,
+  defineRelation,
+  defineView,
+  defineEvent,
+  defineFunction,
+  defineAccess,
+  defineAnalyzer,
+};
+
+const transpiler = new Bun.Transpiler({ loader: "ts" });
+
+/**
+ * Evaluate an authoring `code` snippet (with the driver's `s` / `define*` / `surql` in scope) to the
+ * `Definable[]` it produces. The snippet is any expression evaluating to a `Definable` or `Definable[]`.
+ * TypeScript syntax (e.g. `s.custom<Set<string>>()`) is transpiled away first. `scope` supplies any
+ * extra identifiers the snippet references (e.g. a domain class).
+ */
+export function evalSnippet(
+  code: string,
+  scope: Record<string, unknown> = {},
+): Definable[] {
+  const env = { ...BASE_SCOPE, ...scope };
+  // Wrap as an arrow so an array-literal snippet keeps its brackets through transpile (a bare
+  // parenthesised `[a, b]` degrades to the comma operator); then call it in the driver-API scope.
+  const js = transpiler.transformSync(`const __f = () => (\n${code}\n);`);
+  const fn = new Function(...Object.keys(env), `${js}\nreturn __f();`);
+  const result = fn(...Object.values(env));
+  return Array.isArray(result) ? result : [result];
+}
+
+/**
+ * Build an `Example` from its authoring snippet — `defs` is derived from `code`, so the two cannot
+ * disagree. `scope` passes any extra identifiers the snippet uses beyond the driver API.
+ */
+export function ex(e: {
+  title: string;
+  note?: string;
+  code: string;
+  ddl: string;
+  scope?: Record<string, unknown>;
+}): Example {
+  return {
+    title: e.title,
+    note: e.note,
+    code: e.code,
+    ddl: e.ddl,
+    defs: evalSnippet(e.code, e.scope),
+  };
 }
 
 /**
