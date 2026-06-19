@@ -1087,9 +1087,10 @@ dbFlags(
   program
     .command("seed [name]")
     .description(
-      "Run the project's seed(s): a named seed, --all, or (no arg) index.ts / every seed",
-    )
-    .option("--all", "run every seed in the seed folder, in filename order"),
+      "Run the project's seed(s): a named seed, --all (every seed), or (no arg) index.ts / every seed",
+    ),
+  // NOTE: `--all` comes from dbFlags (every connection) and doubles as "every seed" here — do NOT add
+  // a second `--all` option (commander throws a conflicting-flag error at construction).
 ).action((name: string | undefined, opts: CommonOpts & { all?: boolean }) => {
   run(() =>
     withDb(opts, async (db, config) => {
