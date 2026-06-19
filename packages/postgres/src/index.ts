@@ -624,7 +624,8 @@ export const postgresDriver: Driver<PgConn> = {
   initScaffold: () => ({
     "schemic.config.ts": INIT_CONFIG_TS,
     "database/schema/tables.ts": INIT_SCHEMA_TS,
-    "database/seed.ts": INIT_SEED_TS,
+    "database/seed/index.ts": INIT_SEED_TS,
+    "database/seed/seeds.d.ts": INIT_SEED_DTS,
     ".env.example": INIT_ENV,
   }),
 
@@ -666,8 +667,19 @@ export const user = defineTable("user", {
 `;
 
 const INIT_SEED_TS = `// Seed script — run with \`schemic seed\`. Receives the live connection(s).
+// This is a seed FOLDER: add more named seeds beside this file — \`schemic seed users\` runs
+// ./users.ts (or 01-users.ts), \`schemic seed --all\` runs them in filename order, and bare
+// \`schemic seed\` runs this index.ts. Load a raw .sql file as a string with an import attribute:
+//   import fixtures from "./fixtures.sql" with { type: "text" };
 export default async function seed() {
   // await conn.query("INSERT INTO ...");
+}
+`;
+
+// Type the raw-SQL import attribute (\`import x from "./f.sql" with { type: "text" }\`) for seeds.
+const INIT_SEED_DTS = `declare module "*.sql" {
+  const sql: string;
+  export default sql;
 }
 `;
 
