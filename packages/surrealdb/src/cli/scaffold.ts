@@ -66,3 +66,102 @@ export function initScaffold(): Record<string, string> {
     ".env.example": ENV_EXAMPLE,
   };
 }
+
+// --- `schemic new <kind> <name>` — per-kind starter modules ----------------------------------------
+
+/** `"user_profile"` -> `"UserProfile"` (the exported const name). Non-alphanumerics split words. */
+function pascalCase(name: string): string {
+  const parts = name.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  const pascal = parts.map((p) => p[0].toUpperCase() + p.slice(1)).join("");
+  // Keep it a valid identifier: prefix a leading digit, fall back to a generic name.
+  return /^[0-9]/.test(pascal) ? `_${pascal}` : pascal || "Entity";
+}
+
+/**
+ * Author a starter module for `kind`/`name`. One template per authorable SurrealDB object, each a
+ * realistic starting point (not a bare stub). THROWS for a kind SurrealDB doesn't author standalone
+ * (notably `index`/`field`, which live inline on a table) or an unknown kind — the CLI surfaces the
+ * message. Used by `schemic new`; the CLI writes the result under the kind's display folder.
+ */
+export function scaffoldEntity(kind: string, name: string): string {
+  const C = pascalCase(name);
+  switch (kind) {
+    case "table":
+      return `import { defineTable, s, surql } from "@schemic/surrealdb";
+
+// A SCHEMAFULL table. Each field is an \`s.*\` builder (a drop-in for Zod's \`z.*\`) that also carries
+// its SurrealQL DDL. Add fields, then run \`schemic gen\`.
+export const ${C} = defineTable("${name}", {
+  name: s.string(),
+  createdAt: s.datetime().$default(surql\`time::now()\`).$readonly(),
+}).schemafull();
+`;
+    case "relation":
+      return `import { defineRelation, s, surql } from "@schemic/surrealdb";
+
+// A graph edge (\`TYPE RELATION\`). Chain \`.from(A).to(B)\` to restrict the endpoints and
+// \`.enforced()\` to require both records to exist on RELATE.
+export const ${C} = defineRelation("${name}", {
+  since: s.datetime().$default(surql\`time::now()\`),
+});
+// .from(SomeTable).to(OtherTable).enforced()
+`;
+    case "view":
+      return `import { defineView, surql } from "@schemic/surrealdb";
+
+// A pre-computed (materialized) view — SurrealDB keeps its rows in sync with the source query.
+export const ${C} = defineView(
+  "${name}",
+  surql\`SELECT * FROM thing WHERE true\`,
+);
+`;
+    case "function":
+      return `import { defineFunction, s, surql } from "@schemic/surrealdb";
+
+// A custom function (\`fn::${name}\`). Functions referenced from fields/events/access become
+// dependency edges, so a caller emits after its callee.
+export const ${C} = defineFunction("${name}", { arg: s.string() })
+  .returns(s.string())
+  .body(surql\`RETURN $arg\`);
+`;
+    case "access":
+      return `import { defineAccess, surql } from "@schemic/surrealdb";
+
+// A RECORD access method (signup/signin). See \`.jwt({ … })\` / \`.bearer({ … })\` for other types.
+export const ${C} = defineAccess("${name}")
+  .record()
+  .signup(surql\`CREATE user SET email = $email, pass = crypto::argon2::generate($pass)\`)
+  .signin(surql\`SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass)\`)
+  .duration({ token: "1h", session: "12h" });
+`;
+    case "event":
+      return `import { defineEvent, surql } from "@schemic/surrealdb";
+
+// A standalone event — replace "thing" with the table it fires on. \`then\` takes one expression or
+// an ordered array.
+export const ${C} = defineEvent("thing", "${name}", {
+  when: surql\`$event = "CREATE"\`,
+  then: surql\`CREATE log SET at = time::now()\`,
+});
+`;
+    case "analyzer":
+      return `import { defineAnalyzer } from "@schemic/surrealdb";
+
+// A text analyzer for FULLTEXT search. A \`.index(field, { fulltext: { analyzer: "${name}" } })\` on a
+// table depends on it.
+export const ${C} = defineAnalyzer("${name}", {
+  tokenizers: ["blank"],
+  filters: ["lowercase"],
+});
+`;
+    case "index":
+    case "field":
+      throw new Error(
+        `SurrealDB ${kind}s are authored inline on a table, not as their own file — add it to a table (e.g. \`defineTable("…", { … }).index("${name}", [field])\` or \`s.string().unique()\`). Try \`schemic new table <name>\`.`,
+      );
+    default:
+      throw new Error(
+        `the surrealdb driver can't scaffold a "${kind}" — known kinds: table, relation, view, function, access, event, analyzer.`,
+      );
+  }
+}

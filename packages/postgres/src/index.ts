@@ -612,6 +612,11 @@ export const postgresDriver: Driver<PgConn> = {
     ".env.example": INIT_ENV,
   }),
 
+  // `schemic new <kind> <name>` -> the starter authoring module for a new entity. pg's only
+  // standalone definable is the `table`; indexes/FKs are authored INSIDE a table, so those kinds
+  // throw with guidance. The CLI writes the returned text under registry.display(kind).folder.
+  scaffoldEntity: (kind, name) => scaffoldPgEntity(kind, name),
+
   shadow,
 };
 
@@ -653,5 +658,59 @@ export default async function seed() {
 const INIT_ENV = `# A real Postgres server (uncomment to use instead of embedded PGlite):
 # DATABASE_URL=postgres://user:pass@localhost:5432/app
 `;
+
+// --- `schemic new <kind> <name>` entity scaffolding ---------------------------------------------
+
+/** A valid JS identifier from an entity name (snake_case kept; other separators -> camelCase; digit-led -> `_`). */
+function toIdentifier(name: string): string {
+  const camel = name.replace(
+    /[^a-zA-Z0-9_$]+([a-zA-Z0-9])?/g,
+    (_m, c?: string) => (c ? c.toUpperCase() : ""),
+  );
+  return /^[0-9]/.test(camel) ? `_${camel}` : camel || "entity";
+}
+
+/** A starter `defineTable` module for a new table — full templating: commented examples of every clause. */
+function scaffoldTable(name: string): string {
+  const ident = toIdentifier(name);
+  return `import { defineTable, s, sqlExpr } from "@schemic/postgres";
+
+// \`sc new table ${name}\` scaffolded this. Author your columns, then \`sc gen\`.
+export const ${ident} = defineTable(${JSON.stringify(name)}, {
+  // An implicit \`"id" text PRIMARY KEY\` is added unless you declare a PK below.
+  name: s.text(),
+  // email: s.varchar(255).$unique(),                              // -> UNIQUE INDEX
+  // age: s.smallint().optional(),                                 // -> nullable column
+  // status: s.text().$check("status in ('active', 'archived')"),  // -> CHECK constraint
+  // owner: s.references("other_table", { onDelete: "cascade" }),  // -> FOREIGN KEY
+  createdAt: s.timestamptz().$default(sqlExpr("now()")),
+});
+// Table-level options (chain onto defineTable(...) above):
+//   .primaryKey("a", "b")   composite PK (drops the implicit id)
+//   .check("age >= 0")      table-level CHECK
+//   .index(["name"])        secondary index (add { unique: true } for UNIQUE)
+`;
+}
+
+/**
+ * Author a new entity module for `kind`. Postgres' only standalone definable is the `table`; indexes
+ * and foreign keys are authored INSIDE a table (`.index([...])` / `s.references(...)`), so those kinds
+ * throw with guidance rather than scaffolding a meaningless standalone file. Unknown kinds throw too.
+ */
+function scaffoldPgEntity(kind: string, name: string): string {
+  switch (kind) {
+    case "table":
+      return scaffoldTable(name);
+    case "index":
+    case "constraint":
+      throw new Error(
+        `postgres: "${kind}" isn't a standalone entity — indexes and foreign keys are authored inside a table (defineTable(...).index([...]) / s.references(...)). Run \`sc new table <name>\`.`,
+      );
+    default:
+      throw new Error(
+        `postgres: unknown entity kind "${kind}" — pg scaffolds: table.`,
+      );
+  }
+}
 
 registerDriver(postgresDriver as Driver<unknown>);
