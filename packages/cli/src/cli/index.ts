@@ -6,9 +6,6 @@ import {
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
-// The CLI's own version — sourced from package.json (inlined at build) so it never drifts from the
-// published package version the way a hardcoded string does.
-import { version as CLI_VERSION } from "../../package.json";
 import {
   actionLabel,
   applyPull,
@@ -17,7 +14,6 @@ import {
   type Driver,
   duplicateTables,
   EMPTY_STORED,
-  emitKinds,
   existingTables,
   type FilterOpts,
   fail,
@@ -49,6 +45,9 @@ import {
   writeSnapshot,
 } from "@schemic/core";
 import { Command, Help, Option } from "commander";
+// The CLI's own version — sourced from package.json (inlined at build) so it never drifts from the
+// published package version the way a hardcoded string does.
+import { version as CLI_VERSION } from "../../package.json";
 import { init } from "./init";
 import {
   baseline,
@@ -1085,11 +1084,16 @@ kindFlags(
 );
 
 dbFlags(
-  program.command("seed").description("Run the project's seed script"),
-).action((opts: CommonOpts) => {
+  program
+    .command("seed [name]")
+    .description(
+      "Run the project's seed(s): a named seed, --all, or (no arg) index.ts / every seed",
+    )
+    .option("--all", "run every seed in the seed folder, in filename order"),
+).action((name: string | undefined, opts: CommonOpts & { all?: boolean }) => {
   run(() =>
     withDb(opts, async (db, config) => {
-      await seed(db, config);
+      await seed(db, config, { name, all: opts.all });
       console.log(ok("Seed complete."));
     }),
   );

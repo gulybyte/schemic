@@ -1,8 +1,10 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -33,6 +35,7 @@ import {
   slug,
   snapshotKinds,
   snapshotObjects,
+  style,
   timestamp,
   writeSnapshot,
 } from "@schemic/core";
@@ -474,10 +477,53 @@ export async function rollback(
 }
 
 /** Run the project's seed script (`config.seed` or `database/seed.ts`) with a connected client. */
-export async function seed(db: unknown, config: ResolvedConfig): Promise<void> {
-  const path = config.seed
-    ? resolve(config.root, config.seed)
-    : resolve(config.root, "database/seed.ts");
+/** One runnable seed in a seed folder: its addressable `name` and its file `path`. */
+interface SeedScript {
+  name: string;
+  path: string;
+}
+
+/** Seed-source extensions (a `.surql`/`.sql` next to a seed is a SUPPORTING file, never a seed). */
+const SEED_EXT = /\.(ts|mts|cts|js|mjs|cjs)$/;
+/** A leading `NN-`/`NN_` orders a seed in a folder but isn't part of its addressable name. */
+const SEED_ORDER_PREFIX = /^\d+[-_]/;
+
+/** The seed name a file addresses: extension dropped, an optional numeric order-prefix stripped. */
+function seedName(file: string): string {
+  return file.replace(SEED_EXT, "").replace(SEED_ORDER_PREFIX, "");
+}
+
+/**
+ * Locate the project's seed source. A `database/seed/` (or `config.seed`) DIRECTORY is a folder of
+ * named seeds; a `database/seed.ts` (or a `config.seed` file) is the single legacy seed. Returns the
+ * directory's ordered scripts + whether it has an `index.ts` orchestrator, or the single file.
+ */
+function locateSeeds(config: ResolvedConfig): {
+  dir?: { base: string; scripts: SeedScript[]; index?: string };
+  file?: string;
+} {
+  const base = resolve(config.root, config.seed ?? "database/seed");
+  if (existsSync(base) && statSync(base).isDirectory()) {
+    let index: string | undefined;
+    const scripts: SeedScript[] = [];
+    for (const f of readdirSync(base).sort()) {
+      // Only top-level script files are seeds; `.d.ts`, `_`-prefixed, and supporting files (`.surql`,
+      // `.sql`, …) are skipped — supporting files are loaded BY a seed (`import … with { type: "text" }`).
+      if (f.startsWith("_") || f.endsWith(".d.ts") || !SEED_EXT.test(f))
+        continue;
+      const path = join(base, f);
+      if (statSync(path).isDirectory()) continue;
+      if (seedName(f) === "index") index = path;
+      else scripts.push({ name: seedName(f), path });
+    }
+    return { dir: { base, scripts, index } };
+  }
+  const file = SEED_EXT.test(base) ? base : `${base}.ts`;
+  return { file: existsSync(file) ? file : base };
+}
+
+/** Load a seed module and run its default (or named `seed`) export against the live connection. */
+async function runSeedFile(db: unknown, path: string): Promise<void> {
   if (!existsSync(path)) throw new Error(`Seed file not found: ${path}`);
   const mod = (await makeJiti().import(path)) as Record<string, unknown> & {
     default?: unknown;
@@ -487,8 +533,58 @@ export async function seed(db: unknown, config: ResolvedConfig): Promise<void> {
   const fn = (typeof mod.default === "function" ? mod.default : mod.seed) as
     | ((db: unknown) => Promise<unknown>)
     | undefined;
-  if (typeof fn !== "function") {
-    throw new Error("Seed file must export a default function `(db) => …`.");
-  }
+  if (typeof fn !== "function")
+    throw new Error(
+      `Seed "${relative(process.cwd(), path)}" must export a default function \`(db) => …\`.`,
+    );
   await fn(db);
+}
+
+/**
+ * Run the project's seed(s). A single `seed.ts` runs as-is. A `seed/` FOLDER holds named scripts:
+ *  - `seed <name>` runs one (numeric order-prefix ignored: `01-users.ts` ⇄ `users`);
+ *  - `seed --all` runs every script in filename order;
+ *  - `seed` (no name) runs `index.ts` if present, else every script in order.
+ */
+export async function seed(
+  db: unknown,
+  config: ResolvedConfig,
+  opts: { name?: string; all?: boolean } = {},
+): Promise<void> {
+  const { dir, file } = locateSeeds(config);
+
+  if (!dir) {
+    if (opts.name)
+      throw new Error(
+        `--name needs a seed folder (database/seed/); found a single seed file instead.`,
+      );
+    await runSeedFile(db, file as string);
+    return;
+  }
+
+  const { base, scripts, index } = dir;
+  const run = async (s: SeedScript) => {
+    console.log(style.dim(`  → ${s.name}`));
+    await runSeedFile(db, s.path);
+  };
+
+  if (opts.name) {
+    const match = scripts.find((s) => s.name === opts.name);
+    if (!match)
+      throw new Error(
+        `No seed named "${opts.name}". Available: ${
+          scripts.map((s) => s.name).join(", ") || "(none)"
+        }.`,
+      );
+    await run(match);
+    return;
+  }
+
+  if (index && !opts.all) {
+    await runSeedFile(db, index);
+    return;
+  }
+  if (!scripts.length)
+    throw new Error(`No seeds found in ${relative(process.cwd(), base)}/.`);
+  for (const s of scripts) await run(s);
 }
