@@ -38,7 +38,7 @@ import {
   verifyMigrations,
 } from "../cli/introspect";
 import { planPull, renderPerFile, renderSchemaToTS } from "../cli/pull";
-import { initScaffold } from "../cli/scaffold";
+import { initScaffold, scaffoldEntity } from "../cli/scaffold";
 import { normalizeDb } from "../cli/struct";
 import type { DbStructured } from "../cli/structure";
 import { connect as surrealConnect } from "../cli/surreal-connect";
@@ -265,6 +265,10 @@ export const surrealDriver: Driver<
   // The files `schemic init` scaffolds for a fresh SurrealDB project (connections-only config + sample
   // s.* schema + seed + .env.example); the CLI writes them and adds the neutral migration snapshot.
   initScaffold,
+
+  // `schemic new <kind> <name>`: the starter `s.*`/`define*` module for one entity (table/relation/
+  // view/function/access/event/analyzer); throws for inline-only (index/field) or unknown kinds.
+  scaffoldEntity,
 
   // `check`: replay every migration into a throwaway engine and diff the result against the schema.
   // Owns ephemeral-engine selection — an embedded @surrealdb/node instance, an ephemeral server from
