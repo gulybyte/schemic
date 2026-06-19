@@ -10,8 +10,9 @@
 // connects the sibling on demand (the dependency graph falls out of access; cycles error) and we close
 // anything it opened once resolution settles. The returned configs are connected FRESH by each command.
 
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   type ConnectionEntry,
@@ -32,27 +33,77 @@ import {
  * (`@schemic/<name>`) that self-register with the core registry on import; the CLI itself contains no
  * dialect code and discovers the driver from the project's connection config at runtime. Idempotent.
  */
+/** Pick a package's COMPILED entry from its exports, deliberately skipping the `bun` condition. */
+function pickCompiled(node: unknown): string | undefined {
+  if (typeof node === "string") return node;
+  if (node && typeof node === "object") {
+    const o = node as Record<string, unknown>;
+    // import/default/require are the published (compiled) conditions; never `bun` (raw src/*.ts).
+    return (
+      pickCompiled(o.import) ??
+      pickCompiled(o.default) ??
+      pickCompiled(o.require)
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a driver package to its COMPILED entry file, from `base`'s module scope. We read the
+ * manifest and pick the `import`/`default` export rather than letting the runtime choose the `bun`
+ * export condition (which points at raw `src/*.ts` for monorepo dev) — loading a PUBLISHED package's
+ * TypeScript source is fragile (every transitive src import must re-resolve at the consumer).
+ */
+function compiledEntry(pkg: string, base: string): string | null {
+  try {
+    const manifestPath = createRequire(base).resolve(`${pkg}/package.json`);
+    const m = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      exports?: Record<string, unknown>;
+      module?: string;
+      main?: string;
+    };
+    const rel =
+      pickCompiled(m.exports?.["."]) ?? m.module ?? m.main ?? "index.js";
+    return join(dirname(manifestPath), rel);
+  } catch {
+    return null;
+  }
+}
+
 export async function ensureDriver(name: string): Promise<void> {
   if (driverNames().includes(name)) return;
   const pkg = `@schemic/${name}`;
-  // Resolve the driver from the USER's project (cwd) first, then fall back to the CLI's own location.
-  // The CLI is often run via `bunx`/`npx` from a temp dir, so a plain `import(pkg)` (resolved relative
-  // to the CLI module) would MISS a driver installed in the user's project — resolve from cwd instead.
-  try {
-    const fromCwd = createRequire(join(process.cwd(), "noop.js"));
-    await import(pathToFileURL(fromCwd.resolve(pkg)).href);
-  } catch {
+  // Try the USER's project (cwd) first, then the CLI's own module scope — the CLI is often run via
+  // `bunx`/`npx` from a temp dir, so a driver installed in the user's project must be found by cwd.
+  let lastErr: unknown;
+  let loaded = false;
+  for (const base of [join(process.cwd(), "noop.js"), import.meta.url]) {
+    const entry = compiledEntry(pkg, base);
+    if (!entry) continue;
     try {
-      await import(pkg);
+      await import(pathToFileURL(entry).href);
+      loaded = true;
+      break;
     } catch (e) {
-      throw new Error(
-        `could not load the "${name}" database driver (package ${pkg}). ` +
-          `Install it in your project, then re-run:\n    bun add ${pkg}\n  (${
-            e instanceof Error ? e.message : String(e)
-          })`,
-      );
+      lastErr = e;
     }
   }
+  // Last resort: a plain specifier import (covers an unbuilt monorepo checkout, where lib is absent).
+  if (!loaded) {
+    try {
+      await import(pkg);
+      loaded = true;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (!loaded)
+    throw new Error(
+      `could not load the "${name}" database driver (package ${pkg}). ` +
+        `Install it in your project, then re-run:\n    bun add ${pkg}\n  (${
+          lastErr instanceof Error ? lastErr.message : String(lastErr)
+        })`,
+    );
   if (!driverNames().includes(name))
     throw new Error(`package ${pkg} did not register a "${name}" driver.`);
 }
