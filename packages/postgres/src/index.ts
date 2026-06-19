@@ -666,13 +666,15 @@ export const user = defineTable("user", {
 });
 `;
 
-const INIT_SEED_TS = `// Seed script — run with \`schemic seed\`. Receives the live connection(s).
+const INIT_SEED_TS = `import type { PgConn } from "@schemic/postgres";
+
+// Seed script — run with \`schemic seed\`. The default export receives the live connection.
 // This is a seed FOLDER: add more named seeds beside this file — \`schemic seed users\` runs
 // ./users.ts (or 01-users.ts), \`schemic seed --all\` runs them in filename order, and bare
 // \`schemic seed\` runs this index.ts. Load a raw .sql file as a string with an import attribute:
 //   import fixtures from "./fixtures.sql" with { type: "text" };
-export default async function seed() {
-  // await conn.query("INSERT INTO ...");
+export default async function seed(db: PgConn) {
+  // await db.query('INSERT INTO "user" ("id", "email", "name") VALUES ($1, $2, $3)', [id, email, name]);
 }
 `;
 
