@@ -60,11 +60,9 @@ driver's README for the exact builders and output.
 
 **Alpha (`0.x`).** APIs may still change.
 
-- [x] **SurrealDB** driver — the most complete
-- [ ] **PostgreSQL** driver — in progress
+- [x] **SurrealDB** driver — the most complete · [coverage](packages/surrealdb/docs/COVERAGE.md)
+- [ ] **PostgreSQL** driver — in progress · [coverage](packages/postgres/docs/COVERAGE.md)
 - [ ] more drivers
-
-See each driver's `docs/COVERAGE.md` for a feature-by-feature map.
 
 ## Development
 
