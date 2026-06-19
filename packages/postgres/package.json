@@ -2,12 +2,25 @@
   "name": "@schemic/postgres",
   "version": "0.1.0-alpha.0",
   "description": "PostgreSQL driver for Schemic — emit/introspect/diff the portable IR against Postgres (PGlite).",
+  "license": "MIT",
+  "author": "Vertio Solutions",
+  "homepage": "https://schemic.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/schemichq/schemic.git",
+    "directory": "packages/postgres"
+  },
   "type": "module",
+  "sideEffects": false,
   "module": "lib/index.js",
   "types": "lib/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "lib",
-    "src"
+    "src",
+    "LICENSE"
   ],
   "exports": {
     ".": {
