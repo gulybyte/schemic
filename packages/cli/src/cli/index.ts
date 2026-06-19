@@ -6,6 +6,9 @@ import {
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
+// The CLI's own version — sourced from package.json (inlined at build) so it never drifts from the
+// published package version the way a hardcoded string does.
+import { version as CLI_VERSION } from "../../package.json";
 import {
   actionLabel,
   applyPull,
@@ -284,7 +287,7 @@ program
   .description(
     "Schema-as-code migrations for any database — generate DDL, diff, and migrate via drivers",
   )
-  .version("0.1.0-alpha.0")
+  .version(CLI_VERSION)
   .showHelpAfterError("(run `schemic --help` for usage)")
   .addHelpText(
     "after",

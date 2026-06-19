@@ -9,7 +9,7 @@
     },
     "packages/cli": {
       "name": "@schemic/cli",
-      "version": "0.1.0-alpha.2",
+      "version": "0.1.0-alpha.3",
       "bin": {
         "schemic": "lib/cli.js",
         "sc": "lib/cli.js",
