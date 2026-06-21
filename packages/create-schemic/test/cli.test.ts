@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -68,6 +75,39 @@ describe("create-schemic", () => {
       expect(s.pkg().dependencies["@schemic/core"]).toBeDefined();
     } finally {
       rmSync(s.root, { recursive: true, force: true });
+    }
+  });
+
+  it("MERGES into an existing project without clobbering it", () => {
+    const root = mkdtempSync(join(tmpdir(), "create-schemic-"));
+    const app = join(root, "app");
+    mkdirSync(app, { recursive: true });
+    writeFileSync(
+      join(app, "package.json"),
+      JSON.stringify({
+        name: "my-app",
+        version: "1.2.3",
+        scripts: { dev: "vite" },
+        dependencies: { zod: "^4.0.0" },
+      }),
+    );
+    try {
+      const r = spawnSync(
+        "bun",
+        [ENTRY, app, "--driver", "surrealdb", "--no-install", "--no-git", "-y"],
+        { encoding: "utf8" },
+      );
+      expect(r.status).toBe(0);
+      const pkg = JSON.parse(readFileSync(join(app, "package.json"), "utf8"));
+      expect(pkg.name).toBe("my-app"); // kept
+      expect(pkg.version).toBe("1.2.3"); // kept
+      expect(pkg.scripts.dev).toBe("vite"); // their script kept
+      expect(pkg.scripts["db:gen"]).toBe("schemic gen"); // ours added
+      expect(pkg.dependencies.zod).toBe("^4.0.0"); // their version kept, not overwritten
+      expect(pkg.dependencies["@schemic/cli"]).toBeDefined(); // added
+      expect(pkg.dependencies["@schemic/surrealdb"]).toBeDefined(); // added
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

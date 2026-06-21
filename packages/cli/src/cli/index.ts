@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   watch as fsWatch,
@@ -347,7 +348,27 @@ program
   .action((opts: { driver?: string }) => {
     run(async () => {
       const name = opts.driver ?? "surrealdb";
-      await ensureDriver(name);
+      try {
+        await ensureDriver(name);
+      } catch (e) {
+        // The driver isn't installed → this project isn't set up yet. Hand off to create-schemic,
+        // which writes the project envelope (package.json/tsconfig), installs the driver, and re-runs
+        // init — working for a bare OR an existing project. The env guard breaks any re-forward loop
+        // if the driver is present-but-unloadable (create-schemic sets it on the inner init).
+        if (process.env.SCHEMIC_NO_BOOTSTRAP) throw e;
+        console.log(
+          style.dim(
+            "This project isn't set up for Schemic yet — bootstrapping with create-schemic…\n",
+          ),
+        );
+        const runner = process.versions.bun ? ["bun", "x"] : ["npx", "-y"];
+        const r = spawnSync(
+          runner[0],
+          [...runner.slice(1), "create-schemic", ".", "--driver", name],
+          { stdio: "inherit", cwd: process.cwd() },
+        );
+        process.exit(r.status ?? 1);
+      }
       const { created, skipped } = init(process.cwd(), getDriver(name));
       for (const f of created) console.log(`  ${style.green("+")} ${f}`);
       for (const f of skipped)

@@ -1,5 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 // The @schemic versions this scaffolder pins are its OWN version (the packages release lockstep), so a
@@ -88,60 +94,103 @@ function abortIfCancel<T>(value: T | symbol): T {
 
 // --- templates ---------------------------------------------------------------------------------
 
-function packageJson(name: string, driver: string, pm: Pm): string {
+const SCRIPTS: Record<string, string> = {
+  "db:gen": "schemic gen",
+  "db:diff": "schemic diff",
+  "db:migrate": "schemic migrate",
+  "db:status": "schemic status",
+  "db:pull": "schemic pull",
+  seed: "schemic seed",
+};
+
+/** Runtime deps for `driver` under `pm` (pnpm needs @schemic/core directly — strict node_modules). */
+function depMap(driver: string, pm: Pm): Record<string, string> {
   const d = DRIVERS[driver];
   const deps: Record<string, string> = {
     "@schemic/cli": RANGE,
     [d.pkg]: RANGE,
     ...d.deps,
   };
-  // pnpm's strict node_modules won't resolve a transitive @schemic/core, but the scaffolded config
-  // imports `@schemic/core/config` — so under pnpm it must be a direct dependency.
   if (pm === "pnpm") deps["@schemic/core"] = RANGE;
-  const sorted = Object.fromEntries(Object.entries(deps).sort());
-  return `${JSON.stringify(
-    {
+  return deps;
+}
+
+const TSCONFIG = `${JSON.stringify(
+  {
+    compilerOptions: {
+      target: "ESNext",
+      module: "Preserve",
+      moduleResolution: "bundler",
+      moduleDetection: "force",
+      strict: true,
+      skipLibCheck: true,
+      // for `import sql from "./x.surql" with { type: "text" }` + the scaffolded seeds.d.ts + JSON
+      resolveJsonModule: true,
+      noEmit: true,
+      lib: ["ESNext"],
+      types: ["node"],
+    },
+    exclude: ["node_modules"],
+  },
+  null,
+  2,
+)}\n`;
+
+/** NEW project → write a fresh package.json. EXISTING → MERGE deps + scripts (never clobber). */
+function applyPackageJson(
+  target: string,
+  name: string,
+  driver: string,
+  pm: Pm,
+): string {
+  const path = join(target, "package.json");
+  const deps = depMap(driver, pm);
+  if (!existsSync(path)) {
+    const fresh = {
       name,
       version: "0.0.0",
       private: true,
       type: "module",
-      scripts: {
-        "db:gen": "schemic gen",
-        "db:diff": "schemic diff",
-        "db:migrate": "schemic migrate",
-        "db:status": "schemic status",
-        "db:pull": "schemic pull",
-        seed: "schemic seed",
-      },
-      dependencies: sorted,
+      scripts: SCRIPTS,
+      dependencies: Object.fromEntries(Object.entries(deps).sort()),
       devDependencies: { "@types/node": "^20", typescript: "^5" },
-    },
-    null,
-    2,
-  )}\n`;
+    };
+    writeFileSync(path, `${JSON.stringify(fresh, null, 2)}\n`);
+    return "+ package.json";
+  }
+  const pkg = JSON.parse(readFileSync(path, "utf8")) as {
+    dependencies?: Record<string, string>;
+    scripts?: Record<string, string>;
+  };
+  pkg.dependencies ??= {};
+  const added: string[] = [];
+  for (const [k, v] of Object.entries(deps))
+    if (!(k in pkg.dependencies)) {
+      pkg.dependencies[k] = v;
+      added.push(k);
+    }
+  pkg.dependencies = Object.fromEntries(
+    Object.entries(pkg.dependencies).sort(),
+  );
+  pkg.scripts ??= {};
+  for (const [k, v] of Object.entries(SCRIPTS))
+    if (!(k in pkg.scripts)) pkg.scripts[k] = v;
+  writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+  return added.length
+    ? `~ package.json (added ${added.join(", ")})`
+    : dim("· package.json (deps already present)");
 }
 
-function tsconfig(): string {
-  return `${JSON.stringify(
-    {
-      compilerOptions: {
-        target: "ESNext",
-        module: "Preserve",
-        moduleResolution: "bundler",
-        moduleDetection: "force",
-        strict: true,
-        skipLibCheck: true,
-        // for `import sql from "./x.surql" with { type: "text" }` + the scaffolded seeds.d.ts + JSON
-        resolveJsonModule: true,
-        noEmit: true,
-        lib: ["ESNext"],
-        types: ["node"],
-      },
-      exclude: ["node_modules"],
-    },
-    null,
-    2,
-  )}\n`;
+/** NEW project → write a fresh tsconfig. EXISTING → keep theirs, with a compatibility note. */
+function applyTsconfig(target: string): string {
+  const path = join(target, "tsconfig.json");
+  if (!existsSync(path)) {
+    writeFileSync(path, TSCONFIG);
+    return "+ tsconfig.json";
+  }
+  return dim(
+    "· tsconfig.json (kept — needs module esnext/preserve/nodenext + resolveJsonModule for seed imports)",
+  );
 }
 
 const GITIGNORE = `node_modules/
@@ -194,7 +243,9 @@ async function main(): Promise<void> {
   const target = resolve(process.cwd(), dir);
   const name = basename(target);
   mkdirSync(target, { recursive: true });
-  if (readdirSync(target).length && tty) {
+  const isExisting = existsSync(join(target, "package.json"));
+  // Warn only for a non-empty NON-project dir (random files); a package.json = a deliberate adapt.
+  if (readdirSync(target).length && !isExisting && tty) {
     const ok = abortIfCancel(
       await p.confirm({
         message: `${bold(dir)} is not empty — continue?`,
@@ -253,14 +304,15 @@ async function main(): Promise<void> {
     ) as Pm;
   }
 
-  // 4. write the project envelope
+  // 4. write/merge the project envelope (fresh for a new project, merge into an existing one)
   const written = [
-    writeIfAbsent(target, "package.json", packageJson(name, driver, pm)),
-    writeIfAbsent(target, "tsconfig.json", tsconfig()),
+    applyPackageJson(target, name, driver, pm),
+    applyTsconfig(target),
     writeIfAbsent(target, ".gitignore", GITIGNORE),
   ];
+  const header = isExisting ? `Adding Schemic to ${name}` : name;
   p.log.step(
-    `${bold(name)} ${dim(`(${DRIVERS[driver].label})`)}\n${written.join("\n")}`,
+    `${bold(header)} ${dim(`(${DRIVERS[driver].label})`)}\n${written.join("\n")}`,
   );
   if (opts.git && !existsSync(join(target, ".git")))
     run("git", ["init", "-q"], target);
@@ -287,6 +339,8 @@ async function main(): Promise<void> {
       "lib",
       "cli.js",
     );
+    // Mark the inner init as already-bootstrapped so it scaffolds directly (never forwards back here).
+    process.env.SCHEMIC_NO_BOOTSTRAP = "1";
     run(runtime, [cliJs, "init", "--driver", driver], target);
   }
 
