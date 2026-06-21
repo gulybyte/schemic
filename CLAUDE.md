@@ -51,6 +51,13 @@ cd .claude/worktrees/<your-name>
 - **Never** commit onto another agent's branch or the shared checkout. Push your branch and **DM the
   owner** (usually `core-dev`) to integrate.
 
+**Cleanup on merge.** A worktree lives only as long as its PR is open. When a PR lands, its branch +
+worktree are removed so they never pile up — `core-dev` lands with **`bun scripts/land.ts <branch>`**,
+which fast-forwards `<branch>` onto `main` then runs `git worktree remove` + deletes the branch
+(local + remote). So **after your PR lands, your worktree is gone**: start a fresh one off the latest
+`main` for your next task — never keep working in a landed worktree. If you spot your own merged
+worktrees lingering, remove them yourself (`git worktree remove <path>` + `git branch -d <branch>`).
+
 ## Driver coverage docs
 
 Each driver package keeps a **`docs/COVERAGE.md`** tracking **all** of its database's schema/DDL syntax
