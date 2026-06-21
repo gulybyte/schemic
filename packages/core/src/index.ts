@@ -143,3 +143,5 @@ export {
   snapshotKinds,
   snapshotObjects,
 } from "./kind";
+// --- seed context (the `(db, ctx)` helper passed to each seed) ---------------------------------
+export type { SeedContext } from "./seed";

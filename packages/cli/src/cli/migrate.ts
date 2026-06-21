@@ -7,7 +7,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import type { ResolvedConfig } from "@schemic/core";
 import {
   type Authored,
@@ -31,6 +31,7 @@ import {
   mergeStored,
   parseFilter,
   readSnapshot,
+  type SeedContext,
   type StoredSnapshot,
   slug,
   snapshotKinds,
@@ -529,15 +530,21 @@ async function runSeedFile(db: unknown, path: string): Promise<void> {
     default?: unknown;
   };
   // The seed callback is the user's own code against the live driver connection — they annotate it
-  // with their SDK's client type (e.g. `Surreal`); the orchestration hands it the opaque `db`.
+  // with their SDK's client type (e.g. `Surreal`); the orchestration hands it the opaque `db` plus a
+  // `ctx` scoped to the seed's directory (so a seed can `ctx.file("data.surql")` without an import).
   const fn = (typeof mod.default === "function" ? mod.default : mod.seed) as
-    | ((db: unknown) => Promise<unknown>)
+    | ((db: unknown, ctx: SeedContext) => Promise<unknown>)
     | undefined;
   if (typeof fn !== "function")
     throw new Error(
-      `Seed "${relative(process.cwd(), path)}" must export a default function \`(db) => …\`.`,
+      `Seed "${relative(process.cwd(), path)}" must export a default function \`(db, ctx) => …\`.`,
     );
-  await fn(db);
+  const dir = dirname(path);
+  const ctx: SeedContext = {
+    dir,
+    file: (name) => readFileSync(resolve(dir, name), "utf8"),
+  };
+  await fn(db, ctx);
 }
 
 /**

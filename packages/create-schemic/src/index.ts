@@ -115,16 +115,18 @@ function depMap(driver: string, pm: Pm): Record<string, string> {
   return deps;
 }
 
+// Kept conservative so it works across TypeScript 5, 6, and 7: `module: "ESNext"` (5.0+) rather than
+// "Preserve" (5.4+); `moduleResolution: "bundler"` (5.0+). Seeds load supporting files via `ctx.file()`
+// (no import attributes), so nothing here is version-gated.
 const TSCONFIG = `${JSON.stringify(
   {
     compilerOptions: {
       target: "ESNext",
-      module: "Preserve",
+      module: "ESNext",
       moduleResolution: "bundler",
       moduleDetection: "force",
       strict: true,
       skipLibCheck: true,
-      // for `import sql from "./x.surql" with { type: "text" }` + the scaffolded seeds.d.ts + JSON
       resolveJsonModule: true,
       noEmit: true,
       lib: ["ESNext"],
