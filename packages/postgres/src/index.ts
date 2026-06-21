@@ -42,9 +42,9 @@ import {
   nullable,
   registerDriver,
 } from "@schemic/core/driver";
-import type { PgTableDef } from "./authoring";
+import type { PgEnumDef, PgTableDef } from "./authoring";
 import { escId, type PgIndexInfo, type PgTable } from "./emit";
-import { registry, splitTables } from "./kinds";
+import { enumPortable, registry, splitTables } from "./kinds";
 import { pgLower } from "./lower";
 
 // The pg-native authoring surface (`s.*`, defineTable, PgField, $postgres escape hatch, …).
@@ -149,6 +149,9 @@ function introspectType(c: ColRow): PortableType {
       : scalarT("decimal");
   if (dt === "timestamp without time zone") return nativeT("timestamp");
   if (dt === "timestamp with time zone") return scalarT("datetime");
+  // A user-defined type (e.g. a native enum from `defineEnum`) -> native, named by its udt — matches
+  // what lower made from the enum's pg-type token, so an enum column round-trips.
+  if (dt === "USER-DEFINED") return nativeT(c.udt_name);
   const sc = DATATYPE_TO_SCALAR[dt];
   if (sc) return scalarT(sc);
   return nativeT(DATATYPE_TO_NATIVE[dt] ?? dt);
@@ -313,6 +316,30 @@ async function pgIntrospect(
     }
     return t;
   });
+}
+
+/** Read native enum types (CREATE TYPE … AS ENUM) from pg_type/pg_enum -> `enum` kind objects. */
+async function pgIntrospectEnums(
+  conn: PgConn,
+  exclude: Set<string> = new Set(),
+): Promise<PortableObject[]> {
+  const { rows } = await conn.query<{ name: string; value: string }>(
+    `SELECT t.typname AS name, e.enumlabel AS value
+       FROM pg_type t
+       JOIN pg_enum e ON e.enumtypid = t.oid
+       JOIN pg_namespace n ON n.oid = t.typnamespace AND n.nspname = 'public'
+      ORDER BY t.typname, e.enumsortorder`,
+  );
+  const byName = new Map<string, string[]>();
+  for (const r of rows) {
+    if (exclude.has(r.name)) continue;
+    const vals = byName.get(r.name) ?? [];
+    vals.push(r.value);
+    byName.set(r.name, vals);
+  }
+  return [...byName.entries()].map(([name, values]) =>
+    enumPortable(name, values),
+  );
 }
 
 // --- connection (PGlite, embedded) --------------------------------------------------------------
@@ -557,17 +584,26 @@ export const postgresDriver: Driver<PgConn> = {
   // The kind registry (table/index/constraint) — core runs lower/diff/emit/order generically over it.
   registry,
 
-  // Authoring (pg-native `defineTable` -> PgTableDef) -> kinded Definables: lower each table to the
-  // driver's `PgTable` IR (./lower.ts), then split it into [table, ...index, ...constraint] objects
-  // (./kinds.ts splitTable). Core then runs lowerSchema(registry, explode(...)). pg has no standalone
-  // defs, so `defs` is unused.
-  explode: (tables): Definable[] =>
-    splitTables(pgLower(tables as unknown as PgTableDef[])),
+  // Authoring -> kinded Definables. Tables: lower each to the driver's `PgTable` IR (./lower.ts) then
+  // split into [table, ...index, ...constraint] (./kinds.ts splitTable). Standalone `defs`: native
+  // `enum` types (defineEnum -> { kind: "enum" }) become `enum` kind objects. Core then runs
+  // lowerSchema(registry, explode(...)).
+  explode: (tables, defs): Definable[] => [
+    ...splitTables(pgLower(tables as unknown as PgTableDef[])),
+    ...(defs as unknown as Array<{ kind?: string }>)
+      .filter((d) => d?.kind === "enum")
+      .map((d) => {
+        const e = d as unknown as PgEnumDef;
+        return enumPortable(e.name, e.values);
+      }),
+  ],
 
-  // One information_schema/pg_catalog read -> ALL kind objects, canonicalized identically to lowering
-  // (a clean apply round-trips to a zero diff) and complete (table + index + FK), so no phantom diffs.
-  introspectAll: async (conn, exclude) =>
-    splitTables(await pgIntrospect(conn, exclude)),
+  // One pg_catalog/information_schema read -> ALL kind objects, canonicalized identically to lowering
+  // (a clean apply round-trips to a zero diff) and complete (enum + table + index + FK) so no phantom.
+  introspectAll: async (conn, exclude) => [
+    ...(await pgIntrospectEnums(conn, exclude)),
+    ...splitTables(await pgIntrospect(conn, exclude)),
+  ],
 
   /**
    * Raw READ query for connection RESOLVERS + seed (returns rows opaquely). Postgres binds

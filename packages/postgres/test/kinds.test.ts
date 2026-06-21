@@ -8,7 +8,7 @@ import {
 } from "@schemic/core/driver";
 import type { PgTable } from "../src/emit";
 import { type PgConn, postgresDriver } from "../src/index";
-import { registry, splitTables } from "../src/kinds";
+import { enumPortable, registry, splitTables } from "../src/kinds";
 
 // The postgres kind registry, post Option-A flip. The driver speaks kinds: explode(authoring) +
 // introspectAll feed the generic spine (emitKinds/buildKindDiff). These tests drive that spine
@@ -37,11 +37,13 @@ const ud = (d: { up: string[]; down: string[] }) => ({
 // --- registration ------------------------------------------------------------------------------
 
 describe("postgres kind registry", () => {
-  test("registers table/index/constraint coarse-to-fine (registration order == ordinal)", () => {
-    expect(registry.names()).toEqual(["table", "index", "constraint"]);
-    expect(registry.ordinal("table")).toBe(0);
-    expect(registry.ordinal("index")).toBe(1);
-    expect(registry.ordinal("constraint")).toBe(2);
+  test("registers enum/table/index/constraint coarse-to-fine (registration order == ordinal)", () => {
+    expect(registry.names()).toEqual(["enum", "table", "index", "constraint"]);
+    // enum FIRST so CREATE TYPE emits before the tables that use it.
+    expect(registry.ordinal("enum")).toBe(0);
+    expect(registry.ordinal("table")).toBe(1);
+    expect(registry.ordinal("index")).toBe(2);
+    expect(registry.ordinal("constraint")).toBe(3);
   });
 });
 
@@ -281,5 +283,75 @@ describe("introspectAll round-trips through a real engine", () => {
       }),
     ]);
     expect({ up, down }).toEqual({ up: [], down: [] });
+  });
+});
+
+// --- enum kind (CREATE TYPE … AS ENUM) ----------------------------------------------------------
+
+describe("enum kind", () => {
+  test("emits CREATE TYPE", () => {
+    expect(
+      emitKinds(registry, [enumPortable("mood", ["happy", "sad"])]),
+    ).toEqual([`CREATE TYPE "mood" AS ENUM ('happy', 'sad');`]);
+  });
+
+  test("a new enum diffs as an add / drop", () => {
+    const { up, down } = buildKindDiff(
+      registry,
+      [],
+      [enumPortable("mood", ["happy", "sad"])],
+    );
+    expect(up).toEqual([`CREATE TYPE "mood" AS ENUM ('happy', 'sad');`]);
+    expect(down).toEqual([`DROP TYPE IF EXISTS "mood";`]);
+  });
+
+  test("appended labels -> ALTER TYPE ADD VALUE (not a recreate)", () => {
+    const { up } = buildKindDiff(
+      registry,
+      [enumPortable("mood", ["happy", "sad"])],
+      [enumPortable("mood", ["happy", "sad", "ok"])],
+    );
+    expect(up).toEqual([`ALTER TYPE "mood" ADD VALUE 'ok';`]);
+  });
+
+  test("a non-append change falls back to drop+recreate (coarse)", () => {
+    const { up } = buildKindDiff(
+      registry,
+      [enumPortable("mood", ["happy", "sad"])],
+      [enumPortable("mood", ["sad", "happy"])],
+    );
+    expect(up).toEqual([
+      `DROP TYPE IF EXISTS "mood";`,
+      `CREATE TYPE "mood" AS ENUM ('sad', 'happy');`,
+    ]);
+  });
+
+  test("enum + a table using it round-trips (CREATE TYPE before CREATE TABLE)", async () => {
+    const objs = [
+      enumPortable("ert_mood", ["happy", "sad", "ok"]),
+      ...splitTables([
+        tbl("ert_person", [
+          f("name", scalar("string")),
+          f("mood", { t: "native", db: "postgres", name: "ert_mood" }),
+        ]),
+      ]),
+    ];
+    const ddl = emitKinds(registry, objs);
+    expect(ddl[0]).toBe(
+      `CREATE TYPE "ert_mood" AS ENUM ('happy', 'sad', 'ok');`,
+    );
+    expect(ddl[1]).toContain(`CREATE TABLE "ert_person"`);
+
+    const conn = (await driver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await driver.apply(conn, ddl);
+      const live = await driver.introspectAll(conn);
+      const { up, down } = buildKindDiff(registry, live, objs);
+      expect({ up, down }).toEqual({ up: [], down: [] });
+    } finally {
+      await conn.close();
+    }
   });
 });

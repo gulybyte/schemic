@@ -28,9 +28,12 @@ import {
 } from "@schemic/core";
 import type { DiffItem, PortableField } from "@schemic/core/driver";
 import {
+  addEnumValueSql,
   addFkSql,
   canonField,
+  createEnumDdl,
   createTableDdl,
+  dropEnumSql,
   dropFkSql,
   dropTableSql,
   escId,
@@ -312,9 +315,47 @@ const constraintEngine: KindEngine<PgConstraintPortable, PgConstraintPortable> =
     // no overwrite: a FK change is drop+recreate (the spine's default).
   };
 
+// --- enum kind (CREATE TYPE … AS ENUM) ----------------------------------------------------------
+
+/** The `enum` kind's portable form: a native pg enum type and its ordered labels. */
+export interface PgEnumPortable extends PortableObject {
+  kind: "enum";
+  name: string;
+  values: string[];
+}
+
+/** Whether `next.values` only APPENDS to `prev.values` (same order, prev is a prefix) — ADD VALUE works. */
+const isAppendOnly = (prev: string[], next: string[]) =>
+  next.length >= prev.length && prev.every((v, i) => next[i] === v);
+
+const enumEngine: KindEngine<PgEnumPortable, PgEnumPortable> = {
+  lower: (e) => e,
+  // CREATE TYPE … AS ENUM (...). emit IS canonical here — pg stores the labels verbatim (no rewrite),
+  // so introspect round-trips exactly; no separate `canonical` needed (default = emit).
+  emit: (e) => [createEnumDdl(e.name, e.values)],
+  remove: (e) => [dropEnumSql(e.name)],
+  // Appended labels -> ALTER TYPE ADD VALUE (non-destructive). Any other change (remove/reorder) has
+  // no in-place form and would need a drop+recreate that fails while a column uses the type, so fall
+  // back to the spine default (remove+emit) and document it as coarse.
+  overwrite: (prev, next) =>
+    isAppendOnly(prev.values, next.values)
+      ? next.values
+          .slice(prev.values.length)
+          .map((v) => addEnumValueSql(next.name, v))
+      : [...enumEngine.remove(prev), ...enumEngine.emit(next)],
+  // No deps: a type depends on nothing. Registered FIRST (ordinal 0) so every CREATE TYPE emits
+  // before the CREATE TABLEs whose columns reference it (and drops last on the reverse).
+};
+
 // --- the registry -------------------------------------------------------------------------------
 
 export const registry = new KindRegistry();
+// enum FIRST (ordinal 0): a CREATE TYPE has no deps and must emit before the tables that use it.
+registry.define({
+  name: "enum",
+  build: (e: PgEnumPortable) => e,
+  ...enumEngine,
+});
 registry.define({
   name: "table",
   build: (t: PgTablePortable) => t,
@@ -388,3 +429,9 @@ export function splitTable(t: PgTable): PortableObject[] {
 /** Split many `PgTable`s into the flat kind-object list (the `explode`/`introspectAll` shape). */
 export const splitTables = (tables: PgTable[]): PortableObject[] =>
   tables.flatMap(splitTable);
+
+/** A native enum (authoring `PgEnumDef` or introspected) -> its `enum` kind object. */
+export const enumPortable = (
+  name: string,
+  values: readonly string[],
+): PgEnumPortable => ({ kind: "enum", name, values: [...values] });

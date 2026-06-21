@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { buildKindDiff, emitKinds } from "@schemic/core";
 import * as z from "zod";
 import {
+  defineEnum,
   defineTable,
   type PgConn,
   PgField,
@@ -292,5 +293,40 @@ describe("round-trip: author -> emit -> PGlite -> introspectAll -> diff = 0", ()
     expect(ddl(defineTable("p", { slug }))).toContain(
       '"slug" varchar(64) NOT NULL',
     );
+  });
+});
+
+describe("defineEnum: native CREATE TYPE", () => {
+  test("a table column uses the enum type; both round-trip via explode/introspectAll", async () => {
+    const mood = defineEnum("mood", ["happy", "sad", "ok"]);
+    const person = defineTable("person", {
+      name: s.text(),
+      mood: mood.column(),
+      mood2: mood.column().optional(),
+    });
+    const objs = postgresDriver.explode([person], [mood]);
+    const out = emitKinds(registry, objs);
+    expect(out[0]).toBe(`CREATE TYPE "mood" AS ENUM ('happy', 'sad', 'ok');`);
+    expect(out.join("\n")).toContain('"mood" mood NOT NULL');
+    expect(out.join("\n")).toContain('"mood2" mood'); // nullable -> no NOT NULL
+
+    const conn = (await postgresDriver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await postgresDriver.apply(conn, out);
+      const live = await postgresDriver.introspectAll(conn);
+      const { up, down } = buildKindDiff(registry, live, objs);
+      expect({ up, down }).toEqual({ up: [], down: [] });
+    } finally {
+      await conn.close();
+    }
+  });
+
+  test("mood.column() App type is the literal union (z.enum)", () => {
+    const mood = defineEnum("mood", ["happy", "sad"]);
+    const col = mood.column();
+    expect(col.schema.parse("happy")).toBe("happy");
+    expect(() => col.schema.parse("nope")).toThrow();
   });
 });

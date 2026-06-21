@@ -251,3 +251,17 @@ export const addFkSql = (
 /** Drop a FK constraint by its generated name. */
 export const dropFkSql = (table: string, field: string) =>
   `ALTER TABLE ${escId(table)} DROP CONSTRAINT IF EXISTS ${escId(fkName(table, field))};`;
+
+// --- enum (CREATE TYPE … AS ENUM) ---------------------------------------------------------------
+
+/** A single-quoted enum label (`'` doubled). */
+const enumLabel = (v: string) => `'${v.replace(/'/g, "''")}'`;
+/** `CREATE TYPE "name" AS ENUM ('a', 'b');` — a native pg enum type. */
+export const createEnumDdl = (name: string, values: readonly string[]) =>
+  `CREATE TYPE ${escId(name)} AS ENUM (${values.map(enumLabel).join(", ")});`;
+/** `DROP TYPE IF EXISTS "name";` (fails if a column still uses it — drop those first). */
+export const dropEnumSql = (name: string) =>
+  `DROP TYPE IF EXISTS ${escId(name)};`;
+/** `ALTER TYPE "name" ADD VALUE 'x';` — append a label (non-destructive; appended values only). */
+export const addEnumValueSql = (name: string, value: string) =>
+  `ALTER TYPE ${escId(name)} ADD VALUE ${enumLabel(value)};`;

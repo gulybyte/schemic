@@ -344,6 +344,37 @@ export function defineTable<
   return new PgTableDef(name, fields, config ?? {});
 }
 
+// --- defineEnum: a native pg ENUM type (CREATE TYPE … AS ENUM) ----------------------------------
+
+/**
+ * A native Postgres enum type — `CREATE TYPE <name> AS ENUM (...)`, a standalone, reusable type.
+ * Unlike `s.enum([...])` (which projects to a `text` column, validated App-side only), this emits a
+ * real pg type. `.column()` makes a field of this type (App = the literal union, stored as the enum).
+ * The `kind` marker lets the schema loader hand it to the driver's `explode` as a standalone def.
+ */
+export class PgEnumDef<
+  const V extends readonly [string, ...string[]] = [string, ...string[]],
+> {
+  readonly kind = "enum" as const;
+  constructor(
+    readonly name: string,
+    readonly values: V,
+  ) {}
+
+  /** A column typed as this enum: `status: mood.column()` (App = the literal union of `values`). */
+  column(): PgField<z.ZodEnum<{ [K in V[number]]: K }>> {
+    return new PgField(z.enum(this.values), { pg: { type: this.name } });
+  }
+}
+
+/** Declare a native pg enum: `export const mood = defineEnum("mood", ["happy", "sad"])`; use `mood.column()`. */
+export function defineEnum<const V extends readonly [string, ...string[]]>(
+  name: string,
+  values: V,
+): PgEnumDef<V> {
+  return new PgEnumDef(name, values);
+}
+
 // --- App/Wire type inference (DX) --------------------------------------------------------------
 
 /** The decoded (App-land) row type of a table — `z.output` of each field's schema. */

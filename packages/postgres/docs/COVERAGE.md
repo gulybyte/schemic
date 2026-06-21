@@ -42,7 +42,8 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 | `view` | [ ] | [ ] | [ ] | [ ] | not implemented |
 | `materialized_view` | [ ] | [ ] | [ ] | [ ] | not implemented |
 | `sequence` (standalone) | [ ] | [ ] | [ ] | [ ] | identity-backed sequences are implicit today; standalone `CREATE SEQUENCE` not impl |
-| `type`/`enum`/`domain` (`CREATE TYPE`) | [ ] | [ ] | [ ] | [ ] | `PortableDb.natives[]` slot exists; `s.enum` projects to `text` App-side today; native `CREATE TYPE` not impl |
+| `enum` (`CREATE TYPE … AS ENUM`) | [x] | [x] | [x] | [x] | registered (ordinal 0, emits before tables); `defineEnum(name, values)` standalone def, `.column()` references it; emit `CREATE TYPE`, introspect pg_type/pg_enum, full round-trip; `overwrite` = `ALTER TYPE ADD VALUE` for appended labels, drop+recreate (coarse) otherwise |
+| `domain` / composite `type` (`CREATE TYPE`/`CREATE DOMAIN`) | [ ] | [ ] | [ ] | [ ] | not impl (same standalone-def path as `enum` when added) |
 | `extension` | [ ] | [ ] | [ ] | [ ] | needed for citext/postgis/pgvector; not impl |
 | `function` | [ ] | [ ] | [ ] | [ ] | opaque kind (no `overwrite`/`deps`); trivial once structured path proven; not impl |
 | `procedure` | [ ] | [ ] | [ ] | [ ] | opaque kind; not impl |
@@ -81,7 +82,8 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 - [x] `inet`, `cidr`, `macaddr`, `money`
 - [x] `jsonb` (opaque on disk, sub-structure by App-side Zod), `s.object(shape)` → `jsonb`
 - [~] `json` → `native "json"` (round-trips), distinct from `jsonb`
-- [~] `s.enum([...])` → `text` (App-side Zod enum; no native `ENUM`/`CHECK` yet)
+- [~] `s.enum([...])` → `text` (App-side Zod enum, validated client-side only — a quick inline projection)
+- [x] `defineEnum(name, values)` → a NATIVE pg enum (`CREATE TYPE … AS ENUM`); `mood.column()` types a column as it (App = the literal union). Full round-trip; the standalone, reusable, introspected alternative to the `s.enum` text projection
 - [~] `citext` (emit-only; needs the extension — gap below)
 - [x] `T[]` arrays of canonical element types; [~] arrays of pg-native element types (udt-name mismatch)
 
