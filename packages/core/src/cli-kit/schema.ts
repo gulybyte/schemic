@@ -30,12 +30,18 @@ function isTableDef(v: unknown): v is AnyTable {
   );
 }
 
-/** Duck-typed standalone-def check (`defineEvent`/`defineFunction`) — see `isTableDef` on why not `instanceof`. */
+/**
+ * Duck-typed standalone-def check — DRIVER-AGNOSTIC: any non-table object carrying a string `kind`
+ * and `name` is a standalone definable (event/function/access/enum/view/sequence/…). Core must not
+ * hardcode a dialect's kinds — the driver's `registry`/`explode` owns which kinds are valid. Tables
+ * are matched by `isTableDef` first, so they never reach here. See `isTableDef` on why not `instanceof`.
+ */
 function isStandaloneDef(v: unknown): v is AuthoredDef {
   if (!v || typeof v !== "object") return false;
   const d = v as Record<string, unknown>;
   return (
-    (d.kind === "event" || d.kind === "function" || d.kind === "access") &&
+    typeof d.kind === "string" &&
+    d.kind.length > 0 &&
     typeof d.name === "string"
   );
 }
@@ -68,7 +74,7 @@ async function* tablesIn(
 /**
  * Load every schema object from `schemaPath` (a single `.ts` module, or a directory of them): the
  * tables/relations (ordered normal-before-relation, then by name, for stable DDL) and the standalone
- * defs (`defineEvent`/`defineFunction`). One pass over the files.
+ * defs (any non-table `{ kind, name }` definable — the driver's registry owns the kinds). One pass.
  */
 export async function loadDefs(schemaPath: string): Promise<{
   tables: AnyTable[];
