@@ -485,3 +485,22 @@ describe("relation builder", () => {
     expect(User.config.relation).toBeUndefined();
   });
 });
+
+describe("field $unique / $index (DDL clauses are $-prefixed)", () => {
+  test("$unique() emits a UNIQUE index; $index() a plain index", () => {
+    const uq = emitTable(defineTable("u", { id: s.string(), email: s.string().$unique() }));
+    expect(uq).toContain("DEFINE INDEX u_email_idx ON TABLE u FIELDS email UNIQUE;");
+    const ix = emitTable(defineTable("d", { id: s.string(), code: s.string().$index() }));
+    expect(ix).toContain("DEFINE INDEX d_code_idx ON TABLE d FIELDS code;");
+    expect(ix).not.toContain("UNIQUE");
+  });
+
+  test("the deprecated .unique()/.index() aliases emit identically", () => {
+    const canonical = emitTable(defineTable("a", { id: s.string(), x: s.string().$unique() }));
+    const alias = emitTable(defineTable("a", { id: s.string(), x: s.string().unique() }));
+    expect(alias).toBe(canonical);
+    const ci = emitTable(defineTable("b", { id: s.string(), x: s.string().$index() }));
+    const ai = emitTable(defineTable("b", { id: s.string(), x: s.string().index() }));
+    expect(ai).toBe(ci);
+  });
+});

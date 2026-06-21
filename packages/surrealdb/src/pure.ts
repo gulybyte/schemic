@@ -751,18 +751,26 @@ export class SField<
     return new SField(this.schema, { ...this.surreal, comment });
   }
   /** Index this field — `DEFINE INDEX <table>_<field>_idx ON TABLE <table> FIELDS <field>`. */
-  index(): SField<S, Flags> {
+  $index(): SField<S, Flags> {
     return new SField(this.schema, {
       ...this.surreal,
       index: { ...this.surreal.index },
     });
   }
   /** Index this field with a uniqueness constraint (`… FIELDS <field> UNIQUE`). */
-  unique(): SField<S, Flags> {
+  $unique(): SField<S, Flags> {
     return new SField(this.schema, {
       ...this.surreal,
       index: { unique: true },
     });
+  }
+  /** @deprecated Renamed to {@link SField.$index} — field DDL clauses are `$`-prefixed. */
+  index(): SField<S, Flags> {
+    return this.$index();
+  }
+  /** @deprecated Renamed to {@link SField.$unique} — field DDL clauses are `$`-prefixed. */
+  unique(): SField<S, Flags> {
+    return this.$unique();
   }
   /**
    * Mark a record-link field as a `REFERENCE` so the DB tracks back-links. `onDelete` sets the

@@ -29,11 +29,11 @@ export default defineConfig({
 const USER_TABLE = `import { defineTable, s, surql } from "@schemic/surrealdb";
 
 // A SCHEMAFULL \`user\` table. Each field is a \`s.*\` builder (a drop-in for Zod's \`z.*\`) that also
-// carries its SurrealQL DDL — \`s.email()\` validates the address, \`.unique()\` defines a UNIQUE index,
+// carries its SurrealQL DDL — \`s.email()\` validates the address, \`.$unique()\` defines a UNIQUE index,
 // and \`$default\`/\`$readonly\` map to the DEFAULT / READONLY clauses.
 export const User = defineTable("user", {
   name: s.string().$assert(surql\`string::len($value) > 0\`),
-  email: s.email().unique(),
+  email: s.email().$unique(),
   createdAt: s.datetime().$default(surql\`time::now()\`).$readonly(),
 }).schemafull();
 `;
@@ -161,7 +161,7 @@ export const ${C} = defineAnalyzer("${name}", {
     case "index":
     case "field":
       throw new Error(
-        `SurrealDB ${kind}s are authored inline on a table, not as their own file — add it to a table (e.g. \`defineTable("…", { … }).index("${name}", [field])\` or \`s.string().unique()\`). Try \`schemic new table <name>\`.`,
+        `SurrealDB ${kind}s are authored inline on a table, not as their own file — add it to a table (e.g. \`defineTable("…", { … }).index("${name}", [field])\` or \`s.string().$unique()\`). Try \`schemic new table <name>\`.`,
       );
     default:
       throw new Error(

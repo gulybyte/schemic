@@ -15,11 +15,19 @@ DEFINE FIELD b ON TABLE p TYPE string;
 DEFINE INDEX ab ON TABLE p FIELDS a, b;`,
   }),
   ex({
-    title: "UNIQUE (single field via field.unique() or table.index)",
+    title: "UNIQUE (composite/named, via table.index)",
     code: `defineTable("u", { id: s.string(), email: s.string() }).index("uq", ["email"], { unique: true })`,
     ddl: `DEFINE TABLE u TYPE NORMAL SCHEMAFULL;
 DEFINE FIELD email ON TABLE u TYPE string;
 DEFINE INDEX uq ON TABLE u FIELDS email UNIQUE;`,
+  }),
+  ex({
+    title: "UNIQUE (single field, inline via field.$unique())",
+    note: "Field DDL clauses are `$`-prefixed; the index name is auto-derived `<table>_<field>_idx`. (`.unique()` is a deprecated alias.)",
+    code: `defineTable("u2", { id: s.string(), email: s.email().$unique() })`,
+    ddl: `DEFINE TABLE u2 TYPE NORMAL SCHEMAFULL;
+DEFINE FIELD email ON TABLE u2 TYPE string ASSERT string::is_email($value);
+DEFINE INDEX u2_email_idx ON TABLE u2 FIELDS email UNIQUE;`,
   }),
   ex({
     title: "COUNT (materialized row-count, no FIELDS)",
