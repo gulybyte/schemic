@@ -1,0 +1,38 @@
+{
+  "name": "create-schemic",
+  "version": "0.1.0-alpha.6",
+  "description": "Scaffold a new Schemic project — package.json, tsconfig, a driver, and the database/ schema, in one command.",
+  "license": "MIT",
+  "author": "Vertio Solutions",
+  "homepage": "https://schemic.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/schemichq/schemic.git",
+    "directory": "packages/create-schemic"
+  },
+  "type": "module",
+  "bin": {
+    "create-schemic": "lib/index.js"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "lib",
+    "src",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepack": "bun run build",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.11",
+    "@types/bun": "latest",
+    "tsup": "^8",
+    "typescript": "^5"
+  }
+}
