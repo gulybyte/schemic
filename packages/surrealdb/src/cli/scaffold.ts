@@ -38,25 +38,19 @@ export const User = defineTable("user", {
 }).schemafull();
 `;
 
-const SEED = `import { RecordId, type Surreal } from "surrealdb";
+const SEED = `import { defineSeed } from "@schemic/surrealdb";
+import { RecordId } from "surrealdb";
 
 // The default seed — \`schemic seed\` (no arg) runs this \`index.ts\`. Add more named seeds alongside it:
 // \`database/seed/01-users.ts\` runs as \`schemic seed users\` (the numeric prefix orders \`seed --all\`).
-// Load raw SurrealQL as text with \`import q from "./data.surql" with { type: "text" }\` (see seeds.d.ts).
-export default async function seed(db: Surreal) {
+// \`defineSeed\` types \`db\` (the SurrealDB client) and \`ctx\` (a fs helper) — no imports needed.
+export default defineSeed(async (db, ctx) => {
   await db.create(new RecordId("user", "ada")).content({
     name: "Ada Lovelace",
     email: "ada@example.com",
   });
-}
-`;
-
-// Lets a seed import a raw SurrealQL file as a string (e.g. for a bulk data load); Schemic skips
-// \`.surql\` files as seeds — they're supporting data, not seed scripts.
-const SEED_DTS = `declare module "*.surql" {
-  const sql: string;
-  export default sql;
-}
+  // Bulk-load raw SurrealQL kept next to this seed: await db.query(ctx.file("seed.surql"));
+});
 `;
 
 const ENV_EXAMPLE = `# Point these at your SurrealDB. The config reads them explicitly (no implicit SURREAL_* magic).
@@ -73,7 +67,6 @@ export function initScaffold(): Record<string, string> {
     "schemic.config.ts": CONFIG,
     "database/schema/tables/user.ts": USER_TABLE,
     "database/seed/index.ts": SEED,
-    "database/seed/seeds.d.ts": SEED_DTS,
     ".env.example": ENV_EXAMPLE,
   };
 }
