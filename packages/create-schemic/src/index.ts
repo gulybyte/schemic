@@ -94,13 +94,10 @@ function abortIfCancel<T>(value: T | symbol): T {
 
 // --- templates ---------------------------------------------------------------------------------
 
+// One `db` script aliases the `schemic` CLI — `bun run db gen`, `bun run db migrate`, `bun run db seed`,
+// etc. (bun/pnpm/yarn forward the subcommand directly; npm needs `npm run db -- gen`).
 const SCRIPTS: Record<string, string> = {
-  "db:gen": "schemic gen",
-  "db:diff": "schemic diff",
-  "db:migrate": "schemic migrate",
-  "db:status": "schemic status",
-  "db:pull": "schemic pull",
-  seed: "schemic seed",
+  db: "schemic",
 };
 
 /** Runtime deps for `driver` under `pm` (pnpm needs @schemic/core directly — strict node_modules). */
@@ -348,9 +345,12 @@ async function main(): Promise<void> {
 
   // 6. next steps
   const cd = dir === "." ? "" : `cd ${dir}\n`;
+  // npm needs `npm run db -- <sub>` to forward args; bun/pnpm/yarn forward `<pm> run db <sub>` directly.
+  const dbCmd = (sub: string) =>
+    pm === "npm" ? `npm run db -- ${sub}` : `${pm} run db ${sub}`;
   const steps = install
-    ? `${cd}cp .env.example .env   ${dim("# set your connection")}\n${pm} run db:gen\n${pm} run db:migrate`
-    : `${cd}${pm} install\n${pm} exec schemic init --driver ${driver}\ncp .env.example .env\n${pm} run db:gen`;
+    ? `${cd}cp .env.example .env   ${dim("# set your connection")}\n${dbCmd("gen")}\n${dbCmd("migrate")}`
+    : `${cd}${pm} install\n${pm} exec schemic init --driver ${driver}\ncp .env.example .env\n${dbCmd("gen")}`;
   p.note(steps, "Next steps");
   p.outro(`${bold(name)} is ready.`);
 }

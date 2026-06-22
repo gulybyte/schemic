@@ -102,7 +102,7 @@ describe("create-schemic", () => {
       expect(pkg.name).toBe("my-app"); // kept
       expect(pkg.version).toBe("1.2.3"); // kept
       expect(pkg.scripts.dev).toBe("vite"); // their script kept
-      expect(pkg.scripts["db:gen"]).toBe("schemic gen"); // ours added
+      expect(pkg.scripts.db).toBe("schemic"); // ours added
       expect(pkg.dependencies.zod).toBe("^4.0.0"); // their version kept, not overwritten
       expect(pkg.dependencies["@schemic/cli"]).toBeDefined(); // added
       expect(pkg.dependencies["@schemic/surrealdb"]).toBeDefined(); // added
