@@ -11,9 +11,12 @@
  * rather than the shared `tryConnect` helper (whose default db must not be written to).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { planKinds } from "@schemic/core";
 import { Surreal, surql } from "surrealdb";
 import { z } from "zod";
 import { emitDefStatement, emitTable } from "../../src/ddl";
+import { introspectAll } from "../../src/kinds/explode";
+import { lowerAll, surrealKinds } from "../../src/kinds/registry";
 import {
   defineAccess,
   defineFunction,
@@ -230,6 +233,25 @@ live("DB accepts @schemic/core's generated DDL", () => {
         await applyEach(db!, emitDefStatement(a, { exists: "overwrite" }).ddl),
       ).toEqual([]);
     }
+  });
+
+  test("access with default durations round-trips (no phantom OVERWRITE)", async () => {
+    // Regression: SurrealDB materializes FOR TOKEN 1h (every access) + FOR GRANT 4w2d (BEARER) as
+    // defaults; an access that omits them must not diff against the introspected materialized form.
+    const defs = [
+      defineAccess("pl_rt_rec").record(), // no duration
+      defineAccess("pl_rt_rec2").record().duration({ session: "12h" }), // token omitted
+      defineAccess("pl_rt_bear").bearer({ for: "user" }), // grant default
+    ];
+    for (const a of defs)
+      await applyEach(db!, emitDefStatement(a, { exists: "overwrite" }).ddl);
+    // Restrict to our names — the shared scratch DB also holds other objects.
+    const plan = planKinds(
+      surrealKinds,
+      await introspectAll(db!),
+      lowerAll([], defs),
+    );
+    expect(plan.up.filter((d) => /pl_rt_/.test(d))).toEqual([]);
   });
 });
 

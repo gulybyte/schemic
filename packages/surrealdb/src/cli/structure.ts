@@ -501,11 +501,27 @@ function canonicalAccess(a: StructAccess): string {
     if (k.authenticate) parts.push(`AUTHENTICATE ${k.authenticate}`);
   }
   const d = a.duration;
-  if (d?.grant || d?.token || d?.session) {
+  // INFO returns durations as SDK `Duration` objects (the type says `string` but lies at runtime), so
+  // coerce before comparing/emitting. SurrealDB materializes `DURATION FOR TOKEN 1h` as the default on
+  // every access, so strip it — an authored access that omits the token would otherwise phantom-diff
+  // against the introspected `FOR TOKEN 1h` forever (SESSION NONE is already dropped on introspect). A
+  // non-default token survives; an explicit `1h` collapses to the same canonical as omitting it.
+  const str = (v: unknown): string | undefined =>
+    v == null ? undefined : String(v);
+  // SurrealDB's materialized duration defaults: TOKEN 1h (all access), GRANT 4w2d (=30d, BEARER),
+  // SESSION NONE (already dropped on introspect). Stripping them keeps an omitted duration matching
+  // the introspected default. NOTE: compares SurrealDB's canonical spelling — an explicit non-default
+  // authored in a different unit (e.g. "30d" vs "4w2d", "60m" vs "1h") is not yet unit-normalized.
+  const grant = str(d?.grant);
+  const grantOut = grant === "4w2d" ? undefined : grant;
+  const tok = str(d?.token);
+  const token = tok === "1h" ? undefined : tok;
+  const session = str(d?.session);
+  if (grantOut || token || session) {
     const fors: string[] = [];
-    if (d.grant) fors.push(`FOR GRANT ${d.grant}`);
-    if (d.token) fors.push(`FOR TOKEN ${d.token}`);
-    if (d.session) fors.push(`FOR SESSION ${d.session}`);
+    if (grantOut) fors.push(`FOR GRANT ${grantOut}`);
+    if (token) fors.push(`FOR TOKEN ${token}`);
+    if (session) fors.push(`FOR SESSION ${session}`);
     parts.push(`DURATION ${fors.join(", ")}`);
   }
   return `${parts.join(" ")};`;

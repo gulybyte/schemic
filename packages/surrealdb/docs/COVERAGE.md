@@ -121,7 +121,12 @@ live parity suites (`test/parity/{struct,live,canonical}-parity.test.ts`) and th
 ## Access / Auth
 
 - [x] `DEFINE ACCESS … TYPE RECORD (SIGNUP / SIGNIN / AUTHENTICATE)` — `defineAccess(name).record()`
-- [x] `DURATION FOR TOKEN / SESSION / GRANT` — `.duration(...)`
+- [x] `DURATION FOR TOKEN / SESSION / GRANT` — `.duration(...)`. SurrealDB materializes duration
+  defaults on EVERY access (`FOR TOKEN 1h`, BEARER `FOR GRANT 4w2d`, `FOR SESSION NONE`); the canonical
+  form strips them (coercing the SDK `Duration` objects to strings first) so an access that omits a
+  duration doesn't phantom-`OVERWRITE` against the introspected default. A non-default value survives.
+  Known gap: durations aren't unit-normalized, so an explicit non-default in a non-canonical unit
+  (`"30d"` vs `"4w2d"`, `"60m"` vs `"1h"`) can still churn — author in SurrealDB's spelling.
 - [x] `ON NAMESPACE | ON DATABASE` — `.onNamespace()` / `.onDatabase()`
 - [~] `TYPE JWT (ALG / KEY / URL)` — `.jwt({ alg, key | url })`: structure (alg + JWKS url) applies and
   introspects, but **SurrealDB redacts the signing `KEY`** — it can't be pulled, and re-applying rotates
