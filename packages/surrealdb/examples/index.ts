@@ -1,28 +1,23 @@
 /**
- * The @schemic/surrealdb REFERENCE example suite — a verified cookbook of authoring -> SurrealQL DDL.
- *
- * Every entry is authored as a `code` snippet whose `defs` are derived from it; `test/examples/
- * reference.test.ts` asserts `emit(defs) === ddl` (i.e. `emit(eval(code)) === ddl`), so `code`, `defs`,
- * and the golden DDL can never drift apart. Browse the per-area files for quick reference; the `code`
- * string is also what the website examples gallery renders (via the generated manifest over `allGroups`).
- *
- * See packages/core/docs/EXAMPLE-COOKBOOK-CONVENTION.md for the standing per-driver convention.
+ * The @schemic/surrealdb REFERENCE example cookbook — a folder of real, tsc-checked example files.
+ * Each example is a `.ts` module under its group folder; `emit(defs) === ddl` is asserted by
+ * test/examples/reference.test.ts. See packages/core/docs/EXAMPLE-COOKBOOK-CONVENTION.md.
  */
 import type { ExampleGroup } from "./_kit";
-import { group as tables } from "./01-tables";
-import { group as fieldTypes } from "./02-field-types";
-import { group as fieldClauses } from "./03-field-clauses";
-import { group as indexes } from "./04-indexes";
-import { group as events } from "./05-events";
-import { group as functions } from "./06-functions";
-import { group as access } from "./07-access";
-import { group as analyzers } from "./08-analyzers";
-import { group as escapeHatch } from "./09-escape-hatch";
+import { access } from "./access";
+import { analyzers } from "./analyzers";
+import { escapeHatch } from "./escape-hatch";
+import { events } from "./events";
+import { fieldClauses } from "./field-clauses";
+import { fieldTypes } from "./field-types";
+import { functions } from "./functions";
+import { indexes } from "./indexes";
+import { tables } from "./tables";
 
 export type { Definable, Example, ExampleGroup } from "./_kit";
-export { emit, evalSnippet, ex } from "./_kit";
+export { emit, example, group } from "./_kit";
 
-/** Every example group, in reading order. The reference test iterates this. */
+/** Every example group, in reading order. The reference test + manifest generator iterate this. */
 export const allGroups: ExampleGroup[] = [
   tables,
   fieldTypes,
