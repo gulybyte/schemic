@@ -45,11 +45,15 @@ import { User } from "../schema/tables/user";
 // \`database/seed/01-users.ts\` runs as \`schemic seed users\` (the numeric prefix orders \`seed --all\`).
 // \`defineSeed\` types \`db\` (the SurrealDB client) and \`ctx\` (a fs helper) — no imports needed.
 export default defineSeed(async (db, ctx) => {
-  // \`User.record().for("ada")\` is the typed \`user:ada\` record id — no \`RecordId\` import needed.
-  await db.create(User.record().for("ada")).content({
-    name: "Ada Lovelace",
-    email: "ada@example.com",
-  });
+  // \`User.record().for("ada")\` is the typed \`user:ada\` record id (no \`RecordId\` import). \`User.encode\`
+  // turns app values into the wire payload — and applies the field codecs (a Date -> a SurrealQL
+  // datetime, etc.). \`User.decode(row)\` is the read direction.
+  await db.create(User.record().for("ada")).content(
+    User.encode({
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+    }),
+  );
   // Bulk-load raw SurrealQL kept next to this seed: await db.query(ctx.file("seed.surql"));
 });
 `;
