@@ -204,10 +204,9 @@ live("DISKANN vector index", () => {
 
 live("FULLTEXT search index + DEFINE ANALYZER", () => {
   test("an analyzer + a default FULLTEXT index round-trip", async () => {
-    const english = defineAnalyzer("english", {
-      tokenizers: ["blank", "class"],
-      filters: ["lowercase", "snowball(english)"],
-    });
+    const english = defineAnalyzer("english")
+      .tokenizers("blank", "class")
+      .filters("lowercase", "snowball(english)");
     const Doc = defineTable("ftdoc", {
       id: s.string(),
       content: s.string(),
@@ -231,7 +230,7 @@ live("FULLTEXT search index + DEFINE ANALYZER", () => {
       (_k, n) => `${n}.ts`,
     );
     expect(files.get("english.ts") ?? "").toContain(
-      'defineAnalyzer("english", { tokenizers: ["blank", "class"], filters: ["lowercase", "snowball(english)"] })',
+      'defineAnalyzer("english").tokenizers("blank", "class").filters("lowercase", "snowball(english)")',
     );
     const idx = (files.get("ftdoc.ts") ?? "")
       .split("\n")
@@ -243,7 +242,7 @@ live("FULLTEXT search index + DEFINE ANALYZER", () => {
   });
 
   test("a tuned BM25 fulltext index round-trips (non-default kept)", async () => {
-    const a = defineAnalyzer("simple", { tokenizers: ["blank"] });
+    const a = defineAnalyzer("simple").tokenizers("blank");
     const Doc = defineTable("ftdoc2", {
       id: s.string(),
       body: s.string(),
@@ -298,10 +297,7 @@ live("FULLTEXT search index + DEFINE ANALYZER", () => {
 
 live("field-level special indexes (.$fulltext / .$hnsw / .$diskann)", () => {
   test(".$fulltext() round-trips identically to the table-level form", async () => {
-    const a = defineAnalyzer("simple", {
-      tokenizers: ["blank"],
-      filters: ["lowercase"],
-    });
+    const a = defineAnalyzer("simple").tokenizers("blank").filters("lowercase");
     const Doc = defineTable("ftf", {
       id: s.string(),
       // object form + the AnalyzerDef passed directly (not its name string).

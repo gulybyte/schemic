@@ -557,9 +557,9 @@ describe("emitTable", () => {
       "TYPE array<object> FLEXIBLE",
     );
     // union containing an object: FLEXIBLE on the field.
-    expect(ddl(s.object({ a: s.string() }).flexible().or(s.string()))).toContain(
-      "TYPE object | string FLEXIBLE",
-    );
+    expect(
+      ddl(s.object({ a: s.string() }).flexible().or(s.string())),
+    ).toContain("TYPE object | string FLEXIBLE");
     // option<object>: the wrapper preserves FLEXIBLE.
     expect(ddl(s.object({ a: s.string() }).flexible().optional())).toContain(
       "TYPE option<object> FLEXIBLE",

@@ -116,8 +116,11 @@ export interface StructAccess {
 /** A text-search `DEFINE ANALYZER` — `INFO … STRUCTURE` returns uppercase tokenizer/filter lists. */
 export interface StructAnalyzer {
   name: string;
+  /** Custom tokenizing function, the BARE name (no `fn::` prefix — as INFO … STRUCTURE returns it). */
+  function?: string;
   tokenizers?: string[];
   filters?: string[];
+  comment?: string;
 }
 
 export interface StructTableKind {
@@ -531,8 +534,11 @@ function canonicalAccess(a: StructAccess): string {
  *  Both clauses are optional: a bare `DEFINE ANALYZER <name>` is valid (INFO returns just the name). */
 function canonicalAnalyzer(a: StructAnalyzer): string {
   let s = `DEFINE ANALYZER ${a.name}`;
+  // Grammar order: FUNCTION, TOKENIZERS, FILTERS, COMMENT. `function` is stored bare; re-prefix `fn::`.
+  if (a.function) s += ` FUNCTION fn::${a.function}`;
   if (a.tokenizers?.length) s += ` TOKENIZERS ${a.tokenizers.join(", ")}`;
   if (a.filters?.length) s += ` FILTERS ${a.filters.join(", ")}`;
+  if (a.comment) s += ` COMMENT ${JSON.stringify(a.comment)}`;
   return `${s};`;
 }
 

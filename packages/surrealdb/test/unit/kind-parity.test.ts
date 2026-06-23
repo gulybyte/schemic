@@ -401,7 +401,7 @@ describe("analyzer dependency ordering (analyzer emits before its FULLTEXT index
   // Regression: a minimal `… FULLTEXT ANALYZER eng;` (default BM25 stripped) put the `;` flush against
   // the name, so the dep was parsed as `eng;` ≠ the `eng` analyzer — the edge was dropped and the index
   // could emit before its analyzer (apply error). The dep must resolve so the analyzer comes first.
-  const eng = () => defineAnalyzer("eng", { tokenizers: ["blank"] });
+  const eng = () => defineAnalyzer("eng").tokenizers("blank");
 
   test("table-level .index(fulltext) — analyzer before index", () => {
     const t = defineTable("doc", { id: s.string(), body: s.string() }).index(

@@ -900,19 +900,18 @@ function accessUnit(a: StructAccess): RenderedUnit {
   };
 }
 
-/** Reverse a `StructAnalyzer` into a `defineAnalyzer(name, { tokenizers, filters })` const (lowercased
- *  to the authored form; `lowerAnalyzer` re-uppercases for the canonical/diff comparison). A bare
- *  analyzer (no tokenizers/filters) renders the config-less `defineAnalyzer(name)` form. */
+/** Reverse a `StructAnalyzer` into a fluent `defineAnalyzer(name).tokenizers(…).filters(…)` const
+ *  (tokenizer/filter names lowercased back to the authored form; `lowerAnalyzer` re-uppercases for the
+ *  canonical/diff comparison). A bare analyzer renders just `defineAnalyzer(name)`. */
 function renderAnalyzerConst(a: StructAnalyzer): string {
-  const list = (xs: string[]) =>
-    `[${xs.map((x) => JSON.stringify(x.toLowerCase())).join(", ")}]`;
-  const parts: string[] = [];
-  if (a.tokenizers?.length) parts.push(`tokenizers: ${list(a.tokenizers)}`);
-  if (a.filters?.length) parts.push(`filters: ${list(a.filters)}`);
-  const args = parts.length
-    ? `${JSON.stringify(a.name)}, { ${parts.join(", ")} }`
-    : JSON.stringify(a.name);
-  return `export const ${fnConst(a.name)} = defineAnalyzer(${args});`;
+  const args = (xs: string[]) =>
+    xs.map((x) => JSON.stringify(x.toLowerCase())).join(", ");
+  let expr = `defineAnalyzer(${JSON.stringify(a.name)})`;
+  if (a.function) expr += `.function(${JSON.stringify(a.function)})`;
+  if (a.tokenizers?.length) expr += `.tokenizers(${args(a.tokenizers)})`;
+  if (a.filters?.length) expr += `.filters(${args(a.filters)})`;
+  if (a.comment) expr += `.comment(${JSON.stringify(a.comment)})`;
+  return `export const ${fnConst(a.name)} = ${expr};`;
 }
 
 function analyzerUnit(a: StructAnalyzer): RenderedUnit {

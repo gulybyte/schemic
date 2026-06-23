@@ -2843,34 +2843,158 @@ export function defineAccess(name: string): AccessDef {
   return new AccessDef(name);
 }
 
+/** SurrealDB's built-in tokenizers (autocompletable). The list is open — any other string is accepted
+ *  too (forward-compatible with tokenizers a newer server may add), via the `string & {}` escape. */
+export type Tokenizer = "blank" | "camel" | "class" | "punct" | (string & {});
+
+/** A token filter — a bare built-in (`ascii`/`lowercase`/`uppercase`, autocompletable) or a
+ *  parameterized one built typesafely via the `.filters(f => …)` callback ({@link FilterBuilder}).
+ *  The list is open: any other string is accepted too (forward-compatible / escape hatch). */
+export type Filter = "ascii" | "lowercase" | "uppercase" | (string & {});
+
+/** The 18 stemmer languages SurrealDB's `snowball` filter accepts (rust-stemmers). */
+export type SnowballLanguage =
+  | "arabic"
+  | "danish"
+  | "dutch"
+  | "english"
+  | "finnish"
+  | "french"
+  | "german"
+  | "greek"
+  | "hungarian"
+  | "italian"
+  | "norwegian"
+  | "portuguese"
+  | "romanian"
+  | "russian"
+  | "spanish"
+  | "swedish"
+  | "tamil"
+  | "turkish";
+
+/** Typed builders for token filters, handed to the `.filters(f => [...])` callback — so the
+ *  parameterized filters (`snowball`/`ngram`/`edgengram`/`mapper`) are constructed with checked args
+ *  instead of hand-written strings, and the bare ones are still available as `f.lowercase` etc. */
+export interface FilterBuilder {
+  readonly ascii: "ascii";
+  readonly lowercase: "lowercase";
+  readonly uppercase: "uppercase";
+  /** `snowball(<language>)` — stemmer for one of the supported {@link SnowballLanguage}s. */
+  snowball(language: SnowballLanguage): string;
+  /** `ngram(<min>,<max>)` — character n-grams of length `min..max`. */
+  ngram(min: number, max: number): string;
+  /** `edgengram(<min>,<max>)` — edge n-grams (prefixes) of length `min..max`. */
+  edgengram(min: number, max: number): string;
+  /** `mapper("<path>")` — map tokens via a file (the path must point to an existing file). */
+  mapper(path: string): string;
+}
+
+/** The singleton {@link FilterBuilder} passed to `.filters(f => …)`. */
+const FILTER_BUILDER: FilterBuilder = {
+  ascii: "ascii",
+  lowercase: "lowercase",
+  uppercase: "uppercase",
+  snowball: (language) => `snowball(${language})`,
+  ngram: (min, max) => `ngram(${min},${max})`,
+  edgengram: (min, max) => `edgengram(${min},${max})`,
+  mapper: (path) => `mapper(${JSON.stringify(path)})`,
+};
+
 /** A text-search `DEFINE ANALYZER`'s config: an ordered tokenizer + filter pipeline. */
 export interface AnalyzerConfig {
-  /** `TOKENIZERS …` — e.g. `["blank", "class", "camel", "punct"]`. Optional: a bare
-   *  `DEFINE ANALYZER <name>` (no tokenizers/filters) is valid SurrealQL. */
-  tokenizers?: string[];
-  /** `FILTERS …` — e.g. `["lowercase", "ascii", "snowball(english)", "ngram(1,3)"]`. */
-  filters?: string[];
+  /** `FUNCTION fn::<name>` — the bare name of the custom tokenizing function the analyzer references. */
+  function?: string;
+  /** An inline function auto-created by `.function(input => surql\`…\`)` — auto-named `<analyzer>_fn`
+   *  and emitted alongside the analyzer (the schema lowering expands it into the functions list, so it
+   *  diffs/pulls as a normal `defineFunction`). Absent when `.function` was given a name/reference. */
+  functionDef?: FunctionDef;
+  /** `TOKENIZERS …` — e.g. `["blank", "class", "camel", "punct"]`. The built-ins autocomplete; any
+   *  other string is allowed too (see {@link Tokenizer}). Optional: a bare `DEFINE ANALYZER <name>`
+   *  (no tokenizers/filters) is valid SurrealQL. */
+  tokenizers?: Tokenizer[];
+  /** `FILTERS …` — e.g. `["lowercase", "ascii", "snowball(english)", "ngram(1,3)"]`. The built-in
+   *  names autocomplete; parameterized forms + any other string are allowed too (see {@link Filter}). */
+  filters?: Filter[];
+  /** `COMMENT "…"` — a human description stored with the analyzer. */
+  comment?: string;
+}
+
+/** Reject duplicate entries in a tokenizer/filter list (order is significant, so we keep it — we only
+ *  forbid exact repeats, which are always redundant). Throws a clear error naming the offender. */
+function uniqueClause<T extends string>(items: T[], clause: string): T[] {
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (seen.has(item))
+      throw new Error(
+        `defineAnalyzer: duplicate ${clause} "${item}" — ${clause}s must be unique.`,
+      );
+    seen.add(item);
+  }
+  return items;
 }
 
 /**
- * A text-search analyzer (`DEFINE ANALYZER`), referenced by a `FULLTEXT` index. Declared standalone:
- * `export const english = defineAnalyzer("english", { tokenizers: ["blank"], filters: ["lowercase", "snowball(english)"] })`.
+ * A text-search analyzer (`DEFINE ANALYZER`), referenced by a `FULLTEXT` index. A fluent builder
+ * (like {@link AccessDef}); every clause is optional, so a bare `defineAnalyzer("text")` is valid:
+ * `export const english = defineAnalyzer("english").tokenizers("blank").filters("lowercase", "snowball(english)")`.
  */
 export class AnalyzerDef {
   readonly kind = "analyzer" as const;
   constructor(
     readonly name: string,
-    readonly config: AnalyzerConfig,
+    readonly config: AnalyzerConfig = {},
   ) {}
+  private withConfig(c: Partial<AnalyzerConfig>): AnalyzerDef {
+    return new AnalyzerDef(this.name, { ...this.config, ...c });
+  }
+  /** `FUNCTION fn::<name>` — a custom tokenizing function run before the tokenizers. Pass:
+   *  - a `surql` builder `input => surql\`…\`` — auto-defines an `<analyzer>_fn(input: string)` function
+   *    inline (auto-named, like a field index) and references it; `input` is the `$input` param token;
+   *  - a {@link FunctionDef} from `defineFunction` (renameable, no hardcoded name);
+   *  - or the name as a string (the `fn::` prefix optional).
+   *  Emitted as `FUNCTION fn::<name>` in every case. */
+  function(fn: string | FunctionDef | ((input: Expr) => Expr)): AnalyzerDef {
+    if (typeof fn === "function") {
+      const def = defineFunction(`${this.name}_fn`, { input: s.string() }).body(
+        fn(surql`$input`),
+      );
+      return this.withConfig({ function: def.name, functionDef: def });
+    }
+    return this.withConfig({ function: typeof fn === "string" ? fn : fn.name });
+  }
+  /** `TOKENIZERS …` — one or more tokenizers (built-ins autocomplete), applied in order. Must be
+   *  unique. */
+  tokenizers(...tokenizers: Tokenizer[]): AnalyzerDef {
+    return this.withConfig({
+      tokenizers: uniqueClause(tokenizers, "tokenizer"),
+    });
+  }
+  /** `FILTERS …` — one or more token filters, applied in order (must be unique). Pass bare filters
+   *  directly (`.filters("lowercase", "ascii")`), or a callback for the typed/parameterized builders
+   *  (`.filters(f => [f.lowercase, f.snowball("english"), f.ngram(1, 3)])`) — no extra import needed. */
+  filters(...filters: Filter[]): AnalyzerDef;
+  filters(build: (f: FilterBuilder) => readonly Filter[]): AnalyzerDef;
+  filters(
+    ...args: [(f: FilterBuilder) => readonly Filter[]] | Filter[]
+  ): AnalyzerDef {
+    const list =
+      typeof args[0] === "function"
+        ? [...args[0](FILTER_BUILDER)]
+        : (args as Filter[]);
+    return this.withConfig({ filters: uniqueClause(list, "filter") });
+  }
+  /** `COMMENT "…"` — a human-readable description stored with the analyzer. */
+  comment(comment: string): AnalyzerDef {
+    return this.withConfig({ comment });
+  }
 }
 
-/** Declare a text-search analyzer. See {@link AnalyzerConfig}; reference it from a `fulltext` index.
- *  `config` is optional — `defineAnalyzer("text")` emits the bare `DEFINE ANALYZER text`. */
-export function defineAnalyzer(
-  name: string,
-  config: AnalyzerConfig = {},
-): AnalyzerDef {
-  return new AnalyzerDef(name, config);
+/** Declare a text-search analyzer, then chain its clauses fluently — `defineAnalyzer("english")
+ *  .tokenizers("class").filters("lowercase")`. Reference it from a `fulltext` index. A bare
+ *  `defineAnalyzer("text")` emits `DEFINE ANALYZER text`. */
+export function defineAnalyzer(name: string): AnalyzerDef {
+  return new AnalyzerDef(name);
 }
 
 /** A schema object declared apart from a table (collected by the CLI loader and emitted on its own). */

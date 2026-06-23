@@ -158,11 +158,10 @@ export const ${C} = defineEvent("thing", "${name}", {
       return `import { defineAnalyzer } from "@schemic/surrealdb";
 
 // A text analyzer for FULLTEXT search. A \`.index(field, { fulltext: { analyzer: "${name}" } })\` on a
-// table depends on it.
-export const ${C} = defineAnalyzer("${name}", {
-  tokenizers: ["blank"],
-  filters: ["lowercase"],
-});
+// table depends on it. Chain the clauses fluently: \`.function()\` / \`.tokenizers()\` / \`.filters()\` / \`.comment()\`.
+export const ${C} = defineAnalyzer("${name}")
+  .tokenizers("blank")
+  .filters("lowercase");
 `;
     case "index":
     case "field":

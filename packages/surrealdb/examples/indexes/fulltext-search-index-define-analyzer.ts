@@ -10,10 +10,9 @@ DEFINE TABLE doc TYPE NORMAL SCHEMAFULL;
 DEFINE FIELD content ON TABLE doc TYPE string;
 DEFINE INDEX ft ON TABLE doc FIELDS content FULLTEXT ANALYZER english HIGHLIGHTS;`,
   def: [
-    defineAnalyzer("english", {
-      tokenizers: ["blank"],
-      filters: ["lowercase", "snowball(english)"],
-    }),
+    defineAnalyzer("english")
+      .tokenizers("blank")
+      .filters("lowercase", "snowball(english)"),
     defineTable("doc", { id: s.string(), content: s.string() }).index(
       "ft",
       ["content"],

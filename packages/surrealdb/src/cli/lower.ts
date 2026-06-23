@@ -17,6 +17,7 @@ import {
   fieldType,
   inferField,
   inline,
+  upperFilterClause,
 } from "../ddl";
 import type {
   AccessDef,
@@ -324,10 +325,13 @@ function lowerAccess(a: AccessDef): StructAccess {
 /** Lower a `defineAnalyzer` to a `StructAnalyzer` (tokenizers/filters uppercased to match INFO). */
 function lowerAnalyzer(a: AnalyzerDef): StructAnalyzer {
   const out: StructAnalyzer = { name: a.name };
+  // Store `function` bare (strip an optional `fn::`) to match INFO … STRUCTURE, so it round-trips.
+  if (a.config.function) out.function = a.config.function.replace(/^fn::/, "");
   if (a.config.tokenizers?.length)
     out.tokenizers = a.config.tokenizers.map((t) => t.toUpperCase());
   if (a.config.filters?.length)
-    out.filters = a.config.filters.map((f) => f.toUpperCase());
+    out.filters = a.config.filters.map(upperFilterClause);
+  if (a.config.comment) out.comment = a.config.comment;
   return out;
 }
 
@@ -361,9 +365,13 @@ export function schemaStruct(
       functions.push(fromStandalone(d) as StructFunction);
     else if (d.kind === "access")
       accesses.push(fromStandalone(d) as StructAccess);
-    else if (d.kind === "analyzer")
+    else if (d.kind === "analyzer") {
+      // An inline `.function(input => surql`…`)` carries an auto-created function — expand it into the
+      // functions list so it emits/diffs/pulls as a normal `defineFunction` the analyzer references.
+      const inlineFn = d.config.functionDef;
+      if (inlineFn) functions.push(fromStandalone(inlineFn) as StructFunction);
       analyzers.push(fromStandalone(d) as StructAnalyzer);
-    else if (d.kind === "event")
+    } else if (d.kind === "event")
       byName.get(d.table)?.events.push(fromStandalone(d) as StructEvent);
   }
   return normalizeDb({ tables: structTables, functions, accesses, analyzers });

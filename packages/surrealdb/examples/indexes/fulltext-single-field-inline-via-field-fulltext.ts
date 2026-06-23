@@ -10,7 +10,7 @@ DEFINE TABLE doc2 TYPE NORMAL SCHEMAFULL;
 DEFINE FIELD body ON TABLE doc2 TYPE string;
 DEFINE INDEX doc2_body_idx ON TABLE doc2 FIELDS body FULLTEXT ANALYZER simple BM25 HIGHLIGHTS;`,
   def: [
-    defineAnalyzer("simple", { tokenizers: ["blank"], filters: ["lowercase"] }),
+    defineAnalyzer("simple").tokenizers("blank").filters("lowercase"),
     defineTable("doc2", {
       id: s.string(),
       body: s

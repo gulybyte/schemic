@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { DateTime, RecordId, surql, Table } from "surrealdb";
 import { z } from "zod";
-import { emitTable } from "../../src/ddl";
+import { emitDefStatement, emitTable } from "../../src/ddl";
 import {
   defineAnalyzer,
+  defineFunction,
   defineRelation,
   defineTable,
   defineView,
@@ -583,7 +584,7 @@ describe("field $fulltext / $hnsw / $diskann (single-field special indexes)", ()
   });
 
   test("$fulltext() overload: bare string, AnalyzerDef, and { analyzer } object are equivalent", () => {
-    const eng = defineAnalyzer("eng", { tokenizers: ["blank"] });
+    const eng = defineAnalyzer("eng").tokenizers("blank");
     const fromString = emitTable(
       defineTable("o", { id: s.string(), body: s.string().$fulltext("eng") }),
     );
@@ -730,5 +731,75 @@ describe("defineView(name, shape?).as(query)", () => {
     const head = emitTable(V).split("\n")[0];
     expect(head).toContain("TYPE ANY SCHEMALESS AS SELECT * FROM person");
     expect(head).toContain('COMMENT "all people"');
+  });
+});
+
+describe("defineAnalyzer fluent builder", () => {
+  const ddl = (d: ReturnType<typeof defineAnalyzer>) => emitDefStatement(d).ddl;
+
+  test("clauses emit in grammar order: FUNCTION, TOKENIZERS, FILTERS, COMMENT", () => {
+    expect(
+      ddl(
+        defineAnalyzer("english")
+          .function("my_tok")
+          .tokenizers("class")
+          .filters("lowercase")
+          .comment("note"),
+      ),
+    ).toBe(
+      'DEFINE ANALYZER english FUNCTION fn::my_tok TOKENIZERS CLASS FILTERS LOWERCASE COMMENT "note";',
+    );
+  });
+
+  test(".function() accepts a FunctionDef reference, a bare name, or an fn:: name — all equal", () => {
+    const tok = defineFunction("my_tok", { t: s.string() });
+    const expected = "DEFINE ANALYZER a FUNCTION fn::my_tok;";
+    expect(ddl(defineAnalyzer("a").function(tok))).toBe(expected);
+    expect(ddl(defineAnalyzer("a").function("my_tok"))).toBe(expected);
+    expect(ddl(defineAnalyzer("a").function("fn::my_tok"))).toBe(expected);
+  });
+
+  test(".function(input => surql`…`) auto-defines an `<analyzer>_fn` and references it", () => {
+    const a = defineAnalyzer("english").function(
+      (input) => surql`RETURN string::lowercase(${input})`,
+    );
+    // auto-named like a field index; the analyzer references it
+    expect(a.config.function).toBe("english_fn");
+    expect(ddl(a)).toBe("DEFINE ANALYZER english FUNCTION fn::english_fn;");
+    // and the auto-created function carries a `$input: string` param + the given body
+    const fn = a.config.functionDef;
+    expect(fn).toBeDefined();
+    expect(emitDefStatement(fn!).ddl).toBe(
+      "DEFINE FUNCTION fn::english_fn($input: string) { RETURN string::lowercase($input) };",
+    );
+  });
+
+  test(".filters() builder callback types the parameterized filters (no extra import)", () => {
+    expect(
+      ddl(
+        defineAnalyzer("english").filters((f) => [
+          f.lowercase,
+          f.snowball("english"),
+          f.ngram(1, 3),
+        ]),
+      ),
+    ).toBe(
+      "DEFINE ANALYZER english FILTERS LOWERCASE, SNOWBALL(ENGLISH), NGRAM(1,3);",
+    );
+  });
+
+  test(".filters() mapper keeps its case-sensitive path (not uppercased)", () => {
+    expect(
+      ddl(defineAnalyzer("m").filters((f) => [f.mapper("/Tokens.txt")])),
+    ).toBe('DEFINE ANALYZER m FILTERS MAPPER("/Tokens.txt");');
+  });
+
+  test("duplicate tokenizers / filters throw", () => {
+    expect(() => defineAnalyzer("x").tokenizers("blank", "blank")).toThrow(
+      /duplicate tokenizer/,
+    );
+    expect(() => defineAnalyzer("x").filters("ascii", "ascii")).toThrow(
+      /duplicate filter/,
+    );
   });
 });

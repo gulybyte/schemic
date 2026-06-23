@@ -511,14 +511,29 @@ function emitAccess(a: AccessDef, opts?: DefineOptions): string {
   return `${parts.join(" ")};`;
 }
 
-/** `DEFINE ANALYZER <name> TOKENIZERS … [FILTERS …]`. Tokenizers/filters are uppercased to match
- *  `INFO … STRUCTURE`, so an authored analyzer compares equal to the introspected one. */
+/** Uppercase a filter clause to match `INFO … STRUCTURE`, but preserve double-quoted arguments — the
+ *  filter name + bare args (snowball language, ngram sizes) are case-insensitive, while `mapper("…")`
+ *  carries a case-sensitive file path that must NOT be mangled. Shared by emit + the Struct lowering. */
+export function upperFilterClause(filter: string): string {
+  return filter.replace(/"[^"]*"|[^"]+/g, (seg) =>
+    seg.startsWith('"') ? seg : seg.toUpperCase(),
+  );
+}
+
+/** `DEFINE ANALYZER <name> [FUNCTION …] [TOKENIZERS …] [FILTERS …] [COMMENT …]`. Tokenizers/filters
+ *  are uppercased to match `INFO … STRUCTURE`, so an authored analyzer compares equal to the
+ *  introspected one. */
 function emitAnalyzer(a: AnalyzerDef, opts?: DefineOptions): string {
   let s = `DEFINE ANALYZER ${existsPrefix(opts)}${escapeIdent(a.name)}`;
+  // Clauses in grammar order: FUNCTION, TOKENIZERS, FILTERS, COMMENT (the `fn::` prefix is optional
+  // in the config — normalize so it's emitted exactly once).
+  if (a.config.function)
+    s += ` FUNCTION fn::${a.config.function.replace(/^fn::/, "")}`;
   if (a.config.tokenizers?.length)
     s += ` TOKENIZERS ${a.config.tokenizers.map((t) => t.toUpperCase()).join(", ")}`;
   if (a.config.filters?.length)
-    s += ` FILTERS ${a.config.filters.map((f) => f.toUpperCase()).join(", ")}`;
+    s += ` FILTERS ${a.config.filters.map(upperFilterClause).join(", ")}`;
+  if (a.config.comment) s += ` COMMENT ${JSON.stringify(a.config.comment)}`;
   return `${s};`;
 }
 
