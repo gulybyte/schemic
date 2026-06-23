@@ -51,13 +51,15 @@ cd .claude/worktrees/<your-name>
 - **Never** commit onto another agent's branch or the shared checkout. Push your branch and **DM the
   owner** (usually `core-dev`) to integrate.
 
-**Continuous deployment.** `core-dev` lands every PR with **`bun scripts/land.ts <branch>`**, which is
-the whole pipeline: rebase the branch onto `main`, fast-forward-merge it, **gate it** (typecheck +
-test the workspace — a red gate rolls `main` back and ships nothing), push `main`, remove the branch's
-worktree + delete the branch, then **deploy** — cut the next prerelease (`bun scripts/release.ts next`,
-lockstep all 6 to npm) and push the version bumps. So **every merge ships a release**; pass
-`--no-deploy` only to batch a change into the next deploy. After your PR lands, your worktree is gone
-— start a fresh one off the latest `main` for your next task; never keep working in a landed worktree.
+**Landing + releases.** `core-dev` lands every PR with **`bun scripts/land.ts <branch>`**: rebase onto
+`main`, fast-forward-merge, **gate it** (typecheck + test the workspace — a red gate rolls `main` back and
+ships nothing), push `main`, remove the branch's worktree + delete the branch. **Landing ACCUMULATES — it
+does NOT deploy.** Releases are **cut explicitly on Manuel's confirmation**: review the accumulated
+changes, then `core-dev` runs **`bun scripts/release.ts next`** (lockstep all 6 to npm) + commits/pushes
+the version bumps + stamps the CHANGELOG. So changes pile up on `main` between releases; nothing publishes
+until Manuel says cut. (`land.ts --deploy` land+ships in one step — used only when Manuel wants immediate
+release.) After your PR lands, your worktree is gone — start a fresh one off the latest `main`; never keep
+working in a landed worktree.
 
 ## Driver coverage docs
 

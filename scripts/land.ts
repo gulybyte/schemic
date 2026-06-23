@@ -1,19 +1,21 @@
 #!/usr/bin/env bun
 /**
- * Land a green, backward-compatible PR branch onto `main` AND continuously deploy it. This is
- * core-dev's one-command merge step (see CLAUDE.md "Continuous deployment"):
+ * Land a green, backward-compatible PR branch onto `main`. This is core-dev's one-command merge step
+ * (see CLAUDE.md "Landing + releases"):
  *
  *   1. rebase <branch> onto origin/main (in its worktree) so the merge is a clean fast-forward
  *   2. fast-forward-merge it into the local main checkout (NOT pushed yet)
  *   3. GATE: typecheck + test the whole workspace — if red, undo the merge and abort (never ship red)
  *   4. push main, then remove the branch's worktree + delete the branch (local + remote)
- *   5. deploy: cut the next prerelease (bun scripts/release.ts next) and commit/push the version bumps
+ *
+ * Landing ACCUMULATES — it does NOT deploy. Releases are cut explicitly on Manuel's confirmation
+ * (`bun scripts/release.ts next`). Pass --deploy to land+ship in one step (the old CD behavior).
  *
  * Usage:
- *   bun scripts/land.ts <branch> [--remote origin] [--no-test] [--no-deploy]
+ *   bun scripts/land.ts <branch> [--remote origin] [--no-test] [--deploy]
  *
  *   --no-test    skip the gate (rare; e.g. a docs/scripts-only branch)
- *   --no-deploy  land to main but DON'T cut a release (the change batches into the next deploy)
+ *   --deploy     also cut+publish a release after landing (default: accumulate, don't deploy)
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -142,9 +144,11 @@ try {
 } catch {}
 console.log(`landed ${branch}.`);
 
-// --- deploy ----------------------------------------------------------------------------------
-if (flag("--no-deploy")) {
-  console.log("--no-deploy: landed without releasing; it'll batch into the next deploy.");
+// --- deploy (OPT-IN) -------------------------------------------------------------------------
+// Default is ACCUMULATE: landing does NOT deploy. Releases are cut explicitly on Manuel's confirm
+// (`bun scripts/release.ts next`). Pass --deploy to land+ship in one step (the old CD behavior).
+if (!flag("--deploy")) {
+  console.log("landed (accumulating, not deployed). Cut a release when ready to ship.");
   process.exit(0);
 }
 console.log("deploying (release next)...");
