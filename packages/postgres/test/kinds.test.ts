@@ -157,6 +157,97 @@ describe("emitKinds", () => {
       lastCreate,
     );
   });
+
+  test("composite FK emits multi-column REFERENCES (default name = pg convention)", () => {
+    const out = emitK([
+      tbl(
+        "member",
+        [f("org_id", scalar("string")), f("team_code", scalar("string"))],
+        {
+          foreignKeys: [
+            {
+              columns: ["org_id", "team_code"],
+              refTable: "team",
+              refColumns: ["org_id", "code"],
+              onDelete: "CASCADE",
+            },
+          ],
+        },
+      ),
+    ]);
+    expect(out.find((s) => s.includes("ADD CONSTRAINT"))).toBe(
+      'ALTER TABLE "member" ADD CONSTRAINT "member_org_id_team_code_fkey" FOREIGN KEY ("org_id", "team_code") REFERENCES "team" ("org_id", "code") ON DELETE CASCADE;',
+    );
+  });
+
+  test("FK to a non-id column emits the target column", () => {
+    const out = emitK([
+      tbl("prof", [f("email", scalar("string"))], {
+        foreignKeys: [
+          { columns: ["email"], refTable: "u", refColumns: ["email"] },
+        ],
+      }),
+    ]);
+    expect(out.find((s) => s.includes("ADD CONSTRAINT"))).toBe(
+      'ALTER TABLE "prof" ADD CONSTRAINT "prof_email_fkey" FOREIGN KEY ("email") REFERENCES "u" ("email");',
+    );
+  });
+});
+
+describe("composite / non-id FK round-trip", () => {
+  test("composite PK target + composite FK + non-id FK round-trip through the engine", async () => {
+    const tables: PgTable[] = [
+      tbl(
+        "crt_team",
+        [f("org_id", scalar("string")), f("code", scalar("string"))],
+        {
+          primaryKey: ["org_id", "code"],
+        },
+      ),
+      tbl(
+        "crt_member",
+        [f("org_id", scalar("string")), f("team_code", scalar("string"))],
+        {
+          foreignKeys: [
+            {
+              columns: ["org_id", "team_code"],
+              refTable: "crt_team",
+              refColumns: ["org_id", "code"],
+              onDelete: "CASCADE",
+            },
+          ],
+        },
+      ),
+      tbl("crt_u", [f("email", scalar("string"))], {
+        indexes: [{ name: "crt_u_email_key", cols: ["email"], unique: true }],
+      }),
+      tbl("crt_prof", [f("email", scalar("string"))], {
+        foreignKeys: [
+          { columns: ["email"], refTable: "crt_u", refColumns: ["email"] },
+        ],
+      }),
+    ];
+    const objs = splitTables(tables);
+    const conn = (await driver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await driver.apply(conn, emitKinds(registry, objs));
+      const live = await driver.introspectAll(conn);
+      // the composite + non-id FKs introspect as their own constraint kind objects
+      expect(
+        live.some(
+          (o) =>
+            o.kind === "constraint" &&
+            o.name === "crt_member_org_id_team_code_fkey",
+        ),
+      ).toBe(true);
+      const { up, down } = buildKindDiff(registry, live, objs);
+      expect({ up, down }).toEqual({ up: [], down: [] });
+    } finally {
+      await conn.close();
+    }
+  });
 });
 
 // --- diff --------------------------------------------------------------------------------------

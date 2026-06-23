@@ -162,6 +162,15 @@ export function lowerTable(def: PgTableDef): PgTable {
   if (pkCols.length > 0) table.primaryKey = pkCols;
   if (def.config.checks && def.config.checks.length > 0)
     table.checks = def.config.checks;
+  if (def.config.foreignKeys && def.config.foreignKeys.length > 0)
+    table.foreignKeys = def.config.foreignKeys.map((fk) => ({
+      ...(fk.name !== undefined ? { name: fk.name } : {}),
+      columns: fk.columns,
+      refTable: fk.refTable,
+      refColumns: fk.refColumns ?? ["id"],
+      ...(fk.onDelete !== undefined ? { onDelete: fk.onDelete } : {}),
+      ...(fk.onUpdate !== undefined ? { onUpdate: fk.onUpdate } : {}),
+    }));
   return table;
 }
 

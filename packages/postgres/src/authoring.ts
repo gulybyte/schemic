@@ -283,11 +283,23 @@ export const s = {
 
 // --- defineTable: a pg table builder producing an `Authored` object -----------------------------
 
-/** Table-level pg config: composite PK, table CHECKs, and secondary indexes. */
+/** A table-level FOREIGN KEY: composite, or referencing a non-`id` column of `refTable`. */
+export interface PgForeignKeyConfig {
+  name?: string;
+  columns: string[];
+  refTable: string;
+  /** Referenced columns (parallel to `columns`); defaults to `["id"]`. */
+  refColumns?: string[];
+  onDelete?: string;
+  onUpdate?: string;
+}
+
+/** Table-level pg config: composite PK, table CHECKs, secondary indexes, and explicit foreign keys. */
 export interface PgTableConfig {
   primaryKey?: string[];
   checks?: string[];
   indexes?: { name?: string; cols: string[]; unique?: boolean }[];
+  foreignKeys?: PgForeignKeyConfig[];
 }
 
 /**
@@ -351,6 +363,24 @@ export class PgTableDef<
     return new PgTableDef(this.name, this.fields, {
       ...this.config,
       indexes: [...(this.config.indexes ?? []), { cols, ...(opts ?? {}) }],
+    });
+  }
+  /**
+   * A table-level FOREIGN KEY — for a COMPOSITE key (multiple columns) or one referencing a NON-`id`
+   * column. `refColumns` defaults to `["id"]`; its length must match `columns`. (For a plain single-
+   * column FK to another table's `id`, prefer the inline `author: other.record()` / `s.references(...)`.)
+   */
+  foreignKey(fk: {
+    columns: (keyof F & string)[];
+    refTable: string;
+    refColumns?: string[];
+    onDelete?: string;
+    onUpdate?: string;
+    name?: string;
+  }): PgTableDef<Name, F> {
+    return new PgTableDef(this.name, this.fields, {
+      ...this.config,
+      foreignKeys: [...(this.config.foreignKeys ?? []), fk],
     });
   }
 

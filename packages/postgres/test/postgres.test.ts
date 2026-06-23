@@ -104,13 +104,19 @@ describe("@schemic/postgres: real round-trip via PGlite", () => {
       });
       expect(byName.get("name")).toEqual({ t: "scalar", name: "string" });
 
-      // The FK is its own kind object referencing user.
+      // The FK is its own kind object referencing user (single-col -> user.id rides as columns/refColumns).
       const fk = live.find(
-        (o): o is PortableObject & { refTable: string; column: string } =>
-          o.kind === "constraint" && o.name === "post_author_fkey",
+        (
+          o,
+        ): o is PortableObject & {
+          refTable: string;
+          columns: string[];
+          refColumns: string[];
+        } => o.kind === "constraint" && o.name === "post_author_fkey",
       );
       expect(fk?.refTable).toBe("user");
-      expect(fk?.column).toBe("author");
+      expect(fk?.columns).toEqual(["author"]);
+      expect(fk?.refColumns).toEqual(["id"]);
     } finally {
       await conn.close();
     }

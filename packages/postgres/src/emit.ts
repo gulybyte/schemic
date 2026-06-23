@@ -18,13 +18,25 @@ export interface PgIndexInfo {
   unique: boolean;
 }
 
-/** The driver-private table shape (replaces the retired `PortableTable`): columns + PK + CHECKs + idx. */
+/** A table-level FOREIGN KEY (composite or to a non-`id` column); single-col `id` refs ride the field. */
+export interface PgForeignKey {
+  /** Constraint name; defaults to pg's convention `<table>_<col1>_<col2>_fkey` when omitted. */
+  name?: string;
+  columns: string[];
+  refTable: string;
+  refColumns: string[];
+  onDelete?: string;
+  onUpdate?: string;
+}
+
+/** The driver-private table shape (replaces the retired `PortableTable`): columns + PK + CHECKs + idx + FKs. */
 export interface PgTable {
   name: string;
   fields: PortableField[];
   indexes: PgIndexInfo[];
   primaryKey?: string[];
   checks?: string[];
+  foreignKeys?: PgForeignKey[];
 }
 
 /** Just what `createTableDdl` needs (a `PgTable` is a structural superset). */
@@ -230,8 +242,9 @@ export function colDef(f: PortableField): string {
   const c = pgColumn(f.type);
   return `${escId(f.name)} ${c.sql}${c.nullable ? "" : " NOT NULL"}`;
 }
-export const fkName = (table: string, field: string) =>
-  `${table}_${field}_fkey`;
+/** pg's default FK constraint name: `<table>_<col1>_<col2>_fkey` (matches what pg autogenerates). */
+export const fkName = (table: string, columns: string[]) =>
+  `${table}_${columns.join("_")}_fkey`;
 export const addColSql = (table: string, f: PortableField) =>
   `ALTER TABLE ${escId(table)} ADD COLUMN ${colDef(f)};`;
 export const dropColSql = (table: string, field: string) =>
@@ -239,18 +252,23 @@ export const dropColSql = (table: string, field: string) =>
 export const dropTableSql = (table: string) =>
   `DROP TABLE IF EXISTS ${escId(table)} CASCADE;`;
 
-/** `ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY …` for a single-column FK to `ref(id)`. */
+/**
+ * `ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY (cols) REFERENCES ref (refCols) …` — one or many columns,
+ * referencing one or many columns of `ref` (a non-`id` target is just a different `refCols`).
+ */
 export const addFkSql = (
   table: string,
-  field: string,
+  name: string,
+  columns: string[],
   ref: string,
+  refColumns: string[],
   actions = "",
 ) =>
-  `ALTER TABLE ${escId(table)} ADD CONSTRAINT ${escId(fkName(table, field))} FOREIGN KEY (${escId(field)}) REFERENCES ${escId(ref)} (${escId("id")})${actions};`;
+  `ALTER TABLE ${escId(table)} ADD CONSTRAINT ${escId(name)} FOREIGN KEY (${columns.map(escId).join(", ")}) REFERENCES ${escId(ref)} (${refColumns.map(escId).join(", ")})${actions};`;
 
-/** Drop a FK constraint by its generated name. */
-export const dropFkSql = (table: string, field: string) =>
-  `ALTER TABLE ${escId(table)} DROP CONSTRAINT IF EXISTS ${escId(fkName(table, field))};`;
+/** Drop a FK constraint by name. */
+export const dropFkSql = (table: string, name: string) =>
+  `ALTER TABLE ${escId(table)} DROP CONSTRAINT IF EXISTS ${escId(name)};`;
 
 // --- enum (CREATE TYPE … AS ENUM) ---------------------------------------------------------------
 

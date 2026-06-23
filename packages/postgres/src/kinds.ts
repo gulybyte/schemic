@@ -96,14 +96,19 @@ export interface PgIndexPortable extends PortableObject {
   unique: boolean;
 }
 
-/** The `constraint` kind's portable form (FK only for now; deps -> table + referenced table). */
+/**
+ * The `constraint` kind's portable form (FK only for now; deps -> table + referenced table). `columns`
+ * /`refColumns` are ordered + parallel, so this covers single-column, composite, and non-`id`-target FKs
+ * uniformly (a single-col `id` ref is just `columns:[c], refColumns:["id"]`).
+ */
 export interface PgConstraintPortable extends PortableObject {
   kind: "constraint";
   name: string;
   table: string;
   ctype: "fk";
-  column: string;
+  columns: string[];
   refTable: string;
+  refColumns: string[];
   onDelete?: string;
   onUpdate?: string;
 }
@@ -329,12 +334,14 @@ const constraintEngine: KindEngine<PgConstraintPortable, PgConstraintPortable> =
     emit: (c) => [
       addFkSql(
         c.table,
-        c.column,
+        c.name,
+        c.columns,
         c.refTable,
+        c.refColumns,
         fkActions({ on_delete: c.onDelete, on_update: c.onUpdate }),
       ),
     ],
-    remove: (c) => [dropFkSql(c.table, c.column)],
+    remove: (c) => [dropFkSql(c.table, c.name)],
     // A FK emits AFTER both its own table and the referenced table — this is what breaks mutual-FK
     // cycles (tables have no deps, so they create first, then the constraints between them). NO
     // `owner`: like the index kind, constraints emit as a rank group after all tables (pg convention).
@@ -681,6 +688,7 @@ export function splitTable(t: PgTable): PortableObject[] {
     out.push(index);
   }
 
+  // Inline single-column FK to ref(id) — from an `s.references(table)` field (a `record` column type).
   for (const f of fields) {
     const ref = pgColumn(f.type).references;
     if (!ref) continue;
@@ -688,15 +696,35 @@ export function splitTable(t: PgTable): PortableObject[] {
     const onUpdate = normAction(f.reference?.on_update);
     const fk: PgConstraintPortable = {
       kind: "constraint",
-      name: fkName(t.name, f.name),
+      name: fkName(t.name, [f.name]),
       table: t.name,
       ctype: "fk",
-      column: f.name,
+      columns: [f.name],
       refTable: ref,
+      refColumns: ["id"],
       ...(onDelete ? { onDelete } : {}),
       ...(onUpdate ? { onUpdate } : {}),
     };
     out.push(fk);
+  }
+
+  // Explicit table-level FKs — composite, or referencing a non-`id` column (authoring `.foreignKey(...)`
+  // / introspected). Carried verbatim (ordered columns + refColumns).
+  for (const fk of t.foreignKeys ?? []) {
+    const onDelete = normAction(fk.onDelete);
+    const onUpdate = normAction(fk.onUpdate);
+    const c: PgConstraintPortable = {
+      kind: "constraint",
+      name: fk.name ?? fkName(t.name, fk.columns),
+      table: t.name,
+      ctype: "fk",
+      columns: fk.columns,
+      refTable: fk.refTable,
+      refColumns: fk.refColumns,
+      ...(onDelete ? { onDelete } : {}),
+      ...(onUpdate ? { onUpdate } : {}),
+    };
+    out.push(c);
   }
   return out;
 }

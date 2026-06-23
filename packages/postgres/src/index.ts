@@ -54,7 +54,13 @@ import type {
   PgTriggerDef,
   PgViewDef,
 } from "./authoring";
-import { escId, type PgIndexInfo, type PgTable, triggerDefSql } from "./emit";
+import {
+  escId,
+  type PgForeignKey,
+  type PgIndexInfo,
+  type PgTable,
+  triggerDefSql,
+} from "./emit";
 import {
   domainPortable,
   enumPortable,
@@ -111,12 +117,23 @@ interface ColRow {
   numeric_scale: number | null;
 }
 interface FkRow {
+  name: string;
   table_name: string;
-  column_name: string;
-  foreign_table_name: string;
-  delete_rule: string;
-  update_rule: string;
+  ref_table: string;
+  del: string;
+  upd: string;
+  cols: string[];
+  ref_cols: string[];
 }
+
+/** A FK referential-action char (pg_constraint.confdeltype/confupdtype) -> SQL action; NO ACTION -> undefined. */
+const FK_ACTION: Record<string, string> = {
+  c: "CASCADE",
+  r: "RESTRICT",
+  n: "SET NULL",
+  d: "SET DEFAULT",
+};
+const fkAction = (ch: string): string | undefined => FK_ACTION[ch];
 interface PkRow {
   table_name: string;
   column_name: string;
@@ -224,17 +241,23 @@ async function pgIntrospect(
       WHERE c.table_schema = 'public'
       ORDER BY c.table_name, c.ordinal_position`,
   );
+  // FKs via pg_catalog: conkey/confkey are ORDERED column arrays, so composite + non-`id`-target keys
+  // round-trip (information_schema can't reliably pair multi-column local + referenced columns).
   const { rows: fks } = await conn.query<FkRow>(
-    `SELECT tc.table_name, kcu.column_name, ccu.table_name AS foreign_table_name,
-            rc.delete_rule, rc.update_rule
-       FROM information_schema.table_constraints tc
-       JOIN information_schema.key_column_usage kcu
-         ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-       JOIN information_schema.constraint_column_usage ccu
-         ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-       JOIN information_schema.referential_constraints rc
-         ON rc.constraint_name = tc.constraint_name AND rc.constraint_schema = tc.table_schema
-      WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'`,
+    `SELECT con.conname AS name, c.relname AS table_name, rc.relname AS ref_table,
+            con.confdeltype AS del, con.confupdtype AS upd,
+            (SELECT array_agg(a.attname ORDER BY k.ord)
+               FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
+               JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS cols,
+            (SELECT array_agg(a.attname ORDER BY k.ord)
+               FROM unnest(con.confkey) WITH ORDINALITY AS k(attnum, ord)
+               JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum) AS ref_cols
+       FROM pg_constraint con
+       JOIN pg_class c ON c.oid = con.conrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+       JOIN pg_class rc ON rc.oid = con.confrelid
+      WHERE con.contype = 'f'
+      ORDER BY con.conname`,
   );
   const { rows: pks } = await conn.query<PkRow>(
     `SELECT tc.table_name, kcu.column_name
@@ -266,8 +289,32 @@ async function pgIntrospect(
       ORDER BY t.relname, i.relname, k.ord`,
   );
 
-  const fkBy = new Map<string, FkRow>();
-  for (const f of fks) fkBy.set(`${f.table_name}.${f.column_name}`, f);
+  // Split FKs: a single-column FK to the target's `id` rides the column as a `record` type (the inline
+  // `s.references` form); composite or non-`id` FKs become explicit table-level `foreignKeys`.
+  const singleIdFkBy = new Map<string, FkRow>();
+  const explicitFkBy = new Map<string, PgForeignKey[]>();
+  for (const f of fks) {
+    if (
+      f.cols.length === 1 &&
+      f.ref_cols.length === 1 &&
+      f.ref_cols[0] === "id"
+    ) {
+      singleIdFkBy.set(`${f.table_name}.${f.cols[0]}`, f);
+    } else {
+      const onDelete = fkAction(f.del);
+      const onUpdate = fkAction(f.upd);
+      const list = explicitFkBy.get(f.table_name) ?? [];
+      list.push({
+        name: f.name,
+        columns: f.cols,
+        refTable: f.ref_table,
+        refColumns: f.ref_cols,
+        ...(onDelete ? { onDelete } : {}),
+        ...(onUpdate ? { onUpdate } : {}),
+      });
+      explicitFkBy.set(f.table_name, list);
+    }
+  }
   const pkBy = new Map<string, string[]>();
   for (const p of pks) {
     const list = pkBy.get(p.table_name) ?? [];
@@ -294,9 +341,9 @@ async function pgIntrospect(
     if (skip.has(c.table_name)) continue;
     seen.add(c.table_name);
     if (c.column_name === "id" && isImplicit(c.table_name)) continue;
-    const fk = fkBy.get(`${c.table_name}.${c.column_name}`);
+    const fk = singleIdFkBy.get(`${c.table_name}.${c.column_name}`);
     let type: PortableType = fk
-      ? { t: "record", tables: [fk.foreign_table_name] }
+      ? { t: "record", tables: [fk.ref_table] }
       : introspectType(c);
     if (c.is_nullable === "YES") type = nullable(type);
     const pf: PortableField = {
@@ -309,10 +356,10 @@ async function pgIntrospect(
         c.identity_generation === "ALWAYS" ? "always" : "by-default";
     if (fk) {
       const ref: { on_delete?: string; on_update?: string } = {};
-      if (fk.delete_rule && fk.delete_rule !== "NO ACTION")
-        ref.on_delete = fk.delete_rule;
-      if (fk.update_rule && fk.update_rule !== "NO ACTION")
-        ref.on_update = fk.update_rule;
+      const od = fkAction(fk.del);
+      const ou = fkAction(fk.upd);
+      if (od) ref.on_delete = od;
+      if (ou) ref.on_update = ou;
       if (ref.on_delete !== undefined || ref.on_update !== undefined)
         pf.reference = ref;
     }
@@ -346,6 +393,8 @@ async function pgIntrospect(
       const pk = pkBy.get(name);
       if (pk && pk.length > 0) t.primaryKey = pk;
     }
+    const fks = explicitFkBy.get(name);
+    if (fks && fks.length > 0) t.foreignKeys = fks;
     return t;
   });
 }

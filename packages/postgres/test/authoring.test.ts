@@ -577,3 +577,71 @@ describe("functions / triggers / policies via the authoring surface (explode)", 
     expect({ up, down }).toEqual({ up: [], down: [] });
   });
 });
+
+describe("PgTableDef.foreignKey (composite / non-id FK via the authoring surface)", () => {
+  const roundtrip = async (objs: ReturnType<typeof postgresDriver.explode>) => {
+    const out = emitKinds(registry, objs);
+    const conn = (await postgresDriver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await postgresDriver.apply(conn, out);
+      const live = await postgresDriver.introspectAll(conn);
+      return buildKindDiff(registry, live, objs);
+    } finally {
+      await conn.close();
+    }
+  };
+
+  test("composite FK -> a composite-PK table round-trips", async () => {
+    const team = defineTable("aft_team", {
+      org_id: s.text(),
+      code: s.text(),
+    }).primaryKey("org_id", "code");
+    const member = defineTable("aft_member", {
+      org_id: s.text(),
+      team_code: s.text(),
+    }).foreignKey({
+      columns: ["org_id", "team_code"],
+      refTable: "aft_team",
+      refColumns: ["org_id", "code"],
+      onDelete: "cascade",
+    });
+    const objs = postgresDriver.explode([team, member], []);
+    const out = emitKinds(registry, objs);
+    expect(
+      out.find((x) => x.includes("ADD CONSTRAINT") && x.includes("aft_member")),
+    ).toContain(
+      'FOREIGN KEY ("org_id", "team_code") REFERENCES "aft_team" ("org_id", "code")',
+    );
+    const { up, down } = await roundtrip(objs);
+    expect({ up, down }).toEqual({ up: [], down: [] });
+  });
+
+  test("FK to a non-id column (refColumns) round-trips", async () => {
+    const u = defineTable("afu_u", { email: s.text().$unique() });
+    const prof = defineTable("afu_prof", { email: s.text() }).foreignKey({
+      columns: ["email"],
+      refTable: "afu_u",
+      refColumns: ["email"],
+    });
+    const objs = postgresDriver.explode([u, prof], []);
+    const { up, down } = await roundtrip(objs);
+    expect({ up, down }).toEqual({ up: [], down: [] });
+  });
+
+  test('refColumns defaults to ["id"] when omitted', async () => {
+    const parent = defineTable("afd_parent", { name: s.text() });
+    const child = defineTable("afd_child", { parent_id: s.text() }).foreignKey({
+      columns: ["parent_id"],
+      refTable: "afd_parent",
+    });
+    const objs = postgresDriver.explode([parent, child], []);
+    const out = emitKinds(registry, objs);
+    expect(
+      out.find((x) => x.includes("ADD CONSTRAINT") && x.includes("afd_child")),
+    ).toContain('REFERENCES "afd_parent" ("id")');
+    const { up, down } = await roundtrip(objs);
+    expect({ up, down }).toEqual({ up: [], down: [] });
+  });
+});

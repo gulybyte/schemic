@@ -38,7 +38,7 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 | `table` | [x] | [x] | [x] | [x] | registered; columns nest as substrate; `overwrite` = clause-level column ALTER (type/null/default/comment), recreate-fallback for identity/generated/CHECK/PK; **`canonical` excludes DEFAULT/CHECK/GENERATED/COMMENT + table-CHECK from change-detection** (emit stays faithful; no phantom-diff vs introspect); **`displayItems` = per-field, grouped under the table** |
 | `column`* (substrate) | [n/a] | [x] | [x] | [x] | not a kind — `PortableField`/`PortableType` nested in `table`; substrate keeps `native{params}`+`check` |
 | `index` | [x] | [x] | [x] | [x] | registered; `deps`→table (no `owner`, rank-grouped); emits `CREATE [UNIQUE] INDEX`; change = drop+recreate. **Plain btree indexes — UNIQUE and NON-unique — introspect (pg_index, excl. PK / partial / expression / non-btree) → full round-trip, no phantom** (real index add/drop diffs). Partial / expression / method indexes (gin/gist/brin/hash) still not emitted or read |
-| `constraint` (FK; PK/UNIQUE/CHECK/EXCLUDE TBD) | [x] | [x] | [x] | [~] | FK registered; `deps`→[table, refTable] breaks mutual-FK cycles; change = drop+recreate; FK + actions introspect (canonicalized UPPERCASE, no phantom); PK is table substrate; UNIQUE rides `index`; CHECK/EXCLUDE TBD |
+| `constraint` (FK; PK/UNIQUE/CHECK/EXCLUDE TBD) | [x] | [x] | [x] | [~] | FK registered with ordered `columns`/`refColumns` — **single-column, composite (multi-column), and non-`id`-target** all round-trip (introspect via pg_constraint conkey/confkey); `deps`→[table, refTable] breaks mutual-FK cycles; change = drop+recreate; actions canonicalized UPPERCASE, no phantom; PK is table substrate; UNIQUE rides `index`; CHECK/EXCLUDE TBD |
 | `view` | [x] | [x] | [~] | [~] | `defineView(name, sql)` standalone def; registered LAST (emits after the tables it reads); emit `CREATE VIEW … AS <sql>`, introspect pg_views, drop. PRESENCE round-trips (add/drop diff); the BODY is excluded from change-detection (`canonical` = name-only) because pg rewrites view definitions (expands `SELECT *`, strips qualifiers, reformats) — so a body EDIT isn't auto-diffed yet (drop+recreate / re-gen; future: shadow-normalize) |
 | `matview` (materialized view) | [x] | [x] | [~] | [~] | `defineMaterializedView(name, sql)` standalone def; registered LAST (after `view`); emit `CREATE MATERIALIZED VIEW … AS <sql>`, introspect pg_matviews, drop. PRESENCE round-trips; BODY excluded from change-detection (`canonical` = name-only, same as `view` — pg rewrites the stored definition); a body edit isn't auto-diffed (drop+recreate / re-gen) |
 | `sequence` (standalone) | [x] | [x] | [x] | [x] | `defineSequence(name, opts?)` standalone def (start/increment/min/max/cache/cycle); emit only the SET attributes, `canonical` fills pg defaults so authoring-without-opts matches introspect; introspect pg_sequences EXCLUDING identity/serial-OWNED sequences (pg_depend) so auto-increment columns don't phantom-add; values read as text (bigint-safe); a real attribute change drop+recreates |
@@ -92,10 +92,11 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 - [x] `GENERATED { ALWAYS | BY DEFAULT } AS IDENTITY` (`s.integer().$identity()`); `s.serial()`/`s.bigserial()` model as identity
 
 ### Foreign keys
-- [x] single-target `s.references(table)` → `text` + `FOREIGN KEY … REFERENCES t(id)`
-- [x] `ON DELETE` / `ON UPDATE` referential actions (`$references`/`s.references` opts)
+- [x] single-target `s.references(table)` → `text` + `FOREIGN KEY … REFERENCES t(id)` (inline, rides the column)
+- [x] `ON DELETE` / `ON UPDATE` referential actions (`$references`/`s.references` opts; table-level `.foreignKey` opts)
+- [x] **composite / multi-column FK** — `defineTable(...).foreignKey({ columns, refTable, refColumns })`; ordered columns, full round-trip (introspect via pg_constraint conkey/confkey arrays)
+- [x] **FK to a non-`id` column** — `.foreignKey({ columns: [c], refTable, refColumns: [other] })` (refColumns defaults to `["id"]`)
 - [~] multi-target record → plain `text`, no FK (polymorphic FK out of scope)
-- [ ] composite / multi-column FK; FK to a non-`id` column
 
 ### Constraints, defaults, indexes
 - [~] `DEFAULT <expr>` (`$default`) — **emitted faithfully** (literal or `sqlExpr(...)`), excluded from equality (Postgres rewrites it)
