@@ -11,6 +11,11 @@ tagged by package (**core** / **cli** / **surrealdb** / **postgres** / **setup**
 
 ## [Unreleased]
 
+### Changed
+- **cli:** the driver loader now resolves a driver via its `@schemic/<driver>/driver` subpath first
+  (falling back to the package index), so a driver can move `registerDriver` + its engine off the
+  side-effect-free authoring index. Backward-compatible; no user-facing change until drivers split.
+
 ## [0.1.0-alpha.20] - 2026-06-23
 
 ### Added
