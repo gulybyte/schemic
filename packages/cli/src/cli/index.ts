@@ -58,6 +58,7 @@ import {
   planMigration,
   prepareMigration,
   reconcileBaseline,
+  renderMigrationPreview,
   rollback,
   seed,
   status,
@@ -660,6 +661,14 @@ const genAction = (
     console.log(
       `${plural(plan.diff.up.length, "change")}${kinds ? ` — ${kinds}` : ""}.`,
     );
+    // Show the migration you're ABOUT to write — the rendered DDL — BEFORE prompting for a name, so you
+    // review the actual statements that will replay while you name them (`schemic diff` is the +/- view).
+    const body = renderMigrationPreview(config, plan.diff)
+      .replace(/\n+$/, "")
+      .split("\n")
+      .map((line) => `  ${line}`)
+      .join("\n");
+    console.log(`\n${style.dim(body)}\n`);
     const title =
       name ??
       (opts.baseline ? "baseline" : opts.yes ? undefined : await promptTitle());
@@ -669,15 +678,8 @@ const genAction = (
       return;
     }
     const res = commitMigration(config, prepared);
-    // `gen` shows the migration it WROTE (the rendered DDL), not a diff — so you review the actual
-    // statements that will replay. Indented under the filename; counts close it out.
-    const body = prepared.content
-      .replace(/\n+$/, "")
-      .split("\n")
-      .map((line) => `  ${line}`)
-      .join("\n");
     console.log(
-      `\n${ok(res.file ?? "migration written")}\n\n${style.dim(body)}\n\n  ${style.dim(`(+${res.up} up / ${res.down} down)`)}`,
+      `${ok(res.file ?? "migration written")}  ${style.dim(`(+${res.up} up / ${res.down} down)`)}`,
     );
     // After a squash, reconcile the live DB's migration history (best-effort): when the DB already
     // matches the schema, record the baseline as applied so its DDL isn't re-run and `schemic status`

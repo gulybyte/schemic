@@ -186,6 +186,15 @@ export function prepareMigration(
   };
 }
 
+/** The rendered migration body for a PREVIEW — nothing written, no tag allocated (shown by `gen` BEFORE
+ *  the title prompt so you see what you're naming). The tag header reads `(unnamed)` until it's named. */
+export function renderMigrationPreview(
+  config: ResolvedConfig,
+  diff: Diff,
+): string {
+  return migStore(config).render("(unnamed)", diff);
+}
+
 /** Write a prepared migration to disk (file + snapshot). */
 export function commitMigration(
   config: ResolvedConfig,
