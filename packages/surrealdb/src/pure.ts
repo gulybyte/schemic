@@ -28,17 +28,33 @@ import { z } from "zod";
 /**
  * Maps a Surreal-native schema (datetime codec, recordId) to its SurrealQL type.
  * Kept on the schema — not the field — so it composes through array()/optional()/nesting.
+ *
+ * These two registries are module-level mutable singletons read across the authoring index <-> the
+ * `@schemic/surrealdb/driver` subpath, which can load as SEPARATE module instances (the CLI jiti-loads
+ * the user schema -> the index; the CLI loader imports /driver). A plain `new WeakMap()` would then be
+ * DUPLICATED — `s.*` registers codecs/shapes in one, the driver's lower()/inferField read the other,
+ * and gen fails ("s.custom() has no SurrealQL type"). So key each on a REGISTERED symbol (same key in
+ * every instance) so both halves share ONE map. Mirrors @schemic/core's driver registry (driver.ts).
  */
-export const surrealTypeRegistry = new WeakMap<z.ZodType, string>();
+function globalSingleton<T>(key: symbol, make: () => T): T {
+  const slots = globalThis as Record<symbol, T | undefined>;
+  if (slots[key] === undefined) slots[key] = make();
+  return slots[key] as T;
+}
+export const surrealTypeRegistry = globalSingleton(
+  Symbol.for("@schemic/surrealdb.surrealTypeRegistry"),
+  () => new WeakMap<z.ZodType, string>(),
+);
 
 /**
  * Maps an object schema built via `s.object` to its original SField shape, so
- * nested fields keep their DDL metadata ($default/$assert/...) during generation.
+ * nested fields keep their DDL metadata ($default/$assert/...) during generation. A `globalThis`
+ * `Symbol.for` singleton for the same cross-instance reason as {@link surrealTypeRegistry}.
  */
-export const objectFieldsRegistry = new WeakMap<
-  z.ZodType,
-  Record<string, AnyField>
->();
+export const objectFieldsRegistry = globalSingleton(
+  Symbol.for("@schemic/surrealdb.objectFieldsRegistry"),
+  () => new WeakMap<z.ZodType, Record<string, AnyField>>(),
+);
 
 /**
  * Per-table/field row-level permissions. A `PermOp` is one access operation; `Perm` is
