@@ -2920,20 +2920,6 @@ export interface AnalyzerConfig {
   comment?: string;
 }
 
-/** Reject duplicate entries in a tokenizer/filter list (order is significant, so we keep it — we only
- *  forbid exact repeats, which are always redundant). Throws a clear error naming the offender. */
-function uniqueClause<T extends string>(items: T[], clause: string): T[] {
-  const seen = new Set<string>();
-  for (const item of items) {
-    if (seen.has(item))
-      throw new Error(
-        `defineAnalyzer: duplicate ${clause} "${item}" — ${clause}s must be unique.`,
-      );
-    seen.add(item);
-  }
-  return items;
-}
-
 /**
  * A text-search analyzer (`DEFINE ANALYZER`), referenced by a `FULLTEXT` index. A fluent builder
  * (like {@link AccessDef}); every clause is optional, so a bare `defineAnalyzer("text")` is valid:
@@ -2967,8 +2953,8 @@ export class AnalyzerDef {
   tokenizers(...tokenizers: Tokenizer[]): AnalyzerDef {
     return this.withConfig({ tokenizers });
   }
-  /** `FILTERS …` — one or more token filters, applied in order (must be unique). Pass bare filters
-   *  directly (`.filters("lowercase", "ascii")`), or a callback for the typed/parameterized builders
+  /** `FILTERS …` — one or more token filters, applied in order. Pass bare filters directly
+   *  (`.filters("lowercase", "ascii")`), or a callback for the typed/parameterized builders
    *  (`.filters(f => [f.lowercase, f.snowball("english"), f.ngram(1, 3)])`) — no extra import needed. */
   filters(...filters: Filter[]): AnalyzerDef;
   filters(build: (f: FilterBuilder) => readonly Filter[]): AnalyzerDef;
@@ -2979,7 +2965,7 @@ export class AnalyzerDef {
       typeof args[0] === "function"
         ? [...args[0](FILTER_BUILDER)]
         : (args as Filter[]);
-    return this.withConfig({ filters: uniqueClause(list, "filter") });
+    return this.withConfig({ filters: list });
   }
   /** `COMMENT "…"` — a human-readable description stored with the analyzer. */
   comment(comment: string): AnalyzerDef {

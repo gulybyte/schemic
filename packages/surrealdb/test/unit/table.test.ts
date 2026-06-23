@@ -794,13 +794,12 @@ describe("defineAnalyzer fluent builder", () => {
     ).toBe('DEFINE ANALYZER m FILTERS MAPPER("/Tokens.txt");');
   });
 
-  test("duplicate filters throw; duplicate tokenizers are allowed", () => {
-    expect(() => defineAnalyzer("x").filters("ascii", "ascii")).toThrow(
-      /duplicate filter/,
-    );
-    // tokenizers are NOT deduped — repeats pass through verbatim
+  test("tokenizers + filters pass through verbatim (no dedup)", () => {
     expect(ddl(defineAnalyzer("x").tokenizers("blank", "blank"))).toBe(
       "DEFINE ANALYZER x TOKENIZERS BLANK, BLANK;",
+    );
+    expect(ddl(defineAnalyzer("x").filters("ascii", "ascii"))).toBe(
+      "DEFINE ANALYZER x FILTERS ASCII, ASCII;",
     );
   });
 });
