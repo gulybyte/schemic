@@ -13,10 +13,14 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { DefineOptions } from "../src/ddl";
-import type { TableDef } from "../src/pure";
+import type { StandaloneDef, TableDef } from "../src/pure";
 
 // biome-ignore lint/suspicious/noExplicitAny: heterogeneous coverage tables — the Shape varies.
 export type AnyTable = TableDef<string, any>;
+
+/** A coverage `def` — a table (asserted via `emitTable`) or a standalone def (via `emitDefStatement`):
+ *  event / function / access / analyzer. The coverage test picks the emitter by the def's kind. */
+export type AnyDef = AnyTable | StandaloneDef;
 
 /** One coverage permutation: the authoring `def` (+ optional emit `options`) and the exact DDL it emits. */
 export interface CoverageItem {
@@ -25,7 +29,7 @@ export interface CoverageItem {
   /** The verbatim `def` snippet, extracted from the file's source. */
   code: string;
   ddl: string;
-  def: AnyTable;
+  def: AnyDef;
   /** Emit flags — e.g. `{ exists: "overwrite" }` for `DEFINE TABLE OVERWRITE …`. */
   options?: DefineOptions;
 }
@@ -95,7 +99,7 @@ export function cover(
     title: string;
     note?: string;
     ddl: string;
-    def: AnyTable;
+    def: AnyDef;
     options?: DefineOptions;
   },
 ): CoverageItem {

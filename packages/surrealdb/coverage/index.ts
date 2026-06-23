@@ -4,9 +4,13 @@
  * public examples gallery). See `_kit.ts` and `test/coverage/*`.
  */
 import type { CoverageGroup } from "./_kit";
+import { defineAnalyzerCoverage } from "./define-analyzer";
 import { defineTableCoverage } from "./define-table";
 
 export type { CoverageGroup, CoverageItem } from "./_kit";
 
 /** Every statement's coverage group. The coverage test iterates this. */
-export const allCoverage: CoverageGroup[] = [defineTableCoverage];
+export const allCoverage: CoverageGroup[] = [
+  defineTableCoverage,
+  defineAnalyzerCoverage,
+];

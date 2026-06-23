@@ -2845,8 +2845,9 @@ export function defineAccess(name: string): AccessDef {
 
 /** A text-search `DEFINE ANALYZER`'s config: an ordered tokenizer + filter pipeline. */
 export interface AnalyzerConfig {
-  /** `TOKENIZERS …` — e.g. `["blank", "class", "camel", "punct"]` (at least one). */
-  tokenizers: string[];
+  /** `TOKENIZERS …` — e.g. `["blank", "class", "camel", "punct"]`. Optional: a bare
+   *  `DEFINE ANALYZER <name>` (no tokenizers/filters) is valid SurrealQL. */
+  tokenizers?: string[];
   /** `FILTERS …` — e.g. `["lowercase", "ascii", "snowball(english)", "ngram(1,3)"]`. */
   filters?: string[];
 }
@@ -2863,10 +2864,11 @@ export class AnalyzerDef {
   ) {}
 }
 
-/** Declare a text-search analyzer. See {@link AnalyzerConfig}; reference it from a `fulltext` index. */
+/** Declare a text-search analyzer. See {@link AnalyzerConfig}; reference it from a `fulltext` index.
+ *  `config` is optional — `defineAnalyzer("text")` emits the bare `DEFINE ANALYZER text`. */
 export function defineAnalyzer(
   name: string,
-  config: AnalyzerConfig,
+  config: AnalyzerConfig = {},
 ): AnalyzerDef {
   return new AnalyzerDef(name, config);
 }

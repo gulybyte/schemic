@@ -323,10 +323,9 @@ function lowerAccess(a: AccessDef): StructAccess {
 
 /** Lower a `defineAnalyzer` to a `StructAnalyzer` (tokenizers/filters uppercased to match INFO). */
 function lowerAnalyzer(a: AnalyzerDef): StructAnalyzer {
-  const out: StructAnalyzer = {
-    name: a.name,
-    tokenizers: a.config.tokenizers.map((t) => t.toUpperCase()),
-  };
+  const out: StructAnalyzer = { name: a.name };
+  if (a.config.tokenizers?.length)
+    out.tokenizers = a.config.tokenizers.map((t) => t.toUpperCase());
   if (a.config.filters?.length)
     out.filters = a.config.filters.map((f) => f.toUpperCase());
   return out;

@@ -514,8 +514,9 @@ function emitAccess(a: AccessDef, opts?: DefineOptions): string {
 /** `DEFINE ANALYZER <name> TOKENIZERS … [FILTERS …]`. Tokenizers/filters are uppercased to match
  *  `INFO … STRUCTURE`, so an authored analyzer compares equal to the introspected one. */
 function emitAnalyzer(a: AnalyzerDef, opts?: DefineOptions): string {
-  const toks = a.config.tokenizers.map((t) => t.toUpperCase()).join(", ");
-  let s = `DEFINE ANALYZER ${existsPrefix(opts)}${escapeIdent(a.name)} TOKENIZERS ${toks}`;
+  let s = `DEFINE ANALYZER ${existsPrefix(opts)}${escapeIdent(a.name)}`;
+  if (a.config.tokenizers?.length)
+    s += ` TOKENIZERS ${a.config.tokenizers.map((t) => t.toUpperCase()).join(", ")}`;
   if (a.config.filters?.length)
     s += ` FILTERS ${a.config.filters.map((f) => f.toUpperCase()).join(", ")}`;
   return `${s};`;

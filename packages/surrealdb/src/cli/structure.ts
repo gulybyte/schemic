@@ -116,7 +116,7 @@ export interface StructAccess {
 /** A text-search `DEFINE ANALYZER` — `INFO … STRUCTURE` returns uppercase tokenizer/filter lists. */
 export interface StructAnalyzer {
   name: string;
-  tokenizers: string[];
+  tokenizers?: string[];
   filters?: string[];
 }
 
@@ -527,9 +527,11 @@ function canonicalAccess(a: StructAccess): string {
   return `${parts.join(" ")};`;
 }
 
-/** Canonical `DEFINE ANALYZER …` — tokenizer/filter lists joined `, ` (uppercase, as INFO returns them). */
+/** Canonical `DEFINE ANALYZER …` — tokenizer/filter lists joined `, ` (uppercase, as INFO returns them).
+ *  Both clauses are optional: a bare `DEFINE ANALYZER <name>` is valid (INFO returns just the name). */
 function canonicalAnalyzer(a: StructAnalyzer): string {
-  let s = `DEFINE ANALYZER ${a.name} TOKENIZERS ${a.tokenizers.join(", ")}`;
+  let s = `DEFINE ANALYZER ${a.name}`;
+  if (a.tokenizers?.length) s += ` TOKENIZERS ${a.tokenizers.join(", ")}`;
   if (a.filters?.length) s += ` FILTERS ${a.filters.join(", ")}`;
   return `${s};`;
 }
