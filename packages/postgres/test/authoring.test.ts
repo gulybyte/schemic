@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildKindDiff, emitKinds } from "@schemic/core";
 import * as z from "zod";
+import { postgresDriver } from "../src/driver";
 import {
   defineDomain,
   defineEnum,
@@ -14,7 +15,6 @@ import {
   defineView,
   type PgConn,
   PgField,
-  postgresDriver,
   s,
   sqlExpr,
 } from "../src/index";

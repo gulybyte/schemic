@@ -18,8 +18,8 @@ import {
 } from "@schemic/core/query";
 import type { z } from "zod";
 import type { App, PgTableDef } from "../authoring";
+import type { PgConn } from "../connection";
 import { escId } from "../emit";
-import type { PgConn } from "../index";
 
 // --- expressions ---------------------------------------------------------------------------------
 

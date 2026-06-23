@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { defineSeed, postgresDriver } from "../src/index";
+import { postgresDriver } from "../src/driver";
+import { defineSeed } from "../src/index";
 
 // `schemic new <kind> <name>` calls Driver.scaffoldEntity(kind, name) -> the starter module text.
 const scaffold = (kind: string, name: string): string => {

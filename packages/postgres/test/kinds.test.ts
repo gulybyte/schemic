@@ -6,9 +6,10 @@ import {
   record,
   scalar,
 } from "@schemic/core/driver";
+import { postgresDriver } from "../src/driver";
 import type { PgTable } from "../src/emit";
 import { triggerDefSql } from "../src/emit";
-import { type PgConn, postgresDriver } from "../src/index";
+import type { PgConn } from "../src/index";
 import {
   domainPortable,
   enumPortable,

@@ -1,7 +1,12 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: { index: "src/index.ts", query: "src/query.ts" },
+  entry: {
+    index: "src/index.ts",
+    connection: "src/connection.ts",
+    driver: "src/driver.ts",
+    query: "src/query.ts",
+  },
   outDir: "lib",
   format: ["esm"],
   target: "esnext",

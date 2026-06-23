@@ -12,8 +12,8 @@
   },
   "type": "module",
   "sideEffects": [
-    "./src/index.ts",
-    "./lib/index.js"
+    "./src/driver.ts",
+    "./lib/driver.js"
   ],
   "module": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -31,6 +31,20 @@
       "import": {
         "types": "./lib/index.d.ts",
         "default": "./lib/index.js"
+      }
+    },
+    "./connection": {
+      "bun": "./src/connection.ts",
+      "import": {
+        "types": "./lib/connection.d.ts",
+        "default": "./lib/connection.js"
+      }
+    },
+    "./driver": {
+      "bun": "./src/driver.ts",
+      "import": {
+        "types": "./lib/driver.d.ts",
+        "default": "./lib/driver.js"
       }
     },
     "./query": {
