@@ -49,12 +49,13 @@ function pickCompiled(node: unknown): string | undefined {
 }
 
 /**
- * Resolve a driver package to its COMPILED entry file, from `base`'s module scope. We read the
- * manifest and pick the `import`/`default` export rather than letting the runtime choose the `bun`
- * export condition (which points at raw `src/*.ts` for monorepo dev) — loading a PUBLISHED package's
- * TypeScript source is fragile (every transitive src import must re-resolve at the consumer).
+ * Resolve a driver package's COMPILED entry file for the given `subpath` export, from `base`'s module
+ * scope. We read the manifest and pick the `import`/`default` export rather than letting the runtime
+ * choose the `bun` condition (raw `src/*.ts` for monorepo dev) — loading a PUBLISHED package's source is
+ * fragile. `subpath` is an exports key (`"."` for the index, `"./driver"` for the engine entry); a
+ * non-index subpath that the package doesn't declare returns `null` (so the caller can fall back).
  */
-function compiledEntry(pkg: string, base: string): string | null {
+function compiledEntry(pkg: string, base: string, subpath: string): string | null {
   try {
     const manifestPath = createRequire(base).resolve(`${pkg}/package.json`);
     const m = JSON.parse(readFileSync(manifestPath, "utf8")) as {
@@ -62,9 +63,11 @@ function compiledEntry(pkg: string, base: string): string | null {
       module?: string;
       main?: string;
     };
+    const exp = pickCompiled(m.exports?.[subpath]);
+    // The index falls back to module/main; a missing non-index subpath is simply absent.
     const rel =
-      pickCompiled(m.exports?.["."]) ?? m.module ?? m.main ?? "index.js";
-    return join(dirname(manifestPath), rel);
+      subpath === "." ? (exp ?? m.module ?? m.main ?? "index.js") : exp;
+    return rel ? join(dirname(manifestPath), rel) : null;
   } catch {
     return null;
   }
@@ -77,24 +80,31 @@ export async function ensureDriver(name: string): Promise<void> {
   // `bunx`/`npx` from a temp dir, so a driver installed in the user's project must be found by cwd.
   let lastErr: unknown;
   let loaded = false;
-  for (const base of [join(process.cwd(), "noop.js"), import.meta.url]) {
-    const entry = compiledEntry(pkg, base);
-    if (!entry) continue;
-    try {
-      await import(pathToFileURL(entry).href);
-      loaded = true;
-      break;
-    } catch (e) {
-      lastErr = e;
+  // Prefer the `/driver` engine entry (where `registerDriver` lives once a driver splits its package, so
+  // its authoring index stays side-effect-free); fall back to the index `.` for drivers not yet split.
+  outer: for (const base of [join(process.cwd(), "noop.js"), import.meta.url]) {
+    for (const subpath of ["./driver", "."]) {
+      const entry = compiledEntry(pkg, base, subpath);
+      if (!entry) continue;
+      try {
+        await import(pathToFileURL(entry).href);
+        loaded = true;
+        break outer;
+      } catch (e) {
+        lastErr = e;
+      }
     }
   }
-  // Last resort: a plain specifier import (covers an unbuilt monorepo checkout, where lib is absent).
+  // Last resort: plain specifier imports (covers an unbuilt monorepo checkout, where lib is absent).
   if (!loaded) {
-    try {
-      await import(pkg);
-      loaded = true;
-    } catch (e) {
-      lastErr = e;
+    for (const spec of [`${pkg}/driver`, pkg]) {
+      try {
+        await import(spec);
+        loaded = true;
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
     }
   }
   if (!loaded)

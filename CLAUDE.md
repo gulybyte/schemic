@@ -9,6 +9,18 @@ the migration/diff/snapshot engine) ← `@schemic/cli` (the `schemic`/`sc` bin, 
 dynamic driver loading by `config.driver`) + per-database driver packages (`@schemic/surrealdb`,
 `@schemic/postgres`, …) that own connection + authoring (`s.*`) + DDL.
 
+**Package surface (purpose-based subpaths).** Each driver splits its surface so app code only bundles
+what it imports:
+- `@schemic/<driver>` — **authoring** (`s.*`, `define*`, raw-body tag) — must be **side-effect-free**.
+- `@schemic/<driver>/connection` — the connection factory.
+- `@schemic/<driver>/query` — the opt-in query builder (composes `@schemic/core/query`).
+- `@schemic/<driver>/driver` — the `Driver` impl + `emit*`/`lower`/`introspect` + the **`registerDriver`
+  side-effect** (CLI/engine-only; keep `emit*` etc. OUT of the authoring index).
+
+The CLI loader imports `/driver` to register (falling back to the index `.` for not-yet-split drivers),
+so importing `s.*` never drags the diff/emit engine into an app bundle. Core mirrors this:
+`@schemic/core/query` is the neutral query toolkit (`Row`/`Project`/`decodeProjection`/`callFunction`).
+
 ## Agent Code Ownership
 
 This repo is developed by **multiple AI agents in parallel**. Stay within your package(s); a change in
