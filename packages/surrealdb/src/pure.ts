@@ -2963,12 +2963,9 @@ export class AnalyzerDef {
     }
     return this.withConfig({ function: typeof fn === "string" ? fn : fn.name });
   }
-  /** `TOKENIZERS …` — one or more tokenizers (built-ins autocomplete), applied in order. Must be
-   *  unique. */
+  /** `TOKENIZERS …` — one or more tokenizers (built-ins autocomplete), applied in order. */
   tokenizers(...tokenizers: Tokenizer[]): AnalyzerDef {
-    return this.withConfig({
-      tokenizers: uniqueClause(tokenizers, "tokenizer"),
-    });
+    return this.withConfig({ tokenizers });
   }
   /** `FILTERS …` — one or more token filters, applied in order (must be unique). Pass bare filters
    *  directly (`.filters("lowercase", "ascii")`), or a callback for the typed/parameterized builders
