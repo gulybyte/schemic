@@ -11,6 +11,10 @@ tagged by package (**core** / **cli** / **surrealdb** / **postgres** / **setup**
 
 ## [Unreleased]
 
+### Fixed
+- **surrealdb:** `defineAnalyzer().filters()` no longer dedupes — duplicate filters pass through verbatim
+  (follow-up to the alpha.19 tokenizers fix; drops the now-unused `uniqueClause` helper).
+
 ## [0.1.0-alpha.19] - 2026-06-23
 
 ### Fixed
