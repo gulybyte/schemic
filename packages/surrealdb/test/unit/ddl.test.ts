@@ -352,13 +352,17 @@ describe("nested structures expand into sub-fields", () => {
     );
   });
 
-  test("customized array element (FLEXIBLE) is kept with OVERWRITE", () => {
-    // A plain element is auto-created by SurrealDB (skipped); a FLEXIBLE element carries config
-    // SurrealDB's default `.* object` doesn't, so it's emitted with OVERWRITE.
-    expect(ddl(s.object({}).loose().array())).toEqual(
+  test("FLEXIBLE bubbles from the element to the array field", () => {
+    // SurrealDB stores `array<object> FLEXIBLE` on the FIELD (verified live), with the auto-created
+    // `.*` element a plain `object` (re-defining `.*` errors "already exists"). So FLEXIBLE rides the
+    // array field and the trivial element is skipped — `.flexible()` works on either spelling.
+    expect(ddl(s.object({}).loose().array())).toBe(
+      "DEFINE FIELD x ON TABLE t TYPE array<object> FLEXIBLE;",
+    );
+    expect(ddl(s.array(s.object({ a: s.string() })).flexible())).toEqual(
       [
-        "DEFINE FIELD x ON TABLE t TYPE array<object>;",
-        "DEFINE FIELD OVERWRITE x.* ON TABLE t TYPE object FLEXIBLE;",
+        "DEFINE FIELD x ON TABLE t TYPE array<object> FLEXIBLE;",
+        "DEFINE FIELD x.*.a ON TABLE t TYPE string;",
       ].join("\n"),
     );
   });
@@ -541,6 +545,54 @@ describe("emitTable", () => {
     expect(ddl(s.object({ a: s.string() }).flexible())).toContain("FLEXIBLE");
     expect(ddl(s.object({ a: s.string() }).strict())).not.toContain("FLEXIBLE");
     expect(ddl(s.object({ a: s.string() }))).not.toContain("FLEXIBLE");
+  });
+
+  test("FLEXIBLE through array<object> and unions — on the field, both spellings", () => {
+    // array<object>: FLEXIBLE rides the array field whether authored on the outer array or the inner
+    // object (it descends/bubbles either way) — matches the DB's canonical form (verified live).
+    expect(ddl(s.array(s.object({ a: s.string() })).flexible())).toContain(
+      "TYPE array<object> FLEXIBLE",
+    );
+    expect(ddl(s.array(s.object({ a: s.string() }).flexible()))).toContain(
+      "TYPE array<object> FLEXIBLE",
+    );
+    // union containing an object: FLEXIBLE on the field.
+    expect(ddl(s.object({ a: s.string() }).flexible().or(s.string()))).toContain(
+      "TYPE object | string FLEXIBLE",
+    );
+    // option<object>: the wrapper preserves FLEXIBLE.
+    expect(ddl(s.object({ a: s.string() }).flexible().optional())).toContain(
+      "TYPE option<object> FLEXIBLE",
+    );
+    // a non-object array stays plain — nothing to flex.
+    expect(ddl(s.array(s.string()))).not.toContain("FLEXIBLE");
+  });
+
+  test("FLEXIBLE objects keep extra keys on decode (validation matches the DB)", () => {
+    const t = defineTable("t", {
+      a: s.array(s.object({ x: s.string() })).flexible(),
+      o: s.object({ x: s.string() }).flexible(),
+    }).schemafull();
+    // The static output type is `{ x: string }`, but FLEXIBLE objects keep arbitrary keys at runtime
+    // (matching the DB) — assert against the looser shape.
+    expect(t.fields.a.decode([{ x: "v", extra: 1 }] as never)).toEqual([
+      { x: "v", extra: 1 },
+    ] as never);
+    expect(t.fields.o.decode({ x: "v", extra: 1 } as never)).toEqual({
+      x: "v",
+      extra: 1,
+    } as never);
+  });
+
+  test("`.flexible()`/`.loose()`/`.strict()` are object-only at the type level", () => {
+    // @ts-expect-error a scalar field has no object to flex.
+    s.string().flexible();
+    // @ts-expect-error number is not object-typed.
+    s.number().loose();
+    // @ts-expect-error array<string> contains no object.
+    s.array(s.string()).flexible();
+    // @ts-expect-error strict() is likewise object-only.
+    s.int().strict();
   });
 
   test("existsPrefix: overwrite / ignore", () => {

@@ -277,6 +277,41 @@ type InnerOf<S extends z.ZodType> =
  * `"readonly"` (excluded from updates). It only appears in method return types, so
  * `SField` is covariant in it.
  */
+/** Does the Zod schema `S` contain an `object` in its SurrealQL type — directly, as the element of an
+ *  `array`/`set`, as a member of a union, or under an `optional`/`nullable`/`default`/`readonly`
+ *  wrapper? `FLEXIBLE` is only valid on such types (e.g. `object`, `array<object>`, `object | string`),
+ *  so the `.flexible()`/`.loose()`/`.strict()` methods are gated on this. */
+export type ContainsObject<S> =
+  S extends z.ZodObject<z.ZodRawShape>
+    ? true
+    : S extends z.ZodArray<infer T>
+      ? ContainsObject<T>
+      : S extends z.ZodSet<infer T>
+        ? ContainsObject<T>
+        : S extends z.ZodUnion<infer O>
+          ? ContainsObjectInUnion<O>
+          : S extends z.ZodOptional<infer T>
+            ? ContainsObject<T>
+            : S extends z.ZodNullable<infer T>
+              ? ContainsObject<T>
+              : S extends z.ZodDefault<infer T>
+                ? ContainsObject<T>
+                : S extends z.ZodReadonly<infer T>
+                  ? ContainsObject<T>
+                  : false;
+/** True if ANY member of a union's option tuple contains an object. */
+type ContainsObjectInUnion<O> = O extends readonly [infer H, ...infer R]
+  ? ContainsObject<H> extends true
+    ? true
+    : ContainsObjectInUnion<R>
+  : false;
+/** The `this`-parameter constraint for the object-mode methods: the field itself when its type
+ *  contains an object, else a hint string the real receiver isn't assignable to (a compile error). */
+export type ObjectModeReceiver<S, T> =
+  ContainsObject<S> extends true
+    ? T
+    : "`.flexible()` / `.loose()` / `.strict()` is only valid on object-typed fields (object, array<object>, or a union containing one)";
+
 /**
  * The PORTABLE, dialect-agnostic field base (extraction phase B — see docs/AUTHORING-SPLIT.md).
  * Holds the Zod schema, an opaque per-dialect `native` metadata slot, the field-level codecs, and
@@ -490,33 +525,79 @@ export abstract class SFieldBase<
     >;
   }
 
-  /** Object-only: allow arbitrary extra keys — `FLEXIBLE` in DDL. Mirrors Zod's `.loose()`. */
-  loose(): this {
-    return this.objectMode("loose");
+  /** Allow arbitrary extra keys on the field's object(s) — `FLEXIBLE` in DDL. Mirrors Zod's `.loose()`,
+   *  but descends through `array`/`set`/union/wrapper layers so `s.array(s.object({…})).flexible()`
+   *  emits `array<object> FLEXIBLE`. Only valid on object-typed fields (a compile error otherwise). */
+  loose(this: ObjectModeReceiver<S, this>): this {
+    return (this as SFieldBase<S, Flags, N>).objectMode("loose") as this;
   }
-  /** Object-only: reject unknown keys — non-`FLEXIBLE` (the default). Mirrors Zod's `.strict()`. */
-  strict(): this {
-    return this.objectMode("strict");
+  /** Reject unknown keys on the field's object(s) — non-`FLEXIBLE` (the default). Mirrors Zod's
+   *  `.strict()`; descends like {@link loose}. Only valid on object-typed fields. */
+  strict(this: ObjectModeReceiver<S, this>): this {
+    return (this as SFieldBase<S, Flags, N>).objectMode("strict") as this;
   }
   /** Alias for {@link loose} — a `FLEXIBLE` object accepting arbitrary keys. */
-  flexible(): this {
-    return this.loose();
+  flexible(this: ObjectModeReceiver<S, this>): this {
+    return (this as SFieldBase<S, Flags, N>).objectMode("loose") as this;
   }
   private objectMode(mode: "loose" | "strict"): this {
-    const obj = this.schema as unknown as {
-      loose?: () => z.ZodType;
-      strict?: () => z.ZodType;
-    };
-    if (typeof obj.loose !== "function" || typeof obj.strict !== "function") {
-      return this; // not an object schema — no-op
-    }
-    const next = (mode === "loose"
-      ? obj.loose()
-      : obj.strict()) as unknown as S;
-    // Carry the nested-field registry forward so DDL/create-shaping still see the subfields.
-    const fields = objectFieldsRegistry.get(this.schema);
-    if (fields) objectFieldsRegistry.set(next, fields);
+    const next = applyObjectMode(this.schema, mode) as S;
     return this.rebuild(next, this.native) as unknown as this;
+  }
+}
+
+/** Recursively set the object-mode (`loose`/`strict`) on every object contained in a schema —
+ *  directly, or inside an `array`/`set` element, a union member, or an `optional`/`nullable`/
+ *  `default`/`prefault`/`readonly`/`catch` wrapper. Non-object leaves pass through unchanged. Uses
+ *  Zod's `.clone(def)` so element/wrapper CHECKS (e.g. array `.max()` -> `array<…, N>`) survive. */
+function applyObjectMode(
+  schema: z.ZodType,
+  mode: "loose" | "strict",
+): z.ZodType {
+  // biome-ignore lint/suspicious/noExplicitAny: walking Zod's internal def shape.
+  const def = (schema as any)._zod.def;
+  switch (def?.type) {
+    case "object": {
+      const obj = schema as unknown as {
+        loose: () => z.ZodType;
+        strict: () => z.ZodType;
+      };
+      const next = mode === "loose" ? obj.loose() : obj.strict();
+      // Carry the nested-field registry forward so DDL/create-shaping still see the subfields.
+      const fields = objectFieldsRegistry.get(schema);
+      if (fields) objectFieldsRegistry.set(next, fields);
+      return next;
+    }
+    case "array":
+    case "set": {
+      const key = "element" in def ? "element" : "valueType";
+      // biome-ignore lint/suspicious/noExplicitAny: .clone(def) is Zod-internal but check-preserving.
+      return (schema as any).clone({
+        ...def,
+        [key]: applyObjectMode(def[key], mode),
+      });
+    }
+    case "union":
+      // biome-ignore lint/suspicious/noExplicitAny: .clone(def) is Zod-internal.
+      return (schema as any).clone({
+        ...def,
+        options: (def.options as z.ZodType[]).map((o) =>
+          applyObjectMode(o, mode),
+        ),
+      });
+    case "optional":
+    case "nullable":
+    case "default":
+    case "prefault":
+    case "readonly":
+    case "catch":
+      // biome-ignore lint/suspicious/noExplicitAny: .clone(def) is Zod-internal.
+      return (schema as any).clone({
+        ...def,
+        innerType: applyObjectMode(def.innerType, mode),
+      });
+    default:
+      return schema; // not object-containing — no-op (the type guard rejects this at author time)
   }
 }
 

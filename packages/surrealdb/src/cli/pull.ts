@@ -391,6 +391,9 @@ function renderField(node: FieldNode, indent: string, ctx?: RenderCtx): string {
     expr = /^set\b/.test(wrap?.base ?? "")
       ? `s.set(${elem})`
       : `${elem}.array()`;
+    // FLEXIBLE on an `array<object>` rides the array FIELD (the `.*` element stays plain object), so
+    // `.loose()` here descends to loosen the element again on the next emit — re-emitting FLEXIBLE.
+    if (p.flexible) expr += ".loose()";
     if (wrap?.nullable) expr += ".nullable()";
     if (wrap?.optional) expr += ".optional()";
   } else if (p && wrap?.base === "string" && fmt) {

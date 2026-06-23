@@ -205,10 +205,14 @@ export function inferField(
         (def.element ?? def.valueType) as z.ZodType,
         seen,
       );
+      // A FLEXIBLE element bubbles to the ARRAY field — SurrealDB stores `array<object> FLEXIBLE`
+      // on the field, with the auto-created `.*` element a plain `object` (re-defining `.*` errors).
+      // So the child keeps the element's structure but drops its `flexible` (it lives on the parent).
+      const childElem = elem.flexible ? { ...elem, flexible: false } : elem;
       // Element subfields live under `path.*`, but only when the element is structured.
       const children =
-        elem.children.length > 0 || elem.type === "object"
-          ? [{ suffix: ".*", info: elem }]
+        childElem.children.length > 0 || childElem.type === "object"
+          ? [{ suffix: ".*", info: childElem }]
           : [];
       // `set<T>` is distinct from `array<T>` in SurrealDB (dedup) and round-trips — preserve it.
       const kw = def.type === "set" ? "set" : "array";
@@ -228,7 +232,11 @@ export function inferField(
           (d) => d?.check === "max_length" || d?.check === "max_size",
         )?.maximum;
       const size = typeof maximum === "number" ? `, ${maximum}` : "";
-      return { type: `${kw}<${elem.type}${size}>`, flexible: false, children };
+      return {
+        type: `${kw}<${elem.type}${size}>`,
+        flexible: elem.flexible,
+        children,
+      };
     }
 
     case "record":
@@ -249,16 +257,18 @@ export function inferField(
         return t === "undefined" || t === "void";
       };
       const hasNone = opts.some(noneish);
-      const types = [
-        ...new Set(
-          opts.filter((o) => !noneish(o)).map((o) => inferField(o, seen).type),
-        ),
-      ];
+      const members = opts
+        .filter((o) => !noneish(o))
+        .map((o) => inferField(o, seen));
+      const types = [...new Set(members.map((m) => m.type))];
+      // A union whose type contains an object carries FLEXIBLE on the field (e.g. `object | string
+      // FLEXIBLE`) when any object member was made flexible.
+      const flexible = members.some((m) => m.flexible);
       // `any` absorbs every other member (including none) — `any | string` is invalid → `any`.
       if (types.includes("any")) return leaf("any");
       const joined = types.join(" | ") || "any";
-      if (hasNone) return leaf(joined === "any" ? "any" : `option<${joined}>`);
-      return leaf(joined);
+      const type = hasNone && joined !== "any" ? `option<${joined}>` : joined;
+      return { type, flexible, children: [] };
     }
     case "enum": {
       const entries = (def.entries ?? {}) as Record<string, string | number>;
