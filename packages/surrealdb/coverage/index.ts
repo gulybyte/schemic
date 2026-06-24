@@ -5,6 +5,7 @@
  */
 import type { CoverageGroup } from "./_kit";
 import { defineAnalyzerCoverage } from "./define-analyzer";
+import { defineFieldCoverage } from "./define-field";
 import { defineTableCoverage } from "./define-table";
 
 export type { CoverageGroup, CoverageItem } from "./_kit";
@@ -12,5 +13,6 @@ export type { CoverageGroup, CoverageItem } from "./_kit";
 /** Every statement's coverage group. The coverage test iterates this. */
 export const allCoverage: CoverageGroup[] = [
   defineTableCoverage,
+  defineFieldCoverage,
   defineAnalyzerCoverage,
 ];
