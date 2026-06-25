@@ -17,6 +17,7 @@ import {
   fieldType,
   inferField,
   inline,
+  inlineAnalyzerFunctions,
   upperFilterClause,
 } from "../ddl";
 import type {
@@ -365,14 +366,15 @@ export function schemaStruct(
       functions.push(fromStandalone(d) as StructFunction);
     else if (d.kind === "access")
       accesses.push(fromStandalone(d) as StructAccess);
-    else if (d.kind === "analyzer") {
-      // An inline `.function(input => surql`…`)` carries an auto-created function — expand it into the
-      // functions list so it emits/diffs/pulls as a normal `defineFunction` the analyzer references.
-      const inlineFn = d.config.functionDef;
-      if (inlineFn) functions.push(fromStandalone(inlineFn) as StructFunction);
+    else if (d.kind === "analyzer")
       analyzers.push(fromStandalone(d) as StructAnalyzer);
-    } else if (d.kind === "event")
+    else if (d.kind === "event")
       byName.get(d.table)?.events.push(fromStandalone(d) as StructEvent);
   }
+  // An inline `.function(input => surql`…`)` carries an auto-created function — expand it into the
+  // functions list (deduped, collision-checked) so it emits/diffs/pulls as a normal `defineFunction`
+  // the analyzer references. Same helper the emit path uses, so both agree on collisions.
+  for (const fn of inlineAnalyzerFunctions(defs))
+    functions.push(fromStandalone(fn) as StructFunction);
   return normalizeDb({ tables: structTables, functions, accesses, analyzers });
 }

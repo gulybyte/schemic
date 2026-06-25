@@ -12,6 +12,7 @@ import {
   alterTable,
   emitDefStatement,
   emitStatements,
+  inlineAnalyzerFunctions,
   overwriteStatement,
   removeStatement,
 } from "../ddl";
@@ -76,6 +77,17 @@ export function buildSnapshot(
       const msg = e instanceof Error ? e.message : String(e);
       throw new Error(file ? `${msg}\n  in ${file}` : msg);
     }
+  }
+  // An analyzer's inline `.function(input => surql`…`)` carries an auto-defined FunctionDef — emit it
+  // as its own DEFINE FUNCTION (the analyzer's FUNCTION clause references it). Done before the defs so
+  // the function statement precedes the analyzer; collisions with an explicit fn of the same name throw.
+  for (const fn of inlineAnalyzerFunctions(
+    defs as unknown as Parameters<typeof inlineAnalyzerFunctions>[0],
+  )) {
+    const s = emitDefStatement(
+      fn as unknown as Parameters<typeof emitDefStatement>[0],
+    );
+    statements[keyOf(s)] = s;
   }
   for (const d of defs) {
     const s = emitDefStatement(

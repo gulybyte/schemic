@@ -582,6 +582,38 @@ export function emitDefStatement(
   return { kind: "function", name: def.name, ddl: emitFunction(def, opts) };
 }
 
+/**
+ * The standalone `FunctionDef`s auto-created by `analyzer.function(input => surql\`…\`)` — auto-named
+ * `<analyzer>_fn`, they must be emitted as their own `DEFINE FUNCTION` (the analyzer's `FUNCTION fn::…`
+ * clause references them). Deduped against any explicitly-defined function of the same name; a name
+ * COLLISION with a differently-bodied function throws, so an auto-name silently clobbering an exported
+ * `fn::<analyzer>_fn` is caught at gen rather than corrupting the schema.
+ */
+export function inlineAnalyzerFunctions(defs: StandaloneDef[]): FunctionDef[] {
+  const byName = new Map<string, string>(); // fn name -> its DDL (explicit fns + already-taken auto fns)
+  for (const d of defs)
+    if (d.kind === "function") byName.set(d.name, emitFunction(d));
+  const out: FunctionDef[] = [];
+  for (const d of defs) {
+    if (d.kind !== "analyzer" || !d.config.functionDef) continue;
+    const fn = d.config.functionDef;
+    const ddl = emitFunction(fn);
+    const prior = byName.get(fn.name);
+    if (prior !== undefined && prior !== ddl) {
+      throw new Error(
+        `analyzer "${d.name}" auto-defines fn::${fn.name} from its .function(input => …), but a ` +
+          `different function fn::${fn.name} already exists. Pass an explicit name or a defineFunction ` +
+          `reference to .function(), or rename the analyzer/function so the names don't collide.`,
+      );
+    }
+    if (prior === undefined) {
+      byName.set(fn.name, ddl);
+      out.push(fn);
+    }
+  }
+  return out;
+}
+
 /** Emit `DEFINE FIELD path ...` for a node, then recurse into its children. */
 /** A trivial array element is the plain auto-created form — no FLEXIBLE and no `$`-clauses. */
 function isTrivialElement(info: FieldInfo, surreal?: SurrealMeta): boolean {
