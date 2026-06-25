@@ -136,9 +136,9 @@ DEFINE EVENT [ IF NOT EXISTS | OVERWRITE ] @name ON [ TABLE ] @table
   [ COMMENT @string ]
 ```
 
-- [ ] `IF NOT EXISTS` · [ ] `OVERWRITE` · [ ] `ON [ TABLE ] @table`
-- [ ] `ASYNC` · [ ] `ASYNC RETRY @retry` · [ ] `ASYNC MAXDEPTH @max_depth`
-- [ ] `WHEN @condition` · [ ] `THEN @action` · [ ] `THEN [ … ]` (ordered actions) · [ ] `COMMENT @string`
+- [x] `IF NOT EXISTS` · [x] `OVERWRITE` · [x] `ON [ TABLE ] @table`
+- [ ] `ASYNC` · [ ] `ASYNC RETRY @retry` · [ ] `ASYNC MAXDEPTH @max_depth` _(no `s.*` authoring surface yet)_
+- [x] `WHEN @condition` · [x] `THEN @action` · [x] `THEN [ … ]` (ordered actions) · [ ] `COMMENT @string` _(no `s.*` authoring surface yet)_
 
 ## DEFINE FUNCTION
 
