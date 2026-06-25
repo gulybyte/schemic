@@ -3036,16 +3036,22 @@ export class AnalyzerDef {
     return new AnalyzerDef(this.name, { ...this.config, ...c });
   }
   /** `FUNCTION fn::<name>` — a custom tokenizing function run before the tokenizers. Pass:
-   *  - a `surql` builder `input => surql\`…\`` — auto-defines an `<analyzer>_fn(input: string)` function
-   *    inline (auto-named, like a field index) and references it; `input` is the `$input` param token;
+   *  - a `surql` builder `input => surql\`…\`` — auto-defines a function inline (auto-named
+   *    `<analyzer>_fn`, like a field index) and references it; `input` is the `$input` param token. Give
+   *    it a custom name with the second arg (`.function(input => …, "my_tokenizer")`);
    *  - a {@link FunctionDef} from `defineFunction` (renameable, no hardcoded name);
    *  - or the name as a string (the `fn::` prefix optional).
    *  Emitted as `FUNCTION fn::<name>` in every case. */
-  function(fn: string | FunctionDef | ((input: Expr) => Expr)): AnalyzerDef {
+  function(fn: (input: Expr) => Expr, name?: string): AnalyzerDef;
+  function(fn: string | FunctionDef): AnalyzerDef;
+  function(
+    fn: string | FunctionDef | ((input: Expr) => Expr),
+    name?: string,
+  ): AnalyzerDef {
     if (typeof fn === "function") {
-      const def = defineFunction(`${this.name}_fn`, { input: s.string() }).body(
-        fn(surql`$input`),
-      );
+      const def = defineFunction(name ?? `${this.name}_fn`, {
+        input: s.string(),
+      }).body(fn(surql`$input`));
       return this.withConfig({ function: def.name, functionDef: def });
     }
     return this.withConfig({ function: typeof fn === "string" ? fn : fn.name });

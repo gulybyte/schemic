@@ -27,6 +27,18 @@ describe("analyzer inline .function(cb) auto-defines fn::<analyzer>_fn", () => {
     );
   });
 
+  test("a custom name (second arg) overrides the auto `<analyzer>_fn` name", () => {
+    const named = defineAnalyzer("custom")
+      .function((input) => surql`string::lowercase(${input})`, "lower_tok")
+      .tokenizers("blank");
+    const snap = stmts(named);
+    expect(snap["function::lower_tok"]?.ddl).toContain(
+      "DEFINE FUNCTION fn::lower_tok($input: string)",
+    );
+    expect(snap["analyzer::custom"]?.ddl).toContain("FUNCTION fn::lower_tok");
+    expect(snap["function::custom_fn"]).toBeUndefined();
+  });
+
   test("throws when the auto-name collides with a different function", () => {
     const clashing = defineFunction("custom_fn", { input: s.string() }).body(
       surql`RETURN $input`,
