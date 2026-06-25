@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { buildSnapshot } from "../../src/cli/surreal-diff";
+import { emitTable } from "../../src/driver";
+import { surql } from "../../src/index";
 import { defineTable, s } from "../../src/pure";
 
 test("a non-Surreal field type error names the field + table", () => {
@@ -12,4 +14,62 @@ test("a non-Surreal field type error names the field + table", () => {
   });
   const tables = [Bad] as unknown as Parameters<typeof buildSnapshot>[0];
   expect(() => buildSnapshot(tables)).toThrow(/field "blob" on table "widget"/);
+});
+
+// --- DEFINE FIELD validation guards (reject combos SurrealDB's parser rejects, at gen not apply) ---
+describe("field validation guards", () => {
+  const T = (field: s.Field, schemafull = true) => {
+    const t = defineTable("t", { x: field });
+    return () => emitTable(schemafull ? t.schemafull() : t.schemaless());
+  };
+
+  test("$computed is mutually exclusive with $value/$default/$readonly/$assert/$reference", () => {
+    expect(T(s.string().$computed(surql`1`).$default(surql`0`))).toThrow(
+      /\$computed can't be combined with \$default/,
+    );
+    expect(T(s.string().$computed(surql`1`).$readonly())).toThrow(
+      /\$computed can't be combined with \$readonly/,
+    );
+    expect(T(s.string().$computed(surql`1`).$value(surql`$value`))).toThrow(
+      /\$computed can't be combined with \$value/,
+    );
+    expect(T(s.string().$computed(surql`1`).$assert(surql`true`))).toThrow(
+      /\$computed can't be combined with \$assert/,
+    );
+  });
+
+  test("$reference needs a record-link type, and only on a top-level field", () => {
+    expect(T(s.string().$reference())).toThrow(
+      /\$reference needs a record-link type/,
+    );
+    // a real record link is fine:
+    expect(() =>
+      emitTable(
+        defineTable("t", { x: s.recordId("post").$reference() }).schemafull(),
+      ),
+    ).not.toThrow();
+  });
+
+  test("FLEXIBLE requires a SCHEMAFULL table", () => {
+    expect(T(s.object({ a: s.string() }).flexible(), false)).toThrow(
+      /FLEXIBLE is only valid on a SCHEMAFULL table/,
+    );
+    expect(() =>
+      emitTable(
+        defineTable("t", {
+          x: s.object({ a: s.string() }).flexible(),
+        }).schemafull(),
+      ),
+    ).not.toThrow();
+  });
+
+  test("a valid $computed field (alone) still emits", () => {
+    expect(
+      emitTable(
+        defineTable("t", {
+          full: s.string().$computed(surql`a + b`),
+        }).schemafull(),
+      ),
+    ).toContain("COMPUTED a + b");
+  });
 });

@@ -576,6 +576,54 @@ function isTrivialElement(info: FieldInfo, surreal?: SurrealMeta): boolean {
   );
 }
 
+/** A REFERENCE-able type: a record link, optionally wrapped in `option<…>` / `array<…>` / `set<…>`. */
+function isRecordRefType(type: string): boolean {
+  const inner = /^option<(.+)>$/.exec(type)?.[1] ?? type;
+  return /^record\b/.test(inner) || /^(?:array|set)<\s*record\b/.test(inner);
+}
+
+/**
+ * Reject DEFINE FIELD clause combinations SurrealDB's parser rejects (so the error surfaces at gen,
+ * not as a cryptic apply-time failure). Mirrors the engine's `validate_*` checks (`define/field.rs`):
+ * COMPUTED is mutually exclusive with VALUE/DEFAULT/READONLY/REFERENCE/ASSERT and top-level only;
+ * REFERENCE needs a top-level record-link type; FLEXIBLE needs a SCHEMAFULL table.
+ */
+function validateField(
+  path: string,
+  info: FieldInfo,
+  surreal: SurrealMeta | undefined,
+  schemafull: boolean,
+): void {
+  const at = `field "${path}"`;
+  if (info.flexible && !schemafull)
+    throw new Error(`${at}: FLEXIBLE is only valid on a SCHEMAFULL table.`);
+  if (!surreal) return;
+  const nested = path.includes(".");
+  if (surreal.computed) {
+    const conflicts = [
+      surreal.value && "$value",
+      surreal.default && "$default",
+      surreal.readonly && "$readonly",
+      surreal.reference && "$reference",
+      surreal.asserts?.length && "$assert",
+    ].filter(Boolean);
+    if (conflicts.length)
+      throw new Error(
+        `${at}: $computed can't be combined with ${conflicts.join("/")} — a computed field is virtual (never stored).`,
+      );
+    if (nested)
+      throw new Error(`${at}: $computed is only valid on a top-level field.`);
+  }
+  if (surreal.reference) {
+    if (nested)
+      throw new Error(`${at}: $reference is only valid on a top-level field.`);
+    if (!isRecordRefType(info.type))
+      throw new Error(
+        `${at}: $reference needs a record-link type (record / option<record> / array<record> / set<record>), got "${info.type}".`,
+      );
+  }
+}
+
 function emit(
   path: string,
   table: string,
@@ -584,7 +632,9 @@ function emit(
   opts: DefineOptions | undefined,
   out: DefineStatement[],
   forceOverwrite = false,
+  schemafull = true,
 ): void {
+  validateField(path, info, surreal, schemafull);
   let type = info.type;
   // A DB-side DEFAULT/VALUE/COMPUTED means the column is always populated -> drop a leading option<>.
   if (
@@ -673,23 +723,45 @@ function emit(
             sub.surreal,
             opts,
             out,
+            false,
+            schemafull,
           );
         }
       } else {
-        emit(childPath, table, child.info, child.surreal, opts, out, true);
+        emit(
+          childPath,
+          table,
+          child.info,
+          child.surreal,
+          opts,
+          out,
+          true,
+          schemafull,
+        );
       }
     } else {
-      emit(childPath, table, child.info, child.surreal, opts, out);
+      emit(
+        childPath,
+        table,
+        child.info,
+        child.surreal,
+        opts,
+        out,
+        false,
+        schemafull,
+      );
     }
   }
 }
 
-/** Structured `DEFINE FIELD` statements for a field (and its nested subfields). */
+/** Structured `DEFINE FIELD` statements for a field (and its nested subfields). `schemafull` is the
+ *  table's mode (used to validate FLEXIBLE); defaults to `true` for the standalone field path. */
 export function emitFieldStatements(
   name: string,
   table: string,
   field: SField,
   opts?: DefineOptions,
+  schemafull = true,
 ): DefineStatement[] {
   const out: DefineStatement[] = [];
   let info: FieldInfo;
@@ -700,7 +772,16 @@ export function emitFieldStatements(
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(`${msg} (field "${name}" on table "${table}")`);
   }
-  emit(escapeIdent(name), table, info, field.surreal, opts, out);
+  emit(
+    escapeIdent(name),
+    table,
+    info,
+    field.surreal,
+    opts,
+    out,
+    false,
+    schemafull,
+  );
   return out;
 }
 
@@ -775,7 +856,15 @@ export function emitStatements(
   if (!t.config.view)
     for (const [name, field] of Object.entries(t.fields)) {
       if (implicit.has(name)) continue;
-      out.push(...emitFieldStatements(name, t.name, field as SField, opts));
+      out.push(
+        ...emitFieldStatements(
+          name,
+          t.name,
+          field as SField,
+          opts,
+          !!t.config.schemafull,
+        ),
+      );
     }
   // Composite indexes declared via `.index(name, fields, …)`. A `count` index has no FIELDS.
   for (const idx of t.config.indexes ?? []) {
