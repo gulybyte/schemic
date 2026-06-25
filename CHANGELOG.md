@@ -18,6 +18,10 @@ tagged by package (**core** / **cli** / **surrealdb** / **postgres** / **setup**
   UNIQUE, FULLTEXT analyzer + BM25 + HIGHLIGHTS, HNSW, DISKANN, COUNT, COMMENT; EVENT: WHEN + THEN,
   OVERWRITE, IF NOT EXISTS, WHEN-omitted, ordered THEN). Plus `docs/SYNTAX-COVERAGE.md`, the
   engine-validated grammar + coverage tracker.
+- **surrealdb:** DEFINE EVENT `async` + `comment` authoring — `.event()` / `defineEvent` now take
+  `async?: boolean | { retry?, maxDepth? }` and `comment?`, emitting `ASYNC [RETRY] [MAXDEPTH]` +
+  `COMMENT` in grammar order, with a full round-trip (emit strips the materialized `RETRY 1` /
+  `MAXDEPTH 3` defaults; introspect + `pull` regenerate clean authoring).
 - **surrealdb:** author-time DEFINE FIELD validation — `emit()` now rejects the combos the SurrealDB
   parser rejects, with a clear gen-time error instead of a cryptic apply failure (`$computed` is
   mutually exclusive with `$value`/`$default`/`$readonly`/`$reference`/`$assert` and top-level only;
