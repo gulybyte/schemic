@@ -6,6 +6,7 @@
 import type { CoverageGroup } from "./_kit";
 import { defineAnalyzerCoverage } from "./define-analyzer";
 import { defineFieldCoverage } from "./define-field";
+import { defineIndexCoverage } from "./define-index";
 import { defineTableCoverage } from "./define-table";
 
 export type { CoverageGroup, CoverageItem } from "./_kit";
@@ -14,5 +15,6 @@ export type { CoverageGroup, CoverageItem } from "./_kit";
 export const allCoverage: CoverageGroup[] = [
   defineTableCoverage,
   defineFieldCoverage,
+  defineIndexCoverage,
   defineAnalyzerCoverage,
 ];
