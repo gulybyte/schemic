@@ -190,11 +190,11 @@ DEFINE ACCESS [ OVERWRITE | IF NOT EXISTS ] @name
   [ COMMENT @string ]
 ```
 
-- [ ] `OVERWRITE` · [ ] `IF NOT EXISTS` · [ ] `ON ROOT` · [ ] `ON NAMESPACE` · [ ] `ON DATABASE`
-- [ ] `TYPE JWT ALGORITHM @algorithm KEY @key` · [ ] `TYPE JWT URL @url` · [ ] `TYPE JWT … WITH ISSUER KEY @key` (standalone JWT can issue, not just verify; engine-confirmed — `parse_jwt`, `access_type.rs`. Issuer alg must match the verification alg)
-- [ ] `TYPE RECORD` · [ ] `RECORD SIGNUP` · [ ] `RECORD SIGNIN` · [ ] `RECORD WITH JWT (ALGORITHM KEY|URL)` · [ ] `RECORD WITH ISSUER KEY` · [ ] `RECORD WITH REFRESH`
-- [ ] `TYPE BEARER FOR USER` · [ ] `TYPE BEARER FOR RECORD`
-- [ ] `AUTHENTICATE @expression` · [ ] `DURATION FOR GRANT` · [ ] `DURATION FOR TOKEN` · [ ] `DURATION FOR SESSION` · [ ] `COMMENT @string`
+- [x] `OVERWRITE` · [x] `IF NOT EXISTS` · [ ] `ON ROOT` · [x] `ON NAMESPACE` · [x] `ON DATABASE` _(`ON ROOT` + namespace introspection round-trip are deferred to a multi-level-access task)_
+- [x] `TYPE JWT ALGORITHM @algorithm KEY @key` · [x] `TYPE JWT URL @url` · [ ] `TYPE JWT … WITH ISSUER KEY @key` _(Phase 2 — carries a key, needs `secret()` refs)_
+- [x] `TYPE RECORD` · [x] `RECORD SIGNUP` · [x] `RECORD SIGNIN` · [ ] `RECORD WITH JWT (ALGORITHM KEY|URL)` · [ ] `RECORD WITH ISSUER KEY` · [x] `RECORD WITH REFRESH` _(`WITH JWT`/`WITH ISSUER KEY` carry keys — Phase 2)_
+- [x] `TYPE BEARER FOR USER` · [x] `TYPE BEARER FOR RECORD`
+- [x] `AUTHENTICATE @expression` · [x] `DURATION FOR GRANT` · [x] `DURATION FOR TOKEN` · [x] `DURATION FOR SESSION` · [x] `COMMENT @string`
 
 ## DEFINE PARAM
 
