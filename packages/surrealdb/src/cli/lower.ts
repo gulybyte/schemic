@@ -309,6 +309,7 @@ function lowerAccess(a: AccessDef): StructAccess {
     kind = { kind: "RECORD" };
     if (cfg.signup) kind.signup = braceBody(cfg.signup);
     if (cfg.signin) kind.signin = braceBody(cfg.signin);
+    if (cfg.refresh) kind.refresh = true;
     if (cfg.authenticate) kind.authenticate = braceBody(cfg.authenticate);
   }
 
@@ -320,6 +321,7 @@ function lowerAccess(a: AccessDef): StructAccess {
     if (d.token) out.duration.token = d.token;
     if (d.session) out.duration.session = d.session;
   }
+  if (cfg.comment) out.comment = cfg.comment;
   return out;
 }
 

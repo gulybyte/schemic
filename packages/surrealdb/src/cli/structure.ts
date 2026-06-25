@@ -110,6 +110,8 @@ export interface StructAccess {
     signup?: string;
     signin?: string;
     authenticate?: string;
+    /** RECORD: `WITH REFRESH` — issues refresh tokens. */
+    refresh?: boolean;
     /** JWT/BEARER token config. The `key` is REDACTED by SurrealDB; `alg`/`url` are not. */
     jwt?: {
       issuer?: { alg?: string; key?: string };
@@ -117,6 +119,8 @@ export interface StructAccess {
     };
   };
   duration?: { grant?: string; token?: string; session?: string };
+  /** `COMMENT @string`. */
+  comment?: string;
 }
 
 /** A text-search `DEFINE ANALYZER` — `INFO … STRUCTURE` returns uppercase tokenizer/filter lists. */
@@ -510,6 +514,7 @@ function canonicalAccess(a: StructAccess): string {
   if (k.kind === "RECORD") {
     if (k.signup) parts.push(`SIGNUP ${k.signup}`);
     if (k.signin) parts.push(`SIGNIN ${k.signin}`);
+    if (k.refresh) parts.push("WITH REFRESH");
     if (k.authenticate) parts.push(`AUTHENTICATE ${k.authenticate}`);
   }
   const d = a.duration;
@@ -536,6 +541,7 @@ function canonicalAccess(a: StructAccess): string {
     if (session) fors.push(`FOR SESSION ${session}`);
     parts.push(`DURATION ${fors.join(", ")}`);
   }
+  if (a.comment) parts.push(`COMMENT ${JSON.stringify(a.comment)}`);
   return `${parts.join(" ")};`;
 }
 

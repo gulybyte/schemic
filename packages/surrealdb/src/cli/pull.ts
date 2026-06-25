@@ -702,6 +702,7 @@ function renderAccessConst(a: StructAccess): string {
   if (k.kind === "RECORD") {
     if (k.signup) lines.push(`  .signup(surql\`${k.signup}\`)`);
     if (k.signin) lines.push(`  .signin(surql\`${k.signin}\`)`);
+    if (k.refresh) lines.push("  .withRefresh()");
     if (k.authenticate)
       lines.push(`  .authenticate(surql\`${k.authenticate}\`)`);
   }
@@ -716,6 +717,7 @@ function renderAccessConst(a: StructAccess): string {
       .join(", ");
     lines.push(`  .duration({ ${obj} })`);
   }
+  if (a.comment) lines.push(`  .comment(${JSON.stringify(a.comment)})`);
   return `${lines.join("\n")};`;
 }
 

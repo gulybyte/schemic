@@ -2877,7 +2877,11 @@ interface AccessConfig {
   signup?: Expr;
   signin?: Expr;
   authenticate?: Expr;
+  /** RECORD-only: `WITH REFRESH` — issue refresh tokens alongside the session token. */
+  refresh?: boolean;
   duration?: AccessDuration;
+  /** `COMMENT @string` — a human description stored with the access. */
+  comment?: string;
 }
 
 /**
@@ -2929,9 +2933,17 @@ export class AccessDef {
   authenticate(body: Expr): AccessDef {
     return this.withConfig({ authenticate: body });
   }
+  /** `WITH REFRESH` (RECORD) — also issue a refresh token, so sessions can be renewed without re-auth. */
+  withRefresh(): AccessDef {
+    return this.withConfig({ refresh: true });
+  }
   /** Token/session/grant lifetimes (`DURATION FOR TOKEN …, FOR SESSION …, FOR GRANT …`). */
   duration(d: AccessDuration): AccessDef {
     return this.withConfig({ duration: d });
+  }
+  /** `COMMENT "…"` — a human description stored with the access. */
+  comment(comment: string): AccessDef {
+    return this.withConfig({ comment });
   }
 }
 

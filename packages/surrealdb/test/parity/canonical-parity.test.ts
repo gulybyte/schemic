@@ -21,7 +21,13 @@ import { z } from "zod";
 import { introspect } from "../../src/cli/introspect";
 import { buildSnapshot } from "../../src/cli/surreal-diff";
 import { emitDefStatement, emitTable } from "../../src/ddl";
-import { defineFunction, defineRelation, defineTable, s } from "../../src/pure";
+import {
+  defineAccess,
+  defineFunction,
+  defineRelation,
+  defineTable,
+  s,
+} from "../../src/pure";
 
 const NS = "__sz_canon";
 const DB = "canon";
@@ -123,12 +129,20 @@ const Rel = defineRelation("c_rel", { weight: s.number() }).from(Big).to(Big);
 const Fn = defineFunction("c_greet", { name: s.string() })
   .returns(s.string())
   .body(surql`RETURN "Hi " + $name`);
+// RECORD access exercising WITH REFRESH + COMMENT — round-trips churn-free (the auto session-signing
+// JWT key the DB materializes is redacted and dropped from the canonical, so it doesn't phantom-diff).
+const Acc = defineAccess("c_acc")
+  .signup(surql`CREATE user SET email = $email`)
+  .signin(surql`SELECT * FROM user WHERE email = $email`)
+  .withRefresh()
+  .duration({ session: "12h" })
+  .comment("account access");
 
 // The corpus mixes TableDef/RelationDef/FunctionDef; the CLI snapshot/emit helpers take their own
 // (`AnyTable`/`StandaloneDef`) shapes, which tsc can't reconcile across the self-referential package
 // for a heterogeneous array — so feed them through a typed alias of the helpers' own parameters.
 const TABLES = [Big, Schemaless, Commented, Perms, Comp, Ev, Rel];
-const DEFS = [Fn];
+const DEFS = [Fn, Acc];
 const asTables = TABLES as unknown as Parameters<typeof buildSnapshot>[0];
 const asDefs = DEFS as unknown as Parameters<typeof buildSnapshot>[1];
 

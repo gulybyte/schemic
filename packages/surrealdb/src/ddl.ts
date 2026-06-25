@@ -503,6 +503,13 @@ function emitFunction(fn: FunctionDef, opts?: DefineOptions): string {
 function emitAccess(a: AccessDef, opts?: DefineOptions): string {
   const on = a.config.on === "namespace" ? "NAMESPACE" : "DATABASE";
   const k = a.config.kind;
+  // RECORD access is database-scoped — the parser rejects it ON NAMESPACE/ROOT (records live in a DB).
+  if (k.type === "record" && a.config.on !== "database") {
+    throw new Error(
+      `access "${a.name}": TYPE RECORD is only valid ON DATABASE (records are database-scoped). ` +
+        `Use TYPE JWT or TYPE BEARER for namespace/root access.`,
+    );
+  }
   let typeClause: string;
   if (k.type === "bearer") {
     typeClause = `TYPE BEARER FOR ${k.subject === "user" ? "USER" : "RECORD"}`;
@@ -516,10 +523,12 @@ function emitAccess(a: AccessDef, opts?: DefineOptions): string {
   const parts = [
     `DEFINE ACCESS ${existsPrefix(opts)}${escapeIdent(a.name)} ON ${on} ${typeClause}`,
   ];
-  // SIGNUP/SIGNIN/AUTHENTICATE only apply to RECORD access.
+  // SIGNUP/SIGNIN/WITH REFRESH/AUTHENTICATE only apply to RECORD access (grammar order: SIGNUP, SIGNIN,
+  // WITH REFRESH, [auto WITH JWT — redacted, not authored], AUTHENTICATE).
   if (k.type === "record") {
     if (a.config.signup) parts.push(`SIGNUP ${braceBody(a.config.signup)}`);
     if (a.config.signin) parts.push(`SIGNIN ${braceBody(a.config.signin)}`);
+    if (a.config.refresh) parts.push("WITH REFRESH");
     if (a.config.authenticate)
       parts.push(`AUTHENTICATE ${braceBody(a.config.authenticate)}`);
   }
@@ -531,6 +540,8 @@ function emitAccess(a: AccessDef, opts?: DefineOptions): string {
     if (d.session) fors.push(`FOR SESSION ${d.session}`);
     parts.push(`DURATION ${fors.join(", ")}`);
   }
+  if (a.config.comment)
+    parts.push(`COMMENT ${JSON.stringify(a.config.comment)}`);
   return `${parts.join(" ")};`;
 }
 
