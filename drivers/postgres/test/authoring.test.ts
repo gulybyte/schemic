@@ -678,3 +678,50 @@ describe("PgTableDef.index — method + partial (via the authoring surface)", ()
     expect({ up, down }).toEqual({ up: [], down: [] });
   });
 });
+
+describe("string format factories (App-side Zod validators on text columns)", () => {
+  test("emit as plain text columns (format is App-side, not a pg type)", () => {
+    const t = defineTable("sf", {
+      em: s.email(),
+      link: s.url(),
+      code: s.cuid2(),
+      tok: s.jwt(),
+    });
+    const out = emitKinds(registry, postgresDriver.explode([t], [])).join("\n");
+    expect(out).toContain('"em" text NOT NULL');
+    expect(out).toContain('"link" text NOT NULL');
+    expect(out).toContain('"code" text NOT NULL');
+    expect(out).toContain('"tok" text NOT NULL');
+  });
+
+  test("validate App-side: decode accepts valid, rejects invalid", () => {
+    expect(s.email().decode("ada@example.com")).toBe("ada@example.com");
+    expect(s.email().safeDecode("nope").success).toBe(false);
+    expect(s.url().safeDecode("https://schemic.dev").success).toBe(true);
+    expect(s.url().safeDecode("not a url").success).toBe(false);
+    const _s: string = s.email().decode("a@b.com");
+    expect(_s).toBe("a@b.com");
+  });
+
+  test("a table of formats round-trips (all text)", async () => {
+    const t = defineTable("sfrt", {
+      em: s.email(),
+      link: s.url(),
+      tok: s.jwt(),
+      b64: s.base64(),
+      slug: s.cuid2(),
+    });
+    const objs = postgresDriver.explode([t], []);
+    const conn = (await postgresDriver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await postgresDriver.apply(conn, emitKinds(registry, objs));
+      const live = await postgresDriver.introspectAll(conn);
+      const { up, down } = buildKindDiff(registry, live, objs);
+      expect({ up, down }).toEqual({ up: [], down: [] });
+    } finally {
+      await conn.close();
+    }
+  });
+});

@@ -198,6 +198,30 @@ export const s = {
   char: (n?: number) =>
     n === undefined ? mk("char", z.string()) : mk("char", z.string(), [n]),
   citext: () => mk("citext", z.string()),
+  // string FORMATS — App-side Zod validators on a `text` column (pg has no format-specific column type;
+  // validation runs client-side, the column is plain `text`). `uuid`/`inet`/`cidr`/`macaddr` have their
+  // own native types above/below and are not repeated here. Params pass through to Zod (message/etc.).
+  email: (params?: Parameters<typeof z.email>[0]) =>
+    mk("text", z.email(params)),
+  url: (params?: Parameters<typeof z.url>[0]) => mk("text", z.url(params)),
+  emoji: (params?: Parameters<typeof z.emoji>[0]) =>
+    mk("text", z.emoji(params)),
+  nanoid: (params?: Parameters<typeof z.nanoid>[0]) =>
+    mk("text", z.nanoid(params)),
+  cuid: (params?: Parameters<typeof z.cuid>[0]) => mk("text", z.cuid(params)),
+  cuid2: (params?: Parameters<typeof z.cuid2>[0]) =>
+    mk("text", z.cuid2(params)),
+  ulid: (params?: Parameters<typeof z.ulid>[0]) => mk("text", z.ulid(params)),
+  guid: (params?: Parameters<typeof z.guid>[0]) => mk("text", z.guid(params)),
+  xid: (params?: Parameters<typeof z.xid>[0]) => mk("text", z.xid(params)),
+  ksuid: (params?: Parameters<typeof z.ksuid>[0]) =>
+    mk("text", z.ksuid(params)),
+  base64: (params?: Parameters<typeof z.base64>[0]) =>
+    mk("text", z.base64(params)),
+  base64url: (params?: Parameters<typeof z.base64url>[0]) =>
+    mk("text", z.base64url(params)),
+  e164: (params?: Parameters<typeof z.e164>[0]) => mk("text", z.e164(params)),
+  jwt: (params?: Parameters<typeof z.jwt>[0]) => mk("text", z.jwt(params)),
   // numeric
   smallint: () => mk("smallint", z.int().gte(-32768).lte(32767)),
   integer: () => mk("integer", z.int()),

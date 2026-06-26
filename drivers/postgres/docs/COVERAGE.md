@@ -82,6 +82,7 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 - [x] `inet`, `cidr`, `macaddr`, `money`
 - [x] `jsonb` (opaque on disk, sub-structure by App-side Zod), `s.object(shape)` → `jsonb`
 - [~] `json` → `native "json"` (round-trips), distinct from `jsonb`
+- [x] string FORMAT factories `s.email()/url()/emoji()/nanoid()/cuid()/cuid2()/ulid()/guid()/xid()/ksuid()/base64()/base64url()/e164()/jwt()` → a `text` column with the Zod format validator App-side (validation is client-side; the column is plain `text`). `s.uuid()` stays the native `uuid` type; `s.inet()/cidr()/macaddr()` the native network types
 - [~] `s.enum([...])` → `text` (App-side Zod enum, validated client-side only — a quick inline projection)
 - [x] `defineEnum(name, values)` → a NATIVE pg enum (`CREATE TYPE … AS ENUM`); `mood.column()` types a column as it (App = the literal union). Full round-trip; the standalone, reusable, introspected alternative to the `s.enum` text projection
 - [~] `citext` (emit-only; needs the extension — gap below)
