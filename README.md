@@ -9,7 +9,7 @@
 
 [Docs](https://schemic.dev) &nbsp;•&nbsp; [Drivers](#drivers) &nbsp;•&nbsp; [GitHub](https://github.com/schemichq/schemic)
 
-[![npm](https://img.shields.io/npm/v/@schemic/cli)](https://www.npmjs.com/package/@schemic/cli) &nbsp; [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![npm](https://img.shields.io/npm/v/@schemic/cli)](https://www.npmjs.com/package/@schemic/cli) &nbsp; [![CI](https://github.com/schemichq/schemic/actions/workflows/ci.yml/badge.svg)](https://github.com/schemichq/schemic/actions/workflows/ci.yml) &nbsp; [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 </div>
 
