@@ -15,7 +15,12 @@ tagged by package (**core** / **cli** / **surrealdb** / **postgres** / **setup**
 - **core:** `s.*` fields now expose the [Standard Schema](https://standardschema.dev) `~standard`
   interface (forwarded from the wrapped Zod schema on `SFieldBase`), so a Schemic field drops straight
   into any Standard Schema consumer (tRPC, TanStack Form/Router, …) without unwrapping to `.schema`.
-  Both drivers inherit it free; `validate` runs the decode direction (wire -> app).
+  `validate` runs the decode direction (wire -> app). Postgres inherits it via core's `SFieldBase`;
+  surrealdb mirrors it on its own base (it does not yet share core's `SFieldBase`).
+- **core:** `SFieldBase` (the `s.*` base) gains the remaining Zod 4 shared-base methods for closer
+  drop-in parity — `nonoptional`, `exactOptional`, `isOptional`, `isNullable`, `toJSONSchema`, a
+  `description` getter, `register`, and `spa`. `@schemic/postgres` inherits them immediately (it
+  composes core's `SFieldBase`); `@schemic/surrealdb` mirrors them on its own base.
 
 ### Changed (BREAKING — alpha)
 - **postgres:** `connect()` now **fails loud** on a `postgres://` (any non-`file:` URL scheme)

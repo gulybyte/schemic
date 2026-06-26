@@ -144,6 +144,33 @@ export abstract class SFieldBase<
   safeParseAsync(value: unknown) {
     return this.safeDecodeAsync(value);
   }
+  /** Zod's `.spa` alias for {@link safeParseAsync} (drop-in). */
+  spa(value: unknown) {
+    return this.safeParseAsync(value);
+  }
+
+  // --- Zod reflection + interop (drop-in for `z.*`), delegated to the inner schema ---
+  /** Does this field accept `undefined`? (Zod reflection.) */
+  isOptional(): boolean {
+    return this.schema.isOptional();
+  }
+  /** Does this field accept `null`? (Zod reflection.) */
+  isNullable(): boolean {
+    return this.schema.isNullable();
+  }
+  /** Read back the description set via {@link describe} / {@link meta}. */
+  get description(): string | undefined {
+    return this.schema.description;
+  }
+  /** JSON Schema for this field's wire shape (delegates to `z.toJSONSchema`). */
+  toJSONSchema() {
+    return z.toJSONSchema(this.schema);
+  }
+  /** Register the wrapped schema in a Zod registry for metadata interop; returns the field. */
+  register(...args: Parameters<S["register"]>): this {
+    Reflect.apply(this.schema.register, this.schema, args);
+    return this;
+  }
 
   // Zod wrappers — delegate to the inner schema, carry native metadata + flags forward.
   optional(): SFieldBase<z.ZodOptional<S>, Flags, N> {
@@ -168,6 +195,14 @@ export abstract class SFieldBase<
   }
   nullish(): SFieldBase<z.ZodOptional<z.ZodNullable<S>>, Flags, N> {
     return this.rebuild(this.schema.nullish(), this.native);
+  }
+  /** Zod `.nonoptional()` — require a value (strips an `.optional()`). */
+  nonoptional(): SFieldBase<z.ZodNonOptional<S>, Flags, N> {
+    return this.rebuild(this.schema.nonoptional(), this.native);
+  }
+  /** Zod `.exactOptional()` — optional that rejects an explicit `undefined`. */
+  exactOptional(): SFieldBase<z.ZodExactOptional<S>, Flags, N> {
+    return this.rebuild(this.schema.exactOptional(), this.native);
   }
   /** Zod union — `a.or(b)` accepts either. Mirrors Zod's `.or()`. */
   or<F extends AnyField | z.ZodType>(
