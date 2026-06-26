@@ -9,5 +9,8 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.2"
+  },
+  "overrides": {
+    "surrealdb": "2.0.3"
   }
 }

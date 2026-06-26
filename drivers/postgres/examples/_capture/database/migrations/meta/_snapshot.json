@@ -1,0 +1,71 @@
+{
+  "version": 3,
+  "driver": "postgres",
+  "schema": {
+    "kinds": {
+      "table": [
+        {
+          "kind": "table",
+          "name": "user",
+          "fields": [
+            {
+              "name": "age",
+              "table": "user",
+              "type": {
+                "t": "nullable",
+                "inner": {
+                  "t": "native",
+                  "db": "postgres",
+                  "name": "smallint"
+                }
+              }
+            },
+            {
+              "name": "createdAt",
+              "table": "user",
+              "type": {
+                "t": "scalar",
+                "name": "datetime"
+              },
+              "default": "now()"
+            },
+            {
+              "name": "email",
+              "table": "user",
+              "type": {
+                "t": "native",
+                "db": "postgres",
+                "name": "varchar",
+                "params": [
+                  255
+                ]
+              }
+            },
+            {
+              "name": "name",
+              "table": "user",
+              "type": {
+                "t": "scalar",
+                "name": "string"
+              }
+            }
+          ]
+        }
+      ],
+      "index": [
+        {
+          "kind": "index",
+          "name": "user_email_key",
+          "table": "user",
+          "cols": [
+            "email"
+          ],
+          "unique": true
+        }
+      ]
+    }
+  },
+  "files": {
+    "user": "database/schema/tables.ts"
+  }
+}

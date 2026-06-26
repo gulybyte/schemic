@@ -11,6 +11,8 @@ tagged by package (**core** / **cli** / **surrealdb** / **postgres** / **setup**
 
 ## [Unreleased]
 
+## [0.1.0-alpha.22] - 2026-06-26
+
 ### Added
 - **surrealdb:** DEFINE ACCESS (Phase 1, non-secret) — `.comment()` + `.withRefresh()` with a full
   round-trip (emit / introspect / canonical / lower / pull) and a RECORD-is-database-only guard (throws
