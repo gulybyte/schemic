@@ -1,0 +1,44 @@
+name: CI
+
+# Mirrors the local `land.ts` gate (build -> typecheck -> test across the workspace) so external PRs
+# are verified automatically — `land.ts` only gates what core-dev lands, not contributor PRs.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per ref; a new push cancels the previous in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: build · typecheck · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      # Frozen lockfile = exact committed deps, so the surrealdb SDK stays pinned at 2.0.3
+      # (a re-resolve would bump it and hang the e2e .connect()).
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # Order matches land.ts: build first so typecheck/test run against fresh lib/, not stale output.
+      - name: Build
+        run: bun run --filter '*' build
+
+      - name: Typecheck
+        run: bun run --filter '*' typecheck
+
+      # Postgres tests run on embedded PGlite (no service). SurrealDB live/parity tests skip gracefully
+      # when no server is reachable — add a surrealdb service container later to exercise them in CI.
+      - name: Test
+        run: bun run --filter '*' test
