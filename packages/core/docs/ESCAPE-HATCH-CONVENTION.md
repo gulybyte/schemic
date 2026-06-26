@@ -52,8 +52,8 @@ runtime when widened; only the static `encode`/`decode` param types degrade.
 
 ## Reference implementations
 
-- **SurrealDB** — `.$surreal(wire, codec?)` (`packages/surrealdb/src/pure.ts`).
-- **Postgres** — `.$postgres(wire, codec?)` (`packages/postgres/src/authoring.ts`).
+- **SurrealDB** — `.$surreal(wire, codec?)` (`drivers/surrealdb/src/pure.ts`).
+- **Postgres** — `.$postgres(wire, codec?)` (`drivers/postgres/src/authoring.ts`).
 
 ```ts
 // app value -> stored column, both drivers, same shape:

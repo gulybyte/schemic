@@ -1,18 +1,19 @@
 {
-  "name": "@schemic/postgres",
+  "name": "@schemic/surrealdb",
   "version": "0.1.0-alpha.21",
-  "description": "PostgreSQL driver for Schemic — emit/introspect/diff the portable IR against Postgres (PGlite).",
+  "description": "SurrealDB driver + authoring for Schemic — s.* schema definition, SurrealQL DDL, introspection, migrations.",
   "license": "MIT",
   "author": "Vertio Solutions",
-  "homepage": "https://schemic.dev",
+  "homepage": "https://surreal.schemic.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/schemichq/schemic.git",
-    "directory": "packages/postgres"
+    "directory": "drivers/surrealdb"
   },
   "type": "module",
   "sideEffects": [
     "./src/driver.ts",
+    "./src/driver/surreal.ts",
     "./lib/driver.js"
   ],
   "module": "lib/index.js",
@@ -33,18 +34,18 @@
         "default": "./lib/index.js"
       }
     },
-    "./connection": {
-      "bun": "./src/connection.ts",
-      "import": {
-        "types": "./lib/connection.d.ts",
-        "default": "./lib/connection.js"
-      }
-    },
     "./driver": {
       "bun": "./src/driver.ts",
       "import": {
         "types": "./lib/driver.d.ts",
         "default": "./lib/driver.js"
+      }
+    },
+    "./connection": {
+      "bun": "./src/connection.ts",
+      "import": {
+        "types": "./lib/connection.d.ts",
+        "default": "./lib/connection.js"
       }
     },
     "./query": {
@@ -65,21 +66,24 @@
   },
   "dependencies": {
     "@schemic/core": "workspace:*",
-    "zod": "^4.3.5"
+    "surrealdb": "^2.0.3"
   },
   "peerDependencies": {
-    "@electric-sql/pglite": "^0.5.2"
+    "@surrealdb/node": "*",
+    "zod": "^4.3.5"
   },
   "peerDependenciesMeta": {
-    "@electric-sql/pglite": {
+    "@surrealdb/node": {
       "optional": true
     }
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.11",
-    "@electric-sql/pglite": "^0.5.2",
+    "@schemic/cli": "workspace:*",
     "@types/bun": "latest",
+    "surrealdb": "^2.0.3",
     "tsup": "^8",
-    "typescript": "^5"
+    "typescript": "^5",
+    "zod": "^4.3.5"
   }
 }

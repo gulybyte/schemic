@@ -19,11 +19,11 @@ import { join } from "node:path";
 import {
   emit as pgEmit,
   allGroups as pgGroups,
-} from "../packages/postgres/examples/reference/index";
+} from "../drivers/postgres/examples/reference/index";
 import {
   emit as surrealEmit,
   allGroups as surrealGroups,
-} from "../packages/surrealdb/examples/index";
+} from "../drivers/surrealdb/examples/index";
 
 /** A driver's cookbook + how its DDL is emitted + the language tag for that DDL. */
 interface DriverCatalog {

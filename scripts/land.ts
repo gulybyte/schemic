@@ -160,10 +160,11 @@ run("bun", ["scripts/release.ts", "next"]);
 const newVer = JSON.parse(
   readFileSync(join(ROOT, "packages/core/package.json"), "utf8"),
 ).version as string;
+const driverDirs = new Set(["surrealdb", "postgres"]); // these live under drivers/, the rest packages/
 gitIO(
   "add",
   ...["core", "cli", "surrealdb", "postgres", "create-schemic", "schemic"].map(
-    (p) => `packages/${p}/package.json`,
+    (p) => `${driverDirs.has(p) ? "drivers" : "packages"}/${p}/package.json`,
   ),
   "bun.lock",
 );

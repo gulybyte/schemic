@@ -94,5 +94,5 @@ emits one flat catalog:
 
 ## Reference implementations
 
-- **SurrealDB** — `packages/surrealdb/examples/*.ts` (`allGroups`), on `main`.
-- **Postgres** — `packages/postgres/examples/reference/*.ts` (`allGroups`), on `main`.
+- **SurrealDB** — `drivers/surrealdb/examples/*.ts` (`allGroups`), on `main`.
+- **Postgres** — `drivers/postgres/examples/reference/*.ts` (`allGroups`), on `main`.

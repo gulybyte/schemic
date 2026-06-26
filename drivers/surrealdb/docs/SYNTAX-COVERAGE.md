@@ -7,7 +7,7 @@ its full branching), followed by a checkbox for every clause/branch.
 ## How this works
 
 - **A box is `[x]` ONLY after Manuel marks it covered** — and a box is marked covered only when there is
-  a **verified item in our `coverage/` test suite** (`packages/surrealdb/coverage/<statement>/*.ts`,
+  a **verified item in our `coverage/` test suite** (`drivers/surrealdb/coverage/<statement>/*.ts`,
   asserted by `test/coverage/*`) that pins the authored `s.*`/`define*` form to the exact DDL, and
   Manuel has approved it. Passing some other test does **not** count. So everything starts `[ ]`.
 - This is **separate** from [`COVERAGE.md`](./COVERAGE.md) (the prose round-trip feature list). This doc

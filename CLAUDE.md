@@ -29,8 +29,8 @@ another package goes through that package's owner.
 | Owner | Package(s) | Scope |
 |---|---|---|
 | **core-dev** | `packages/core` (`@schemic/core`), `packages/cli` (`@schemic/cli`) | the dialect-neutral engine + the CLI; the **Driver contract + the public neutral API**; cross-cutting design; this file |
-| **driver-dev-surrealdb** | `packages/surrealdb` (`@schemic/surrealdb`) | the SurrealDB driver + its `s.*` authoring surface |
-| **driver-dev-postgres** | `packages/postgres` (`@schemic/postgres`) | the PostgreSQL driver + its authoring surface |
+| **driver-dev-surrealdb** | `drivers/surrealdb` (`@schemic/surrealdb`) | the SurrealDB driver + its `s.*` authoring surface |
+| **driver-dev-postgres** | `drivers/postgres` (`@schemic/postgres`) | the PostgreSQL driver + its authoring surface |
 
 Rules:
 - **Edit only your own package(s).** Need a change elsewhere? Ask its owner.

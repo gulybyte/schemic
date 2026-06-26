@@ -32,7 +32,9 @@ const ROOT = join(import.meta.dir, "..");
 // strings), so it isn't pin-verified, just bumped + published lockstep so it scaffolds matching versions.
 const ORDER = ["core", "cli", "surrealdb", "postgres", "create-schemic", "schemic"];
 const DEPENDENTS = ["cli", "surrealdb", "postgres"];
-const pkgDir = (p: string) => join(ROOT, "packages", p);
+// driver packages live in drivers/, everything else in packages/
+const DRIVERS = new Set(["surrealdb", "postgres"]);
+const pkgDir = (p: string) => join(ROOT, DRIVERS.has(p) ? "drivers" : "packages", p);
 
 // `next` -> bump the trailing .N of core's current version (0.1.0-alpha.10 -> 0.1.0-alpha.11).
 async function resolveVersion(arg: string): Promise<string> {

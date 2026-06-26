@@ -42,3 +42,4 @@ dist/
 history.txt
 # private client example — never committed
 packages/example-credilisto/
+.claude/

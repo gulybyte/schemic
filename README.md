@@ -25,8 +25,8 @@ separate ORM model, no code generation, no drift.
 
 ## Drivers
 
-- [`@schemic/surrealdb`](packages/surrealdb#readme) — **SurrealDB** · available
-- [`@schemic/postgres`](packages/postgres#readme) — **PostgreSQL** · in progress
+- [`@schemic/surrealdb`](drivers/surrealdb#readme) — **SurrealDB** · available
+- [`@schemic/postgres`](drivers/postgres#readme) — **PostgreSQL** · in progress
 
 More drivers are planned. The authoring API and the CLI are the same across
 every driver — only the generated DDL differs.
@@ -60,8 +60,8 @@ driver's README for the exact builders and output.
 
 **Alpha (`0.x`).** APIs may still change.
 
-- [x] **SurrealDB** driver — the most complete · [coverage](packages/surrealdb/docs/COVERAGE.md)
-- [ ] **PostgreSQL** driver — in progress · [coverage](packages/postgres/docs/COVERAGE.md)
+- [x] **SurrealDB** driver — the most complete · [coverage](drivers/surrealdb/docs/COVERAGE.md)
+- [ ] **PostgreSQL** driver — in progress · [coverage](drivers/postgres/docs/COVERAGE.md)
 - [ ] more drivers
 
 ## Development

@@ -1,6 +1,7 @@
 {
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "drivers/*"
   ],
   "version": "0.0.1-0",
   "scripts": {

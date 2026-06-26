@@ -7,6 +7,51 @@
         "@electric-sql/pglite": "^0.5.2",
       },
     },
+    "drivers/postgres": {
+      "name": "@schemic/postgres",
+      "version": "0.1.0-alpha.21",
+      "dependencies": {
+        "@schemic/core": "workspace:*",
+        "zod": "^4.3.5",
+      },
+      "devDependencies": {
+        "@biomejs/biome": "^2.3.11",
+        "@electric-sql/pglite": "^0.5.2",
+        "@types/bun": "latest",
+        "tsup": "^8",
+        "typescript": "^5",
+      },
+      "peerDependencies": {
+        "@electric-sql/pglite": "^0.5.2",
+      },
+      "optionalPeers": [
+        "@electric-sql/pglite",
+      ],
+    },
+    "drivers/surrealdb": {
+      "name": "@schemic/surrealdb",
+      "version": "0.1.0-alpha.21",
+      "dependencies": {
+        "@schemic/core": "workspace:*",
+        "surrealdb": "^2.0.3",
+      },
+      "devDependencies": {
+        "@biomejs/biome": "^2.3.11",
+        "@schemic/cli": "workspace:*",
+        "@types/bun": "latest",
+        "surrealdb": "^2.0.3",
+        "tsup": "^8",
+        "typescript": "^5",
+        "zod": "^4.3.5",
+      },
+      "peerDependencies": {
+        "@surrealdb/node": "*",
+        "zod": "^4.3.5",
+      },
+      "optionalPeers": [
+        "@surrealdb/node",
+      ],
+    },
     "packages/cli": {
       "name": "@schemic/cli",
       "version": "0.1.0-alpha.21",
@@ -85,27 +130,6 @@
         "vite": "^7.3.5",
       },
     },
-    "packages/postgres": {
-      "name": "@schemic/postgres",
-      "version": "0.1.0-alpha.21",
-      "dependencies": {
-        "@schemic/core": "workspace:*",
-        "zod": "^4.3.5",
-      },
-      "devDependencies": {
-        "@biomejs/biome": "^2.3.11",
-        "@electric-sql/pglite": "^0.5.2",
-        "@types/bun": "latest",
-        "tsup": "^8",
-        "typescript": "^5",
-      },
-      "peerDependencies": {
-        "@electric-sql/pglite": "^0.5.2",
-      },
-      "optionalPeers": [
-        "@electric-sql/pglite",
-      ],
-    },
     "packages/schemic": {
       "name": "schemic",
       "version": "0.1.0-alpha.21",
@@ -116,30 +140,6 @@
       "dependencies": {
         "@schemic/cli": "^0.1.0-alpha.6",
       },
-    },
-    "packages/surrealdb": {
-      "name": "@schemic/surrealdb",
-      "version": "0.1.0-alpha.21",
-      "dependencies": {
-        "@schemic/core": "workspace:*",
-        "surrealdb": "^2.0.3",
-      },
-      "devDependencies": {
-        "@biomejs/biome": "^2.3.11",
-        "@schemic/cli": "workspace:*",
-        "@types/bun": "latest",
-        "surrealdb": "^2.0.3",
-        "tsup": "^8",
-        "typescript": "^5",
-        "zod": "^4.3.5",
-      },
-      "peerDependencies": {
-        "@surrealdb/node": "*",
-        "zod": "^4.3.5",
-      },
-      "optionalPeers": [
-        "@surrealdb/node",
-      ],
     },
   },
   "packages": {
@@ -405,9 +405,9 @@
 
     "@schemic/core": ["@schemic/core@workspace:packages/core"],
 
-    "@schemic/postgres": ["@schemic/postgres@workspace:packages/postgres"],
+    "@schemic/postgres": ["@schemic/postgres@workspace:drivers/postgres"],
 
-    "@schemic/surrealdb": ["@schemic/surrealdb@workspace:packages/surrealdb"],
+    "@schemic/surrealdb": ["@schemic/surrealdb@workspace:drivers/surrealdb"],
 
     "@shikijs/core": ["@shikijs/core@4.2.0", "", { "dependencies": { "@shikijs/primitive": "4.2.0", "@shikijs/types": "4.2.0", "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.4", "hast-util-to-html": "^9.0.5" } }, "sha512-Hc87Ab1Ld/vEbZRCbwx344I5v+4RU8CVToUTRkqXL1+TjbuOp9U5Xa0M23V4GEWHxVn+yO5otb+HkQVm3ptWQQ=="],
 

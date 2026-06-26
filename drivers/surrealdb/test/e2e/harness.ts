@@ -22,10 +22,10 @@ import {
   surrealBinaryAvailable,
 } from "../../src/cli/engine";
 
-/** packages/surrealdb — this package's root (this file is test/e2e/harness.ts). */
+/** drivers/surrealdb — this package's root (this file is test/e2e/harness.ts). */
 export const SURREAL_PKG = resolve(import.meta.dir, "../..");
-/** packages/ — the workspace packages dir. */
-const PKGS = resolve(import.meta.dir, "../../..");
+/** packages/ — where core + cli live; the driver packages now live in drivers/ (see SURREAL_PKG). */
+const PKGS = resolve(import.meta.dir, "../../../..", "packages");
 /** The `schemic` CLI entry — the CLI lives in its own @schemic/cli package now. */
 const CLI = join(PKGS, "cli", "src/cli/index.ts");
 
@@ -76,7 +76,7 @@ export interface Harness {
 function linkDeps(root: string): void {
   const nm = join(root, "node_modules");
   mkdirSync(join(nm, "@schemic"), { recursive: true }); // scoped pkg needs its scope dir
-  symlinkSync(join(PKGS, "surrealdb"), join(nm, "@schemic", "surrealdb"));
+  symlinkSync(SURREAL_PKG, join(nm, "@schemic", "surrealdb"));
   symlinkSync(join(PKGS, "core"), join(nm, "@schemic", "core"));
   for (const dep of ["surrealdb", "zod"]) {
     symlinkSync(
