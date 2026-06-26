@@ -162,7 +162,7 @@ describe("fromStandalone", () => {
   });
 
   test("access -> StructAccess (record kind + duration)", () => {
-    const account = defineAccess("account")
+    const account = defineAccess("account").onDatabase()
       .record()
       .duration({ token: "1h", session: "12h" });
     expect(fromStandalone(account)).toEqual({

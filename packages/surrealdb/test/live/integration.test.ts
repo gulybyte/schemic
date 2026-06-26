@@ -208,12 +208,12 @@ live("function DDL introspects + round-trips", () => {
 });
 
 const Accesses = [
-  defineAccess("it_app")
+  defineAccess("it_app").onDatabase()
     .record()
     .signin(surql`SELECT * FROM it_user WHERE email = $email`)
     .duration({ token: "1h", session: "12h" }),
-  defineAccess("it_jwt").jwt({ alg: "HS512", key: "supersecretvalue" }),
-  defineAccess("it_svc").bearer({ for: "record" }).duration({ grant: "30d" }),
+  defineAccess("it_jwt").onDatabase().jwt({ alg: "HS512", key: "supersecretvalue" }),
+  defineAccess("it_svc").onDatabase().bearer({ for: "record" }).duration({ grant: "30d" }),
 ];
 
 live("access DDL (record/jwt/bearer) introspects + round-trips", () => {

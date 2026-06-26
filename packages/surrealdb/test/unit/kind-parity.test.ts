@@ -334,14 +334,14 @@ describe("function kind parity (opaque)", () => {
 });
 
 describe("access kind parity (opaque)", () => {
-  const acct = () => defineAccess("acct").record().signin(surql`SELECT 1`);
+  const acct = () => defineAccess("acct").onDatabase().record().signin(surql`SELECT 1`);
 
   test("add an access", () => {
     parity([], [], [], [acct()]);
   });
 
   test("change an access (DEFINE ACCESS OVERWRITE)", () => {
-    const changed = defineAccess("acct").record().signin(surql`SELECT 2`);
+    const changed = defineAccess("acct").onDatabase().record().signin(surql`SELECT 2`);
     parity([], [], [acct()], [changed]);
   });
 
@@ -386,7 +386,7 @@ describe("fn:: dependency ordering (function emits before its caller)", () => {
     const check = defineFunction("fmt", { v: s.string() })
       .returns(s.string())
       .body(surql`RETURN $v`);
-    const access = defineAccess("acct")
+    const access = defineAccess("acct").onDatabase()
       .record()
       .signin(surql`SELECT * FROM user WHERE fn::fmt(email)`);
     const up = emitKinds(surrealKinds, lowerAll([], [check, access]));

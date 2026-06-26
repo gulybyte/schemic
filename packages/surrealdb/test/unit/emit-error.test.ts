@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { buildSnapshot } from "../../src/cli/surreal-diff";
-import { emitTable } from "../../src/driver";
+import { emitDefStatement, emitTable } from "../../src/driver";
 import { surql } from "../../src/index";
-import { defineTable, s } from "../../src/pure";
+import { defineAccess, defineTable, s } from "../../src/pure";
+
+test("DEFINE ACCESS requires an explicit scope (.onDatabase()/.onNamespace())", () => {
+  // No implicit ON DATABASE default — emitting without a scope throws.
+  expect(() => emitDefStatement(defineAccess("a").record())).toThrow(
+    /no scope set — call \.onDatabase\(\) or \.onNamespace\(\)/,
+  );
+  // With a scope it emits fine.
+  expect(emitDefStatement(defineAccess("a").onDatabase().record()).ddl).toBe(
+    "DEFINE ACCESS a ON DATABASE TYPE RECORD;",
+  );
+});
 
 test("a non-Surreal field type error names the field + table", () => {
   const Bad = defineTable("widget", {

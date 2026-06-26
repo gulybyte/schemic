@@ -2870,8 +2870,9 @@ export interface AccessDuration {
 }
 
 interface AccessConfig {
-  /** `ON DATABASE` (default) or `ON NAMESPACE`. */
-  on: "database" | "namespace";
+  /** `ON DATABASE` or `ON NAMESPACE` — required, set via `.onDatabase()`/`.onNamespace()` (no implicit
+   *  default: the scope is a deliberate choice, so emitting without one throws). */
+  on?: "database" | "namespace";
   kind: AccessKind;
   /** RECORD-only: SIGNUP/SIGNIN/AUTHENTICATE blocks. */
   signup?: Expr;
@@ -2895,10 +2896,9 @@ export class AccessDef {
   readonly kind = "access" as const;
   constructor(
     readonly name: string,
-    readonly config: AccessConfig = {
-      on: "database",
-      kind: { type: "record" },
-    },
+    // `on` is intentionally unset — the scope is a required, deliberate choice (`.onDatabase()` /
+    // `.onNamespace()`); emitting without one throws.
+    readonly config: AccessConfig = { kind: { type: "record" } },
   ) {}
   private withConfig(c: Partial<AccessConfig>): AccessDef {
     return new AccessDef(this.name, { ...this.config, ...c });
@@ -2948,7 +2948,7 @@ export class AccessDef {
 }
 
 /**
- * Declare an access definition: `export const account = defineAccess("account").record()
+ * Declare an access definition: `export const account = defineAccess("account").onDatabase().record()
  * .signup(surql\`…\`).signin(surql\`…\`).duration({ token: "1h", session: "12h" })`. See {@link AccessDef}
  * for `.jwt(…)` / `.bearer(…)`.
  */

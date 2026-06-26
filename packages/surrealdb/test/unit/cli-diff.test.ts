@@ -476,7 +476,7 @@ describe("access", () => {
     diffSnapshots(EMPTY_SNAPSHOT, buildSnapshot([], [a])).up[0];
 
   test("emits DEFINE ACCESS RECORD with auto-braced SIGNUP/SIGNIN + DURATION", () => {
-    const account = defineAccess("account")
+    const account = defineAccess("account").onDatabase()
       .record()
       .signup(surql`CREATE user CONTENT { email: $email }`)
       .signin(surql`SELECT * FROM user WHERE email = $email`)
@@ -490,7 +490,7 @@ describe("access", () => {
   });
 
   test("adding access → DEFINE ACCESS up / REMOVE ACCESS down", () => {
-    const a = defineAccess("account").record().signin(surql`SELECT 1`);
+    const a = defineAccess("account").onDatabase().record().signin(surql`SELECT 1`);
     const diff = diffSnapshots(EMPTY_SNAPSHOT, buildSnapshot([], [a]));
     expect(diff.up[0]).toContain(
       "DEFINE ACCESS account ON DATABASE TYPE RECORD",
@@ -499,20 +499,20 @@ describe("access", () => {
   });
 
   test("summarizeKinds counts access", () => {
-    const a = defineAccess("a").record().signin(surql`SELECT 1`);
+    const a = defineAccess("a").onDatabase().record().signin(surql`SELECT 1`);
     const items =
       diffSnapshots(EMPTY_SNAPSHOT, buildSnapshot([], [a])).items ?? [];
     expect(summarizeKinds(surrealKinds, items)).toBe("1 Access");
   });
 
   test("TYPE JWT with alg + key, and with a JWKS url", () => {
-    const sym = defineAccess("api")
+    const sym = defineAccess("api").onDatabase()
       .jwt({ alg: "HS512", key: "secret" })
       .duration({ token: "1h" });
     expect(ddlOf(sym)).toBe(
       `DEFINE ACCESS api ON DATABASE TYPE JWT ALGORITHM HS512 KEY "secret" DURATION FOR TOKEN 1h;`,
     );
-    const jwks = defineAccess("api2").jwt({
+    const jwks = defineAccess("api2").onDatabase().jwt({
       url: "https://example.com/jwks.json",
     });
     expect(ddlOf(jwks)).toBe(
@@ -521,14 +521,14 @@ describe("access", () => {
   });
 
   test("TYPE BEARER FOR RECORD/USER with grant duration", () => {
-    const svc = defineAccess("svc")
+    const svc = defineAccess("svc").onDatabase()
       .bearer({ for: "record" })
       .duration({ grant: "30d", session: "12h" });
     expect(ddlOf(svc)).toBe(
       "DEFINE ACCESS svc ON DATABASE TYPE BEARER FOR RECORD " +
         "DURATION FOR GRANT 30d, FOR SESSION 12h;",
     );
-    expect(ddlOf(defineAccess("u").bearer({ for: "user" }))).toBe(
+    expect(ddlOf(defineAccess("u").onDatabase().bearer({ for: "user" }))).toBe(
       "DEFINE ACCESS u ON DATABASE TYPE BEARER FOR USER;",
     );
   });

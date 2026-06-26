@@ -138,7 +138,7 @@ export const ${C} = defineFunction("${name}", { arg: s.string() })
       return `import { defineAccess, surql } from "@schemic/surrealdb";
 
 // A RECORD access method (signup/signin). See \`.jwt({ … })\` / \`.bearer({ … })\` for other types.
-export const ${C} = defineAccess("${name}")
+export const ${C} = defineAccess("${name}").onDatabase()
   .record()
   .signup(surql\`CREATE user SET email = $email, pass = crypto::argon2::generate($pass)\`)
   .signin(surql\`SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass)\`)

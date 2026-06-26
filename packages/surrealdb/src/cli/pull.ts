@@ -688,7 +688,8 @@ function renderAccessConst(a: StructAccess): string {
     lines.push(
       "// NOTE: signing key not pulled (SurrealDB redacts it) — re-applying rotates it.",
     );
-  let head = `export const ${fnConst(a.name)} = defineAccess(${JSON.stringify(a.name)})`;
+  // Introspected accesses are database-scoped (canonical is ON DATABASE), so regenerate `.onDatabase()`.
+  let head = `export const ${fnConst(a.name)} = defineAccess(${JSON.stringify(a.name)}).onDatabase()`;
   if (k.kind === "BEARER") {
     head += `\n  .bearer({ for: ${JSON.stringify((k.subject ?? "record").toLowerCase())} })`;
   } else if (k.kind === "JWT") {

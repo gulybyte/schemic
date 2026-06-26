@@ -501,6 +501,11 @@ function emitFunction(fn: FunctionDef, opts?: DefineOptions): string {
 
 /** `DEFINE ACCESS <name> ON <DATABASE|NAMESPACE> TYPE <RECORD|JWT|BEARER> … [DURATION …]`. */
 function emitAccess(a: AccessDef, opts?: DefineOptions): string {
+  if (!a.config.on) {
+    throw new Error(
+      `access "${a.name}": no scope set — call .onDatabase() or .onNamespace() (the scope is a deliberate choice, not defaulted).`,
+    );
+  }
   const on = a.config.on === "namespace" ? "NAMESPACE" : "DATABASE";
   const k = a.config.kind;
   // RECORD access is database-scoped — the parser rejects it ON NAMESPACE/ROOT (records live in a DB).

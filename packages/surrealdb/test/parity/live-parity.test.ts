@@ -219,12 +219,12 @@ live("DB accepts @schemic/core's generated DDL", () => {
     ).toEqual([]);
 
     const accesses = [
-      defineAccess("pl_app")
+      defineAccess("pl_app").onDatabase()
         .record()
         .signin(surql`SELECT * FROM pl_big WHERE email = $email`)
         .duration({ token: "1h", session: "12h" }),
-      defineAccess("pl_jwt").jwt({ alg: "HS512", key: "supersecretvalue" }),
-      defineAccess("pl_svc")
+      defineAccess("pl_jwt").onDatabase().jwt({ alg: "HS512", key: "supersecretvalue" }),
+      defineAccess("pl_svc").onDatabase()
         .bearer({ for: "record" })
         .duration({ grant: "30d" }),
     ];
@@ -239,9 +239,9 @@ live("DB accepts @schemic/core's generated DDL", () => {
     // Regression: SurrealDB materializes FOR TOKEN 1h (every access) + FOR GRANT 4w2d (BEARER) as
     // defaults; an access that omits them must not diff against the introspected materialized form.
     const defs = [
-      defineAccess("pl_rt_rec").record(), // no duration
-      defineAccess("pl_rt_rec2").record().duration({ session: "12h" }), // token omitted
-      defineAccess("pl_rt_bear").bearer({ for: "user" }), // grant default
+      defineAccess("pl_rt_rec").onDatabase().record(), // no duration
+      defineAccess("pl_rt_rec2").onDatabase().record().duration({ session: "12h" }), // token omitted
+      defineAccess("pl_rt_bear").onDatabase().bearer({ for: "user" }), // grant default
     ];
     for (const a of defs)
       await applyEach(db!, emitDefStatement(a, { exists: "overwrite" }).ddl);
