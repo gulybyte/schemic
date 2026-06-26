@@ -44,3 +44,4 @@ history.txt
 packages/example-credilisto/
 .claude/
 drivers/postgres/examples/_capture/
+.vscode/
