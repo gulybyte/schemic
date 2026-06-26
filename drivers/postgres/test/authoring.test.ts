@@ -725,3 +725,56 @@ describe("string format factories (App-side Zod validators on text columns)", ()
     }
   });
 });
+
+describe("Zod chain methods (string + number; App-side, no DDL change)", () => {
+  test("string format + length + transform chains validate/normalize App-side", () => {
+    expect(s.text().email().safeDecode("a@b.com").success).toBe(true);
+    expect(s.text().email().safeDecode("nope").success).toBe(false);
+    expect(s.text().min(3).safeDecode("ab").success).toBe(false);
+    expect(s.text().email().min(3).safeDecode("a@b.com").success).toBe(true); // chains compose
+    expect(s.text().trim().decode("  hi  ")).toBe("hi");
+    expect(s.text().toLowerCase().decode("AB")).toBe("ab");
+    expect(
+      s
+        .varchar(50)
+        .regex(/^[a-z]+$/)
+        .safeDecode("ABC").success,
+    ).toBe(false);
+  });
+
+  test("number bound chains validate App-side", () => {
+    expect(s.integer().gt(0).safeDecode(-1).success).toBe(false);
+    expect(s.integer().gte(0).safeDecode(0).success).toBe(true);
+    expect(s.integer().positive().safeDecode(5).success).toBe(true);
+    expect(s.numeric().multipleOf(0.5).safeDecode(0.25).success).toBe(false);
+  });
+
+  test("a chain method that doesn't apply to the base type throws (like Zod)", () => {
+    expect(() => s.integer().regex(/x/)).toThrow(/not available on this field/);
+  });
+
+  test("chains DON'T change the column type — DDL unchanged + round-trips", async () => {
+    const t = defineTable("zc", {
+      em: s.text().email().min(3), // still text
+      slug: s.varchar(50).regex(/^[a-z-]+$/), // still varchar(50)
+      age: s.integer().gte(0).lte(150), // still integer
+    });
+    const objs = postgresDriver.explode([t], []);
+    const stmts = emitKinds(registry, objs);
+    const out = stmts.join("\n");
+    expect(out).toContain('"em" text NOT NULL');
+    expect(out).toContain('"slug" varchar(50) NOT NULL');
+    expect(out).toContain('"age" integer NOT NULL');
+    const conn = (await postgresDriver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await postgresDriver.apply(conn, stmts);
+      const live = await postgresDriver.introspectAll(conn);
+      const { up, down } = buildKindDiff(registry, live, objs);
+      expect({ up, down }).toEqual({ up: [], down: [] });
+    } finally {
+      await conn.close();
+    }
+  });
+});

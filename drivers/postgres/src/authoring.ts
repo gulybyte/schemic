@@ -143,6 +143,145 @@ export class PgField<
     return this.with({ comment: text });
   }
 
+  // --- Zod chain methods (string + number constraints/transforms) ---
+  // These are native Zod refinements/transforms forwarded to the inner schema and rebuilt as a PgField,
+  // so a chain like `s.text().email().min(3).trim()` is a drop-in for Zod. They validate/normalize
+  // APP-SIDE only — the pg column type is UNCHANGED (no DDL). For a DB-side constraint use `$check`.
+  // Runtime-dispatched so the method just calls the inner schema's same-named method (throwing the same
+  // way Zod would if it doesn't apply to this field's base type, e.g. `.regex()` on a number).
+  private chain(method: string, ...args: unknown[]): PgField<S, Flags> {
+    const inner = this.schema as unknown as Record<
+      string,
+      ((...a: unknown[]) => z.ZodType) | undefined
+    >;
+    const fn = inner[method];
+    if (typeof fn !== "function")
+      throw new Error(
+        `postgres: .${method}() is not available on this field's base type.`,
+      );
+    return this.rebuild(fn.apply(this.schema, args) as S, this.native);
+  }
+  // string + number length/bounds
+  min(value: number, params?: unknown): PgField<S, Flags> {
+    return this.chain("min", value, params);
+  }
+  max(value: number, params?: unknown): PgField<S, Flags> {
+    return this.chain("max", value, params);
+  }
+  length(value: number, params?: unknown): PgField<S, Flags> {
+    return this.chain("length", value, params);
+  }
+  // string patterns / transforms
+  regex(re: RegExp, params?: unknown): PgField<S, Flags> {
+    return this.chain("regex", re, params);
+  }
+  startsWith(value: string, params?: unknown): PgField<S, Flags> {
+    return this.chain("startsWith", value, params);
+  }
+  endsWith(value: string, params?: unknown): PgField<S, Flags> {
+    return this.chain("endsWith", value, params);
+  }
+  includes(value: string, params?: unknown): PgField<S, Flags> {
+    return this.chain("includes", value, params);
+  }
+  nonempty(params?: unknown): PgField<S, Flags> {
+    return this.chain("nonempty", params);
+  }
+  trim(): PgField<S, Flags> {
+    return this.chain("trim");
+  }
+  toLowerCase(): PgField<S, Flags> {
+    return this.chain("toLowerCase");
+  }
+  toUpperCase(): PgField<S, Flags> {
+    return this.chain("toUpperCase");
+  }
+  // number bounds + checks
+  gt(value: number, params?: unknown): PgField<S, Flags> {
+    return this.chain("gt", value, params);
+  }
+  gte(value: number, params?: unknown): PgField<S, Flags> {
+    return this.chain("gte", value, params);
+  }
+  lt(value: number, params?: unknown): PgField<S, Flags> {
+    return this.chain("lt", value, params);
+  }
+  lte(value: number, params?: unknown): PgField<S, Flags> {
+    return this.chain("lte", value, params);
+  }
+  positive(params?: unknown): PgField<S, Flags> {
+    return this.chain("positive", params);
+  }
+  negative(params?: unknown): PgField<S, Flags> {
+    return this.chain("negative", params);
+  }
+  nonnegative(params?: unknown): PgField<S, Flags> {
+    return this.chain("nonnegative", params);
+  }
+  nonpositive(params?: unknown): PgField<S, Flags> {
+    return this.chain("nonpositive", params);
+  }
+  multipleOf(value: number, params?: unknown): PgField<S, Flags> {
+    return this.chain("multipleOf", value, params);
+  }
+  // string FORMAT chain methods (Zod-4 deprecated-but-present forms, so `s.text().email()` is a drop-in;
+  // the prefer-factory equivalents are `s.email()` etc.). All validate APP-SIDE; column stays `text`.
+  email(params?: unknown): PgField<S, Flags> {
+    return this.chain("email", params);
+  }
+  url(params?: unknown): PgField<S, Flags> {
+    return this.chain("url", params);
+  }
+  emoji(params?: unknown): PgField<S, Flags> {
+    return this.chain("emoji", params);
+  }
+  uuid(params?: unknown): PgField<S, Flags> {
+    return this.chain("uuid", params);
+  }
+  guid(params?: unknown): PgField<S, Flags> {
+    return this.chain("guid", params);
+  }
+  nanoid(params?: unknown): PgField<S, Flags> {
+    return this.chain("nanoid", params);
+  }
+  cuid(params?: unknown): PgField<S, Flags> {
+    return this.chain("cuid", params);
+  }
+  cuid2(params?: unknown): PgField<S, Flags> {
+    return this.chain("cuid2", params);
+  }
+  ulid(params?: unknown): PgField<S, Flags> {
+    return this.chain("ulid", params);
+  }
+  xid(params?: unknown): PgField<S, Flags> {
+    return this.chain("xid", params);
+  }
+  ksuid(params?: unknown): PgField<S, Flags> {
+    return this.chain("ksuid", params);
+  }
+  base64(params?: unknown): PgField<S, Flags> {
+    return this.chain("base64", params);
+  }
+  base64url(params?: unknown): PgField<S, Flags> {
+    return this.chain("base64url", params);
+  }
+  e164(params?: unknown): PgField<S, Flags> {
+    return this.chain("e164", params);
+  }
+  jwt(params?: unknown): PgField<S, Flags> {
+    return this.chain("jwt", params);
+  }
+  // string transforms
+  lowercase(params?: unknown): PgField<S, Flags> {
+    return this.chain("lowercase", params);
+  }
+  uppercase(params?: unknown): PgField<S, Flags> {
+    return this.chain("uppercase", params);
+  }
+  normalize(form?: string): PgField<S, Flags> {
+    return this.chain("normalize", form);
+  }
+
   /**
    * ESCAPE HATCH (chainable form) — teach the driver how to STORE this field's value in Postgres:
    * give the **wire type** as an `s.*`/Zod field (its pg column type is taken from it) plus a codec

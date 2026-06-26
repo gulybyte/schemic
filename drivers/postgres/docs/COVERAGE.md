@@ -58,6 +58,7 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 
 ### Authoring (`s.*`, pg-native)
 - [x] `PgField extends SFieldBase` — Zod drop-in + `PgMeta` side-channel; full Zod wrapper/passthrough chain, type-preserving
+- [x] Zod CHAIN methods — string formats (`.email/.url/.uuid/.emoji/.nanoid/.cuid/.cuid2/.ulid/.guid/.xid/.ksuid/.base64/.base64url/.e164/.jwt`), string length/pattern/transform (`.min/.max/.length/.regex/.startsWith/.endsWith/.includes/.nonempty/.trim/.toLowerCase/.toUpperCase/.lowercase/.uppercase/.normalize`), number bounds (`.gt/.gte/.lt/.lte/.positive/.negative/.nonnegative/.nonpositive/.multipleOf`) — forwarded to the inner Zod schema, **App-side only (no DDL — the column type is unchanged)**; for a DB-side constraint use `.$check`. A method that doesn't apply to the base type throws (like Zod)
 - [x] `defineTable(name, { col: s.* })` → `PgTableDef` (an `Authored`); `.primaryKey(...)`, `.check(expr)`, `.index([...])`
 - [x] `postgresDriver.lower(tables, defs)` → portable IR (replaces the old `throw`)
 - [x] `s.$postgres(pgType, codec)` escape-hatch FACTORY (Zod codec App-side, stored as the given pg type)
