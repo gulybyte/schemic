@@ -2,13 +2,13 @@
  * Configuration for the `schemic` CLI — author it in `schemic.config.ts`.
  *
  * A project declares one or more named CONNECTIONS, each built by a per-driver factory
- * (`<driver>Connection(...)` exported from `@schemic/<driver>`). Connection values are EXPLICIT —
+ * (`<driver>Connection(...)` exported from `@schemic/<driver>/connection`). Connection values are EXPLICIT —
  * there is no env-var magic; read env yourself where you want it (`url: process.env.MY_URL`).
  * See `@schemic/core` docs/MULTI-CONNECTION.md.
  *
  * ```ts
  * import { defineConfig } from "@schemic/core/config";
- * import { surrealConnection } from "@schemic/surrealdb";
+ * import { surrealConnection } from "@schemic/surrealdb/connection";
  *
  * export default defineConfig({
  *   connections: {
