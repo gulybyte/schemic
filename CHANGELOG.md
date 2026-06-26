@@ -35,6 +35,9 @@ tagged by package (**core** / **cli** / **surrealdb** / **postgres** / **setup**
   that previously emitted bad DDL now throw (they failed at apply anyway).
 
 ### Changed (BREAKING — alpha)
+- **surrealdb:** `.$fulltext({ bm25 })` narrows from `boolean | [k1, b]` to `[k1, b]` only — `bm25: true`
+  is dropped (it was a no-op: BM25 is always-on and the materialized default is stripped on emit, so
+  `true` emitted nothing). `bm25` now means purely "tune the parameters."
 - **surrealdb:** `defineAccess(name)` now **requires** an explicit scope — `.onDatabase()` /
   `.onNamespace()` — enforced at **compile time** (`defineAccess` returns an `UnscopedAccessDef` exposing
   only the two scope methods, so `defineAccess("x").bearer(...)` is a type error), with `emit()` still
