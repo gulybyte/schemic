@@ -346,6 +346,12 @@ export abstract class SFieldBase<
     readonly native: N,
   ) {}
 
+  /** Standard Schema (v1) interop — delegates to the underlying Zod schema, so every `s.*` field is a
+   *  valid `StandardSchemaV1` (`field['~standard'].validate(input)`), matching `@schemic/core`'s base. */
+  get ["~standard"](): S["~standard"] {
+    return this.schema["~standard"];
+  }
+
   /** Rebuild a sibling field of the SAME dialect with a new schema/flags. Each dialect overrides it. */
   protected abstract rebuild<S2 extends z.ZodType, F2 extends string>(
     schema: S2,
