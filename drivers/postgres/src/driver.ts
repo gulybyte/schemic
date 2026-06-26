@@ -896,14 +896,21 @@ export const postgresDriver: Driver<PgConn> = {
     return (await conn.query<T>(text, params)).rows;
   },
 
-  connect(
+  async connect(
     config: ResolvedConfig,
     _over?: ConnectionOverrides,
   ): Promise<PgConn> {
     // The neutral ResolvedConfig carries the driver-specific connection bag in `params` (our
-    // PostgresConnectionConfig minus the neutral schema/migrations/key). PGlite is embedded; treat a
-    // `file:`/path url as a data dir, else in-memory.
+    // PostgresConnectionConfig minus the neutral schema/migrations/key). PGlite is embedded; a
+    // `file:<dir>` url is a persistent data dir, "" / omitted is in-memory.
     const url = typeof config.params.url === "string" ? config.params.url : "";
+    // FAIL LOUD on a non-`file:` URL scheme (e.g. `postgres://`): without this it silently fell through
+    // to an in-memory throwaway, so a user pointing at a real server would "succeed" against a DB that's
+    // discarded — silent data loss. node-postgres isn't wired yet, so reject it with guidance.
+    if (url !== "" && !url.startsWith("file:") && url.includes("://"))
+      throw new Error(
+        `postgres: unsupported connection url ${JSON.stringify(url)} — hosted Postgres over postgres:// is not supported yet. Use "file:<dir>" for a persistent data directory, or "" / omit for in-memory.`,
+      );
     const dir = url.startsWith("file:") ? url.slice("file:".length) : undefined;
     return newPglite(dir);
   },

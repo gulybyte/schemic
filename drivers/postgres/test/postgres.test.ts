@@ -217,3 +217,25 @@ describe("@schemic/postgres: field-level diff", () => {
     }
   });
 });
+
+describe("@schemic/postgres: connect url handling", () => {
+  test("a postgres:// url FAILS LOUD (no silent in-memory fallback)", async () => {
+    await expect(
+      driver.connect({
+        params: { url: "postgres://user:pass@localhost:5432/app" },
+      } as never),
+    ).rejects.toThrow(/not supported yet.*file:<dir>/s);
+  });
+
+  test('"" and file:/bare urls still connect (in-memory / data dir)', async () => {
+    // empty -> in-memory; a non-URL value must NOT trip the scheme guard.
+    const mem = (await driver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    await mem.close();
+    const bare = (await driver.connect({
+      params: { url: "./.pgdata-test" },
+    } as never)) as PgConn;
+    await bare.close();
+  });
+});

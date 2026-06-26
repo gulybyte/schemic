@@ -150,8 +150,8 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 ### Connection & engine
 - [x] `postgresConnection(...)` factory (static / resolver / keyed collection); `connect` reads `config.params.url`
 - [x] `Driver.query` (named `$name` + vars → positional `$1..$n` bind params); `pgSql` safe template builder
-- [x] embedded PGlite (`file:<dir>` data dir or in-memory); `shadow.roundTrip` + `shadow.ephemeral`
-- [~] real network Postgres (node-postgres) — `PgConn` is structural so a `pg` client fits; `connect` only builds PGlite (future)
+- [x] embedded PGlite — **`file:<dir>` persists; "" / omitted is in-memory** (a bare path without the `file:` prefix is in-memory); `shadow.roundTrip` + `shadow.ephemeral`
+- [~] real network Postgres (node-postgres) — `PgConn` is structural so a `pg` client fits; `connect` only builds PGlite (future). A `postgres://` (any non-`file:` URL-scheme) url now **fails loud** — `connect` throws rather than silently running an in-memory throwaway (was a silent-data-loss footgun)
 
 ---
 
