@@ -36,8 +36,10 @@ tagged by package (**core** / **cli** / **surrealdb** / **postgres** / **setup**
 
 ### Changed (BREAKING — alpha)
 - **surrealdb:** `defineAccess(name)` now **requires** an explicit scope — `.onDatabase()` /
-  `.onNamespace()` — and `emit()` throws if it is unset (the silent `ON DATABASE` default is gone).
-  Access scope is a security boundary, so it must be chosen, not defaulted.
+  `.onNamespace()` — enforced at **compile time** (`defineAccess` returns an `UnscopedAccessDef` exposing
+  only the two scope methods, so `defineAccess("x").bearer(...)` is a type error), with `emit()` still
+  throwing as a runtime backstop. The silent `ON DATABASE` default is gone — access scope is a security
+  boundary, so it must be chosen, not defaulted.
 - **surrealdb:** renamed `.reference()` -> `.$reference()` on field builders — field DDL clauses are
   `$`-prefixed (consistent with `.$unique()` / `.$index()` / `.$default()`). Update callers + the pull
   renderer migrated.
