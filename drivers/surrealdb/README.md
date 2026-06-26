@@ -55,7 +55,7 @@ The connection lives in `schemic.config.ts` — a named connection from the
 
 ```ts
 import { defineConfig } from "@schemic/core/config";
-import { surrealConnection } from "@schemic/surrealdb";
+import { surrealConnection } from "@schemic/surrealdb/connection";
 
 export default defineConfig({
   connections: {
