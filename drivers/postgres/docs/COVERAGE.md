@@ -81,7 +81,7 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 - [x] `bigint`, `smallint`, `real`
 - [x] `timestamp` (without tz), `date`, `time`, `timetz`
 - [x] `inet`, `cidr`, `macaddr`, `money`
-- [x] `jsonb` (opaque on disk, sub-structure by App-side Zod), `s.object(shape)` → `jsonb`
+- [x] `jsonb` (opaque on disk, sub-structure by App-side Zod), `s.object(shape)` → `jsonb`; `s.object()` returns a **`PgObjectField`** carrying the Zod object-COMPOSITION methods `.extend/.merge/.pick/.omit/.partial/.required/.catchall` (+ inherited `.loose/.strict/.flexible`) + a `.shape` getter — all keep precise App types and stay one `jsonb` column. The methods live on the object subclass (not base `PgField`), so base-field ↔ `AnyField` assignability is untouched
 - [~] `json` → `native "json"` (round-trips), distinct from `jsonb`
 - [x] string FORMAT factories `s.email()/url()/emoji()/nanoid()/cuid()/cuid2()/ulid()/guid()/xid()/ksuid()/base64()/base64url()/e164()/jwt()` → a `text` column with the Zod format validator App-side (validation is client-side; the column is plain `text`). `s.uuid()` stays the native `uuid` type; `s.inet()/cidr()/macaddr()` the native network types
 - [~] `s.enum([...])` → `text` (App-side Zod enum, validated client-side only — a quick inline projection)

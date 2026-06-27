@@ -311,6 +311,75 @@ export class PgField<
   }
 }
 
+/**
+ * A Postgres OBJECT field — the result of `s.object({...})`. A {@link PgField} over a `z.ZodObject`
+ * (one `jsonb` column) that additionally carries the Zod object-composition methods. They live HERE,
+ * on the object subclass — NOT on the base `PgField` — so the base field (and its `AnyField` erasure)
+ * stays free of generic-return methods that would break structural assignability. Each method forwards
+ * to the inner `z.object` and re-wraps as a `PgObjectField`, so the result stays composable and the
+ * App type stays precise (mirrors how Zod itself puts `.extend`/`.pick`/… on `ZodObject`, not `ZodType`).
+ */
+export class PgObjectField<
+  Sh extends z.ZodRawShape = z.ZodRawShape,
+  Flags extends string = never,
+> extends PgField<z.ZodObject<Sh>, Flags> {
+  // An object-producing op (incl. the inherited .loose()/.strict()/.flexible()) stays a PgObjectField;
+  // anything else (e.g. .optional()/.array()) degrades to a base PgField, matching the wrapper's type.
+  protected rebuild<S2 extends z.ZodType, F2 extends string>(
+    schema: S2,
+    native: PgMeta,
+  ): PgField<S2, F2> {
+    if (schema instanceof z.ZodObject)
+      return new PgObjectField(schema as never, native) as unknown as PgField<
+        S2,
+        F2
+      >;
+    return new PgField<S2, F2>(schema, native);
+  }
+  private obj<Sh2 extends z.ZodRawShape>(
+    schema: z.ZodObject<Sh2>,
+  ): PgObjectField<Sh2, Flags> {
+    return new PgObjectField<Sh2, Flags>(schema, this.native);
+  }
+  /** Add fields (existing keys are overwritten). Accepts fields OR raw Zod, like `s.object`. */
+  extend<T extends Record<string, AnyField | z.ZodType>>(shape: T) {
+    const lifted = Object.fromEntries(
+      Object.entries(shape).map(([k, v]) => [k, toZod(v)]),
+    ) as { [K in keyof T]: SchemaOf<T[K]> };
+    return this.obj(this.schema.extend(lifted));
+  }
+  /** Merge another object's shape in (its fields win on conflict). */
+  merge<T extends z.ZodRawShape>(other: PgObjectField<T> | z.ZodObject<T>) {
+    return this.obj(
+      this.schema.merge(other instanceof PgObjectField ? other.schema : other),
+    );
+  }
+  /** Keep only the masked keys. */
+  pick<M extends Parameters<z.ZodObject<Sh>["pick"]>[0]>(mask: M) {
+    return this.obj(this.schema.pick(mask));
+  }
+  /** Drop the masked keys. */
+  omit<M extends Parameters<z.ZodObject<Sh>["omit"]>[0]>(mask: M) {
+    return this.obj(this.schema.omit(mask));
+  }
+  /** Make all fields optional. */
+  partial() {
+    return this.obj(this.schema.partial());
+  }
+  /** Make all fields required. */
+  required() {
+    return this.obj(this.schema.required());
+  }
+  /** Type unknown keys with a schema (field OR raw Zod). */
+  catchall<C extends AnyField | z.ZodType>(schema: C) {
+    return this.obj(this.schema.catchall(toZod(schema) as SchemaOf<C>));
+  }
+  /** The object's field shape. */
+  get shape(): Sh {
+    return this.schema.shape;
+  }
+}
+
 // --- the `s` vocabulary (pg lingo) -------------------------------------------------------------
 
 // Generic in the Zod schema so each `s.*` factory keeps its precise type — without this, `App<T>` (and
@@ -417,14 +486,18 @@ export const s = {
       z.literal(value),
     ),
   // object -> jsonb (opaque on disk). Accepts field OR raw-Zod values (a Zod drop-in superset).
-  object: (shape: Record<string, AnyField | z.ZodType>) =>
-    mk(
-      "jsonb",
+  // Generic over the shape so the App type is the precise object AND the returned PgObjectField's
+  // composition methods (.extend/.pick/…) stay precisely typed.
+  object: <Sh extends Record<string, AnyField | z.ZodType>>(
+    shape: Sh,
+  ): PgObjectField<{ [K in keyof Sh]: SchemaOf<Sh[K]> }> =>
+    new PgObjectField(
       z.object(
         Object.fromEntries(
           Object.entries(shape).map(([k, v]) => [k, toZod(v)]),
         ),
-      ),
+      ) as z.ZodObject<{ [K in keyof Sh]: SchemaOf<Sh[K]> }>,
+      { pg: { type: "jsonb" } },
     ),
   // array(elem) -> `<elem>[]`; carries the element's pg metadata so it lowers to an array of that type.
   array: (elem: AnyField | z.ZodType): PgField =>
@@ -543,6 +616,14 @@ export interface PgTableConfig {
   foreignKeys?: PgForeignKeyConfig[];
 }
 
+// The element bound for a table's field map. Uses `any` deliberately: `PgField` is invariant in its
+// schema param (it appears in both co- and contra-variant positions), so a SUBCLASS like
+// `PgObjectField` (S = a concrete `ZodObject`) is NOT assignable to a plain `PgField` bound. `any`
+// relaxes that one check — the precise per-field types are still inferred from the literal, so
+// App/Wire typing is unaffected.
+// biome-ignore lint/suspicious/noExplicitAny: variance escape so PgField subclasses satisfy the bound
+type AnyPgField = PgField<any, any>;
+
 /**
  * A Postgres table definition — the `Authored` object the driver's `lower` reads. Structurally a
  * `{ name }` (the neutral `Authored` bound); also carries its `fields` (a `{ col: PgField }` map) and
@@ -550,7 +631,7 @@ export interface PgTableConfig {
  */
 export class PgTableDef<
   Name extends string = string,
-  F extends Record<string, PgField> = Record<string, PgField>,
+  F extends Record<string, AnyPgField> = Record<string, PgField>,
 > {
   /**
    * A Zod object over the columns' schemas — the single source for row validation + encode/decode +
@@ -645,7 +726,7 @@ export class PgTableDef<
 /** Declare a Postgres table: `export const user = defineTable("user", { name: s.text(), age: s.integer().optional() })`. */
 export function defineTable<
   Name extends string,
-  F extends Record<string, PgField>,
+  F extends Record<string, AnyPgField>,
 >(name: Name, fields: F, config?: PgTableConfig): PgTableDef<Name, F> {
   return new PgTableDef(name, fields, config ?? {});
 }

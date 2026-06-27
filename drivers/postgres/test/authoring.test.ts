@@ -842,3 +842,63 @@ describe("composite factories (record/tuple/union/intersection/discriminatedUnio
     }
   });
 });
+
+describe("object composition (PgObjectField: .extend/.merge/.pick/.omit/.partial/...)", () => {
+  const base = s.object({ a: s.text(), b: s.integer() });
+
+  test("compose + validate App-side (fields OR raw Zod)", () => {
+    const ext = base.extend({ c: s.boolean() });
+    expect(ext.safeDecode({ a: "x", b: 1, c: true }).success).toBe(true);
+    expect(ext.safeDecode({ a: "x", b: 1 }).success).toBe(false); // c required
+    expect(base.pick({ a: true }).safeDecode({ a: "x" }).success).toBe(true);
+    expect(base.omit({ b: true }).safeDecode({ a: "x" }).success).toBe(true);
+    expect(base.partial().safeDecode({}).success).toBe(true);
+    expect(
+      base.merge(s.object({ d: s.text() })).safeDecode({ a: "x", b: 1, d: "y" })
+        .success,
+    ).toBe(true);
+    expect(Object.keys(base.shape)).toEqual(["a", "b"]);
+  });
+
+  test("App type stays precise through composition", () => {
+    const ext = base.extend({ c: s.boolean() });
+    const app: { a: string; b: number; c: boolean } = ext.decode({
+      a: "x",
+      b: 1,
+      c: true,
+    });
+    expect(app).toEqual({ a: "x", b: 1, c: true });
+    const picked: { a: string } = base.pick({ a: true }).decode({ a: "x" });
+    expect(picked).toEqual({ a: "x" });
+  });
+
+  test("inherited .loose()/.strict() return a still-composable PgObjectField", () => {
+    expect(typeof base.loose().extend).toBe("function");
+    expect(
+      base.loose().extend({ z: s.text() }).safeDecode({
+        a: "x",
+        b: 1,
+        z: "q",
+        extra: 99,
+      }).success,
+    ).toBe(true);
+  });
+
+  test("a composed object is still ONE jsonb column + round-trips", async () => {
+    const t = defineTable("oc", { meta: base.extend({ c: s.boolean() }) });
+    const objs = postgresDriver.explode([t], []);
+    const out = emitKinds(registry, objs).join("\n");
+    expect(out).toContain('"meta" jsonb NOT NULL');
+    const conn = (await postgresDriver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await postgresDriver.apply(conn, emitKinds(registry, objs));
+      const live = await postgresDriver.introspectAll(conn);
+      const { up, down } = buildKindDiff(registry, live, objs);
+      expect({ up, down }).toEqual({ up: [], down: [] });
+    } finally {
+      await conn.close();
+    }
+  });
+});
