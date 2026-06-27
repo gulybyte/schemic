@@ -380,6 +380,33 @@ export class PgObjectField<
   }
 }
 
+/**
+ * A Postgres ENUM field — the result of `s.enum([...])` (a string-literal union projected to a `text`
+ * column). A {@link PgField} over a `z.ZodEnum` that additionally carries the Zod enum-derivation
+ * methods `.exclude`/`.extract`. Like {@link PgObjectField}, they live on THIS subclass — not base
+ * `PgField` — and forward to the inner `z.enum`, re-wrapping as a `PgEnumField` so the result stays a
+ * derivable enum and the App type narrows precisely (mirrors Zod, where `.exclude`/`.extract` are on
+ * `ZodEnum`). The pg column stays `text`.
+ */
+export class PgEnumField<
+  T extends z.core.util.EnumLike = z.core.util.EnumLike,
+  Flags extends string = never,
+> extends PgField<z.ZodEnum<T>, Flags> {
+  private enumField<T2 extends z.core.util.EnumLike>(
+    schema: z.ZodEnum<T2>,
+  ): PgEnumField<T2, Flags> {
+    return new PgEnumField<T2, Flags>(schema, this.native);
+  }
+  /** Derive an enum without the listed members. */
+  exclude<const U extends Parameters<z.ZodEnum<T>["exclude"]>[0]>(values: U) {
+    return this.enumField(this.schema.exclude(values));
+  }
+  /** Derive an enum with only the listed members. */
+  extract<const U extends Parameters<z.ZodEnum<T>["extract"]>[0]>(values: U) {
+    return this.enumField(this.schema.extract(values));
+  }
+}
+
 // --- the `s` vocabulary (pg lingo) -------------------------------------------------------------
 
 // Generic in the Zod schema so each `s.*` factory keeps its precise type — without this, `App<T>` (and
@@ -476,9 +503,10 @@ export const s = {
     mk("jsonb", shape ?? z.unknown()),
   json: <T extends z.ZodType = z.ZodUnknown>(shape?: T) =>
     mk("json", shape ?? z.unknown()),
-  // enum (string-literal union -> text) and single literal
+  // enum (string-literal union -> text) and single literal. Returns a PgEnumField so `.exclude`/
+  // `.extract` are available to derive narrower enums (the column stays text).
   enum: <const T extends readonly [string, ...string[]]>(values: T) =>
-    mk("text", z.enum(values)),
+    new PgEnumField(z.enum(values), { pg: { type: "text" } }),
   literal: <const V extends string | number | boolean>(value: V) =>
     mk(
       typeof value === "number"

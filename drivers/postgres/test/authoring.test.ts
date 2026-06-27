@@ -952,3 +952,41 @@ describe("s.bigint() precision — z.bigint(), no silent loss past 2^53", () => 
     }
   });
 });
+
+describe("s.enum().exclude()/.extract() (PgEnumField — derive narrower enums)", () => {
+  const status = s.enum(["draft", "published", "archived"]);
+
+  test("exclude drops members; extract keeps only the listed ones (App-side)", () => {
+    const noArch = status.exclude(["archived"]);
+    expect(noArch.safeDecode("draft").success).toBe(true);
+    expect(noArch.safeDecode("archived").success).toBe(false);
+    const onlyPub = status.extract(["published"]);
+    expect(onlyPub.safeDecode("published").success).toBe(true);
+    expect(onlyPub.safeDecode("draft").success).toBe(false);
+  });
+
+  test("App type narrows through exclude/extract", () => {
+    const noArch = status.exclude(["archived"]);
+    const v: "draft" | "published" = noArch.decode("draft");
+    expect(v).toBe("draft");
+  });
+
+  test("derived enum is still a text column + round-trips", async () => {
+    const t = defineTable("doc", { st: status.exclude(["archived"]) });
+    const objs = postgresDriver.explode([t], []);
+    expect(emitKinds(registry, objs).join("\n")).toContain(
+      '"st" text NOT NULL',
+    );
+    const conn = (await postgresDriver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await postgresDriver.apply(conn, emitKinds(registry, objs));
+      const live = await postgresDriver.introspectAll(conn);
+      const { up, down } = buildKindDiff(registry, live, objs);
+      expect({ up, down }).toEqual({ up: [], down: [] });
+    } finally {
+      await conn.close();
+    }
+  });
+});
