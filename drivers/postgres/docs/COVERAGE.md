@@ -78,7 +78,8 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 ### Column types — pg-native (round-trip via `native{params}`)
 - [x] `varchar(n)` / `char(n)` (length preserved)
 - [x] `numeric(p, s)` (precision/scale preserved)
-- [x] `bigint` (App value is a **`bigint`** — backed by `z.bigint()`, NOT `z.int()`/number — so values past 2^53 don't silently lose precision; PGlite round-trips native bigint, no codec), `smallint`, `real`
+- [x] `bigint` (App value is a **`bigint`** — never a `number`, so values past 2^53 don't silently lose precision), `smallint`, `real`. NOTE: PGlite returns a `bigint` (int8) column as a JS `number` when the value fits in 2^53 and a JS `bigint` only when larger, so every bigint-backed field (`bigint`/`bigserial`/`int64`/`uint32`) decodes through a number|bigint-tolerant codec that coerces to `bigint` (a `numeric` column always comes back as a string)
+- [x] Zod width-numerics: `s.int32()` → `integer`, `s.int64()` → `bigint` (App `bigint`), `s.uint32()` → `bigint` (App `number`; unsigned 32 exceeds signed int4), `s.uint64()` → `numeric` (App `bigint`; unsigned 64 exceeds signed int8), `s.float32()` → `real`, `s.float64()` → `double precision`. `s.ipv4()/ipv6()/cidrv4()/cidrv6()` → `text` format validators (distinct from native `s.inet()/cidr()`)
 - [x] `timestamp` (without tz), `date`, `time`, `timetz`
 - [x] `inet`, `cidr`, `macaddr`, `money`
 - [x] `jsonb` (opaque on disk, sub-structure by App-side Zod), `s.object(shape)` → `jsonb`; `s.object()` returns a **`PgObjectField`** carrying the Zod object-COMPOSITION methods `.extend/.merge/.pick/.omit/.partial/.required/.catchall` (+ inherited `.loose/.strict/.flexible`) + a `.shape` getter — all keep precise App types and stay one `jsonb` column. The methods live on the object subclass (not base `PgField`), so base-field ↔ `AnyField` assignability is untouched
@@ -89,7 +90,8 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 - [x] `defineEnum(name, values)` → a NATIVE pg enum (`CREATE TYPE … AS ENUM`); `mood.column()` types a column as it (App = the literal union). Full round-trip; the standalone, reusable, introspected alternative to the `s.enum` text projection
 - [~] `citext` (emit-only; needs the extension — gap below)
 - [x] `T[]` arrays of canonical element types; [~] arrays of pg-native element types (udt-name mismatch)
-- [x] composite jsonb factories — `s.record(key, value)` / `s.tuple([...])` / `s.union([...])` / `s.discriminatedUnion(disc, [...])` / `s.intersection(a, b)` / `s.lazy(() => ...)` → a single `jsonb` column, App value = the composite, validated App-side (mirrors surreal's set). `map`/`set` skipped (need a Map/Set↔jsonb codec); `nativeEnum` covered by `s.enum`/`defineEnum`
+- [x] composite jsonb factories — `s.record(key, value)` / `s.tuple([...])` / `s.union([...])` / `s.discriminatedUnion(disc, [...])` / `s.intersection(a, b)` / `s.lazy(() => ...)` / `s.xor([...])` (exclusive union) / `s.partialRecord(k,v)` / `s.looseRecord(k,v)` → a single `jsonb` column, App value = the composite, validated App-side (mirrors surreal's set). `map`/`set` skipped (need a Map/Set↔jsonb codec); `nativeEnum` covered by `s.enum`/`defineEnum`
+- [x] schema-derivation factories — `s.stringFormat(name, fn)` / `s.templateLiteral([...])` → `text`; `s.keyof(objField | z.object)` → `text` (enum of keys); `s.preprocess(fn, inner)` → App-side wrapper that inherits the inner field's column type. (Skipped: `z.mime`/`z.slugify`/`z.property` are `$ZodCheck`es used via `.check()`, not factories; `z.function`/`z.promise`/`z.symbol` have no column meaning.)
 
 ### Nullability & identity
 - [x] `NULL` / `NOT NULL`; `option<T>` and `T | null` both collapse to a nullable column (documented projection)

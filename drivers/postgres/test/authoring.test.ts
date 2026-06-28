@@ -1085,3 +1085,152 @@ describe("Tier-3 long-tail factories (z.* -> s.* literal drop-ins)", () => {
     }
   });
 });
+
+describe("cross-driver factories (network formats, width numerics, schema factories)", () => {
+  test("network string-format validators -> text", () => {
+    expect(s.ipv4().safeDecode("1.2.3.4").success).toBe(true);
+    expect(s.ipv4().safeDecode("999.0.0.0").success).toBe(false);
+    expect(s.ipv6().safeDecode("::1").success).toBe(true);
+    expect(s.cidrv4().safeDecode("10.0.0.0/8").success).toBe(true);
+    expect(s.cidrv6().safeDecode("::/0").success).toBe(true);
+    const out = emitKinds(
+      registry,
+      postgresDriver.explode(
+        [
+          defineTable("net", {
+            a: s.ipv4(),
+            b: s.ipv6(),
+            c: s.cidrv4(),
+            d: s.cidrv6(),
+          }),
+        ],
+        [],
+      ),
+    ).join("\n");
+    for (const col of ["a", "b", "c", "d"])
+      expect(out).toContain(`"${col}" text NOT NULL`);
+  });
+
+  test("width numerics emit the right column types", () => {
+    const t = defineTable("w", {
+      i32: s.int32(),
+      u32: s.uint32(),
+      i64: s.int64(),
+      u64: s.uint64(),
+      f32: s.float32(),
+      f64: s.float64(),
+    });
+    const out = emitKinds(registry, postgresDriver.explode([t], [])).join("\n");
+    expect(out).toContain('"i32" integer NOT NULL');
+    expect(out).toContain('"u32" bigint NOT NULL'); // unsigned 32 -> bigint (range)
+    expect(out).toContain('"i64" bigint NOT NULL');
+    expect(out).toContain('"u64" numeric NOT NULL'); // unsigned 64 -> numeric (range)
+    expect(out).toContain('"f32" real NOT NULL');
+    expect(out).toContain('"f64" double precision NOT NULL');
+  });
+
+  test("bigint-backed fields round-trip at BOTH a small (<=2^53) and a large value", async () => {
+    // PGlite returns a bigint column as a JS number when <=2^53, bigint when larger — both must decode.
+    const t = defineTable("bn", {
+      big: s.bigint(),
+      i64: s.int64(),
+      u32: s.uint32(),
+      u64: s.uint64(),
+    });
+    const objs = postgresDriver.explode([t], []);
+    const conn = (await postgresDriver.connect({
+      params: { url: "" },
+    } as never)) as PgConn;
+    try {
+      await postgresDriver.apply(conn, emitKinds(registry, objs));
+      const f = t.fields;
+      const cases: Array<[string, bigint, bigint, number, bigint]> = [
+        ["small", 5n, 5n, 5, 5n], // <=2^53 -> PGlite returns number (the previously-broken case)
+        [
+          "large",
+          9007199254740993n, // 2^53 + 1
+          9223372036854775807n, // int64 max
+          4294967295, // uint32 max
+          18446744073709551615n, // uint64 max
+        ],
+      ];
+      for (const [id, big, i64, u32, u64] of cases) {
+        await conn.query(
+          `INSERT INTO "bn" ("id","big","i64","u32","u64") VALUES ($1,$2,$3,$4,$5);`,
+          [
+            id,
+            f.big.encode(big as never),
+            f.i64.encode(i64 as never),
+            f.u32.encode(u32 as never),
+            f.u64.encode(u64 as never),
+          ],
+        );
+        const row = (
+          await conn.query<{
+            big: unknown;
+            i64: unknown;
+            u32: unknown;
+            u64: unknown;
+          }>(`SELECT "big","i64","u32","u64" FROM "bn" WHERE id=$1;`, [id])
+        ).rows[0];
+        expect(f.big.decode(row.big)).toBe(big);
+        expect(f.i64.decode(row.i64)).toBe(i64);
+        expect(f.u32.decode(row.u32)).toBe(u32);
+        expect(f.u64.decode(row.u64)).toBe(u64);
+      }
+      const { up, down } = buildKindDiff(
+        registry,
+        await postgresDriver.introspectAll(conn),
+        objs,
+      );
+      expect({ up, down }).toEqual({ up: [], down: [] });
+    } finally {
+      await conn.close();
+    }
+  });
+
+  test("schema factories: xor / records / stringFormat / templateLiteral / keyof / preprocess", () => {
+    const xor = s.xor([
+      z.object({ a: z.string() }),
+      z.object({ b: z.string() }),
+    ]);
+    expect(xor.safeDecode({ a: "x" }).success).toBe(true);
+    expect(xor.safeDecode({ a: "x", b: "y" }).success).toBe(false); // exclusive
+    expect(
+      s.partialRecord(z.string(), s.int()).safeDecode({ x: 1 }).success,
+    ).toBe(true);
+    expect(
+      s.looseRecord(z.string(), s.int()).safeDecode({ x: 1 }).success,
+    ).toBe(true);
+    expect(
+      s.stringFormat("hex", (v) => /^[0-9a-f]+$/.test(v)).safeDecode("ff")
+        .success,
+    ).toBe(true);
+    expect(
+      s.keyof(s.object({ a: s.text(), b: s.int() })).safeDecode("a").success,
+    ).toBe(true);
+    expect(s.keyof(s.object({ a: s.text() })).safeDecode("z").success).toBe(
+      false,
+    );
+    expect(s.preprocess((x) => String(x), s.text()).decode(123)).toBe("123");
+    // jsonb / text / inherited column types
+    const out = emitKinds(
+      registry,
+      postgresDriver.explode(
+        [
+          defineTable("sf", {
+            x: s.xor([z.string(), z.number()]),
+            r: s.partialRecord(z.string(), s.int()),
+            tl: s.templateLiteral(["a", z.number()]),
+            pp: s.preprocess((v) => v, s.integer()),
+          }),
+        ],
+        [],
+      ),
+    ).join("\n");
+    expect(out).toContain('"x" jsonb NOT NULL');
+    expect(out).toContain('"r" jsonb NOT NULL');
+    expect(out).toContain('"tl" text NOT NULL');
+    expect(out).toContain('"pp" integer NOT NULL'); // preprocess inherits the inner field's column
+  });
+});

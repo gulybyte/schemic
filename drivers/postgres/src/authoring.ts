@@ -475,6 +475,21 @@ function wirePgType(schema: z.ZodType): PgTypeRef {
   }
 }
 
+// PGlite returns an int8 (`bigint`) column as a JS `number` when the value fits in 2^53, and a JS
+// `bigint` only when it's larger — so any bigint-backed field must accept EITHER on the wire and coerce
+// to `bigint`. (A `numeric` column, by contrast, always comes back as a string.) Without this, decode of
+// a small value stored in a bigint column throws "expected bigint, received number".
+const INT8_WIRE = z.union([z.bigint(), z.number()]);
+/** A `bigint` column whose App value is a JS `bigint`, tolerant of PGlite's number|bigint wire. */
+const bigintField = (): PgField<z.ZodCodec<typeof INT8_WIRE, z.ZodBigInt>> =>
+  new PgField(
+    z.codec(INT8_WIRE, z.bigint(), {
+      decode: (w) => BigInt(w),
+      encode: (b) => b,
+    }),
+    { pg: { type: "bigint" } },
+  );
+
 /** The Postgres authoring namespace. Zod drop-ins (string/number/…) + native pg types + `$postgres`. */
 export const s = {
   // Zod drop-ins (the canonical superset; each maps to a sensible pg default). Native aliases below
@@ -529,6 +544,14 @@ export const s = {
   hex: (params?: Parameters<typeof z.hex>[0]) => mk("text", z.hex(params)),
   mac: (params?: Parameters<typeof z.mac>[0]) => mk("text", z.mac(params)),
   hash: (...args: Parameters<typeof z.hash>) => mk("text", z.hash(...args)),
+  // network string-format validators -> text (App-side; DISTINCT from the native s.inet()/cidr()/
+  // macaddr() columns — these are the z.ipv4/ipv6/cidrv4/cidrv6 drop-ins, validated client-side).
+  ipv4: (params?: Parameters<typeof z.ipv4>[0]) => mk("text", z.ipv4(params)),
+  ipv6: (params?: Parameters<typeof z.ipv6>[0]) => mk("text", z.ipv6(params)),
+  cidrv4: (params?: Parameters<typeof z.cidrv4>[0]) =>
+    mk("text", z.cidrv4(params)),
+  cidrv6: (params?: Parameters<typeof z.cidrv6>[0]) =>
+    mk("text", z.cidrv6(params)),
   // ISO string formats (nested, mirroring z.iso.*) — App-side validators on `text`. DISTINCT from the
   // native temporal types s.date()/s.timestamptz()/s.interval() (those are real pg date/time columns).
   iso: {
@@ -548,12 +571,12 @@ export const s = {
   smallint: () => mk("smallint", z.int().gte(-32768).lte(32767)),
   integer: () => mk("integer", z.int()),
   int: () => mk("integer", z.int()),
-  // 64-bit: backed by z.bigint() (App value is a JS bigint), NOT z.int() — a pg bigint exceeds JS's
-  // safe-integer range (2^53), so a number would silently lose precision. PGlite returns bigint columns
-  // as native JS bigint and round-trips them exactly, so no codec is needed.
-  bigint: () => mk("bigint", z.bigint()),
+  // 64-bit: App value is a JS bigint (NOT a number — a pg bigint exceeds JS's 2^53 safe-integer range,
+  // so a number would silently lose precision). Uses {@link bigintField} so decode tolerates PGlite
+  // returning the column as number (<=2^53) or bigint (larger) and coerces to bigint either way.
+  bigint: () => bigintField(),
   serial: () => mk("integer", z.int()).$identity("by-default"),
-  bigserial: () => mk("bigint", z.bigint()).$identity("by-default"),
+  bigserial: () => bigintField().$identity("by-default"),
   numeric: (precision?: number, scale?: number) =>
     precision === undefined
       ? mk("numeric", z.number())
@@ -564,6 +587,40 @@ export const s = {
   doublePrecision: () => mk("double precision", z.number()),
   float: () => mk("double precision", z.number()),
   money: () => mk("money", z.string()),
+  // Zod width-numeric drop-ins. Clean fits: float32->real, float64->double precision, int32->integer,
+  // int64->bigint (App bigint, like s.bigint). Postgres has NO unsigned types, so uint32/uint64 store
+  // in the next type up via a codec (App keeps z.uint*'s value type): uint32 (0..2^32-1) -> bigint
+  // column (wire bigint <-> app number), uint64 (0..2^64-1) -> numeric column (wire string <-> app bigint).
+  float32: (params?: Parameters<typeof z.float32>[0]) =>
+    mk("real", z.float32(params)),
+  float64: (params?: Parameters<typeof z.float64>[0]) =>
+    mk("double precision", z.float64(params)),
+  int32: (params?: Parameters<typeof z.int32>[0]) =>
+    mk("integer", z.int32(params)),
+  int64: (params?: Parameters<typeof z.int64>[0]) =>
+    new PgField(
+      z.codec(INT8_WIRE, z.int64(params), {
+        decode: (w) => BigInt(w),
+        encode: (b) => b,
+      }),
+      { pg: { type: "bigint" } },
+    ),
+  uint32: (params?: Parameters<typeof z.uint32>[0]) =>
+    new PgField(
+      z.codec(INT8_WIRE, z.uint32(params), {
+        decode: (w) => Number(w),
+        encode: (n) => BigInt(n),
+      }),
+      { pg: { type: "bigint" } },
+    ),
+  uint64: (params?: Parameters<typeof z.uint64>[0]) =>
+    new PgField(
+      z.codec(z.string(), z.uint64(params), {
+        decode: (s) => BigInt(s),
+        encode: (b) => String(b),
+      }),
+      { pg: { type: "numeric" } },
+    ),
   // boolean
   boolean: () => mk("boolean", z.boolean()),
   bool: () => mk("boolean", z.boolean()),
@@ -685,6 +742,49 @@ export const s = {
     mk(
       "jsonb",
       z.lazy(() => toZod(getter()) as SchemaOf<V>),
+    ),
+  // exclusive union (z.xor) -> jsonb, like s.union but matching exactly one option.
+  xor: <
+    const T extends readonly [
+      AnyField | z.ZodType,
+      ...(AnyField | z.ZodType)[],
+    ],
+  >(
+    options: T,
+  ) => mk("jsonb", z.xor(options.map(toZod) as ZodsOf<T>)),
+  // open-keyed record variants -> jsonb (all-optional values / extra keys allowed). Accept field|raw Zod.
+  partialRecord: <
+    K extends z.core.$ZodRecordKey,
+    V extends AnyField | z.ZodType,
+  >(
+    key: K,
+    value: V,
+  ) => mk("jsonb", z.partialRecord(key, toZod(value) as SchemaOf<V>)),
+  looseRecord: <K extends z.core.$ZodRecordKey, V extends AnyField | z.ZodType>(
+    key: K,
+    value: V,
+  ) => mk("jsonb", z.looseRecord(key, toZod(value) as SchemaOf<V>)),
+  // custom string formats / template-literal strings -> text (App-side validated).
+  stringFormat: (...args: Parameters<typeof z.stringFormat>) =>
+    mk("text", z.stringFormat(...args)),
+  templateLiteral: (...args: Parameters<typeof z.templateLiteral>) =>
+    mk("text", z.templateLiteral(...args)),
+  // an enum of an object's keys (z.keyof) -> text. Accepts an s.object() field or a raw z.object.
+  // biome-ignore lint/suspicious/noExplicitAny: accept any PgObjectField shape (subclass is invariant)
+  keyof: (obj: PgObjectField<any> | z.ZodObject) =>
+    mk(
+      "text",
+      z.keyof(obj instanceof PgField ? (obj.schema as z.ZodObject) : obj),
+    ),
+  // preprocess the input before validation (z.preprocess) — App-side only; the column type is the
+  // INNER schema's (inherit its pg metadata when it's an s.* field, else default).
+  preprocess: <V extends AnyField | z.ZodType>(
+    fn: (arg: unknown) => unknown,
+    schema: V,
+  ) =>
+    new PgField(
+      z.preprocess(fn, toZod(schema) as SchemaOf<V>),
+      schema instanceof PgField ? schema.native : {},
     ),
   // foreign key: `text` column + FK to `table(id)`
   references: (
