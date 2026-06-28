@@ -1749,6 +1749,16 @@ export const s = {
     options: T,
   ): SField<z.ZodUnion<ZodsOf<T>>> =>
     new SField(z.union(options.map(toZod) as ZodsOf<T>)),
+  /** An EXCLUSIVE union (Zod `z.xor`) — exactly one option may match. DDL is the union of the options
+   *  (SurrealDB can't express "exactly one" in DDL; the exclusivity is enforced app-side). */
+  xor: <
+    const T extends readonly [
+      AnyField | z.ZodType,
+      ...(AnyField | z.ZodType)[],
+    ],
+  >(
+    options: T,
+  ) => new SField(z.xor(options.map(toZod) as ZodsOf<T>)),
   /** A fixed-length tuple of fields/schemas. */
   tuple: <
     const T extends readonly [
@@ -1772,6 +1782,19 @@ export const s = {
     value: V,
   ): SField<z.ZodMap<SchemaOf<K>, SchemaOf<V>>> =>
     new SField(z.map(toZod(key) as SchemaOf<K>, toZod(value) as SchemaOf<V>)),
+  /** A partial open-keyed record (all values optional; Zod `z.partialRecord`) -> SurrealQL `object`. */
+  partialRecord: <
+    K extends z.core.$ZodRecordKey,
+    V extends AnyField | z.ZodType,
+  >(
+    key: K,
+    value: V,
+  ) => new SField(z.partialRecord(key, toZod(value) as SchemaOf<V>)),
+  /** A loose open-keyed record (extra keys allowed; Zod `z.looseRecord`) -> SurrealQL `object`. */
+  looseRecord: <K extends z.core.$ZodRecordKey, V extends AnyField | z.ZodType>(
+    key: K,
+    value: V,
+  ) => new SField(z.looseRecord(key, toZod(value) as SchemaOf<V>)),
   /** A `Set<element>` -> SurrealQL `set<element>`. `opts.max` -> sized `set<T, N>` (MAX). */
   set: <V extends AnyField | z.ZodType>(
     element: V,
@@ -1798,6 +1821,23 @@ export const s = {
     getter: () => V,
   ): SField<z.ZodLazy<SchemaOf<V>>> =>
     new SField(z.lazy(() => toZod(getter()) as SchemaOf<V>)),
+
+  /** A custom string format (Zod `z.stringFormat`) — app-side validated, DDL `string`. */
+  stringFormat: (...args: Parameters<typeof z.stringFormat>) =>
+    new SField(z.stringFormat(...args)),
+  /** A template-literal string (Zod `z.templateLiteral`) — app-side validated, DDL `string`. */
+  templateLiteral: (...args: Parameters<typeof z.templateLiteral>) =>
+    new SField(z.templateLiteral(...args)),
+  /** An enum of an object's keys (Zod `z.keyof`) — accepts an `s.object()` field or a raw `z.object`. */
+  keyof: (obj: SObjectField | z.ZodObject) =>
+    new SField(
+      z.keyof(obj instanceof SField ? (obj.schema as z.ZodObject) : obj),
+    ),
+  /** Preprocess the input before validation (Zod `z.preprocess`) — app-side only, no DDL constraint. */
+  preprocess: <V extends AnyField | z.ZodType>(
+    fn: (arg: unknown) => unknown,
+    schema: V,
+  ) => new SField(z.preprocess(fn, toZod(schema) as SchemaOf<V>)),
 
   /** A native TS enum — string or numeric (numeric reverse-mappings are filtered out). */
   nativeEnum: <const T extends Record<string, string | number>>(entries: T) =>

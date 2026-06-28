@@ -125,3 +125,45 @@ describe("Bucket-2 numerics (float32/float64/int64/uint64)", () => {
     expect(s.uint64().safeDecode(-1n).success).toBe(false); // unsigned
   });
 });
+
+describe("Full drop-in tail: stringFormat/templateLiteral/keyof/partialRecord/looseRecord/xor/preprocess", () => {
+  const line = (t: Parameters<typeof emitTable>[0], n: string) =>
+    emitTable(t)
+      .split("\n")
+      .find((l) => l.includes(` ${n} `))
+      ?.trim();
+
+  test("DDL mappings", () => {
+    const T = defineTable("t", {
+      id: s.string(),
+      sf: s.stringFormat("slug", (v: string) => /^[a-z-]+$/.test(v)),
+      tl: s.templateLiteral(["user_", z.number()]),
+      ko: s.keyof(s.object({ a: s.string(), b: s.string() })),
+      pr: s.partialRecord(z.string(), s.number()),
+      lr: s.looseRecord(z.string(), s.number()),
+      xo: s.xor([s.string(), s.number()]),
+      pp: s.preprocess((x) => String(x), s.string()),
+    });
+    expect(line(T, "sf")).toBe("DEFINE FIELD sf ON TABLE t TYPE string;");
+    expect(line(T, "tl")).toBe("DEFINE FIELD tl ON TABLE t TYPE string;"); // template_literal -> string
+    expect(line(T, "ko")).toBe('DEFINE FIELD ko ON TABLE t TYPE "a" | "b";');
+    expect(line(T, "pr")).toBe("DEFINE FIELD pr ON TABLE t TYPE object;");
+    expect(line(T, "lr")).toBe("DEFINE FIELD lr ON TABLE t TYPE object;");
+    expect(line(T, "xo")).toBe(
+      "DEFINE FIELD xo ON TABLE t TYPE string | number;",
+    );
+    expect(line(T, "pp")).toBe("DEFINE FIELD pp ON TABLE t TYPE any;"); // preprocess = app-side, no DDL
+  });
+
+  test("app-side validation", () => {
+    const tl = s.templateLiteral(["user_", z.number()]);
+    expect(tl.safeDecode("user_5").success).toBe(true);
+    expect(tl.safeDecode("user_x").success).toBe(false);
+    const ko = s.keyof(s.object({ a: s.string(), b: s.string() }));
+    expect(ko.safeDecode("a").success).toBe(true);
+    expect(ko.safeDecode("z").success).toBe(false);
+    const sf = s.stringFormat("slug", (v: string) => /^[a-z-]+$/.test(v));
+    expect(sf.safeDecode("a-b").success).toBe(true);
+    expect(sf.safeDecode("AB").success).toBe(false);
+  });
+});

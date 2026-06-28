@@ -99,6 +99,7 @@ export function inferField(
   const def = zdef(schema);
   switch (def.type) {
     case "string":
+    case "template_literal": // z.templateLiteral — a string-typed literal pattern
       return leaf("string");
     case "number": {
       // z.int/int32/uint32/float64 share def.type "number"; the format discriminates.
