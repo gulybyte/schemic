@@ -121,7 +121,10 @@ describe("Bucket-2 numerics (float32/float64/int64/uint64)", () => {
   test("they validate app-side", () => {
     expect(s.float32().safeDecode(1e40).success).toBe(false);
     expect(s.int64().safeDecode(5n).success).toBe(true);
-    expect(s.int64().safeDecode(5).success).toBe(false); // bigint only
+    // The SDK returns an `int` as a JS number when it's safe-sized; the bigint codec coerces it.
+    expect(s.int64().safeDecode(5).success).toBe(true);
+    expect(s.int64().safeDecode(5).data).toBe(5n);
+    expect(s.int64().safeDecode(3.5).success).toBe(false); // non-integer rejected at the wire
     expect(s.uint64().safeDecode(-1n).success).toBe(false); // unsigned
   });
 });

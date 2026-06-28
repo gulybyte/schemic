@@ -1231,6 +1231,20 @@ function uuidCodec() {
   return codec;
 }
 
+/** Surreal `int` (i64) <-> JS `bigint`. The SurrealDB SDK returns an `int` as a JS `number` when it fits
+ *  a safe integer and as a `bigint` when larger, so a `bigint`-app field must accept BOTH on decode and
+ *  normalize to `bigint` — else a normal-sized value (e.g. `42`) fails to decode. Wire is `int | bigint`
+ *  so a non-integer is rejected before `BigInt()` (which throws on floats). DDL stays `int`. */
+function bigintCodec(inner: z.ZodType<bigint, bigint>) {
+  const codec = z.codec(z.union([z.int(), z.bigint()]), inner, {
+    decode: (v: number | bigint): bigint =>
+      typeof v === "bigint" ? v : BigInt(v),
+    encode: (v: bigint) => v,
+  });
+  surrealTypeRegistry.set(codec, "int");
+  return codec;
+}
+
 /** Surreal `bytes` <-> JS `Uint8Array` (the DB may return an ArrayBuffer; normalize it). */
 function bytesCodec() {
   const codec = z.codec(
@@ -1623,7 +1637,7 @@ export const s = {
   uint32: (params?: Parameters<typeof z.uint32>[0]) =>
     new SField(z.uint32(params)),
   bigint: (params?: Parameters<typeof z.bigint>[0]) =>
-    new SField(z.bigint(params)),
+    new SField(bigintCodec(z.bigint(params))),
   /** A 32-bit float (app-side range-checked) — DDL `float`. */
   float32: (params?: Parameters<typeof z.float32>[0]) =>
     new SField(z.float32(params)),
@@ -1632,10 +1646,10 @@ export const s = {
     new SField(z.float64(params)),
   /** A 64-bit signed integer (app `bigint`) — DDL `int`. */
   int64: (params?: Parameters<typeof z.int64>[0]) =>
-    new SField(z.int64(params)),
+    new SField(bigintCodec(z.int64(params))),
   /** A 64-bit unsigned integer (app `bigint`, non-negative) — DDL `int`. */
   uint64: (params?: Parameters<typeof z.uint64>[0]) =>
-    new SField(z.uint64(params)),
+    new SField(bigintCodec(z.uint64(params))),
 
   datetime: () => new SField(datetimeCodec()),
   /** Alias of `datetime` (Surreal stores a `datetime`; there is no plain date). */
