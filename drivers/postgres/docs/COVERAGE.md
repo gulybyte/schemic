@@ -153,6 +153,16 @@ round-trip (author `s.*` → lower → emit → introspect → diff = 0) · `[n/
 > factories return a precise `PgField<S>` (the `mk<S>` generic) rather than a wide `PgField<ZodType>` —
 > so the earlier "wire-side codec types are loose" gap is closed.
 
+### CLI commands (`sc <kind> <verb>` — `Driver.commands`)
+Driver-contributed commands; core discovers + dispatches them (parses argv into `ParsedCommandArgs`,
+opens the connection, hands `run` a `CommandContext`). pg owns the dialect SQL in `./commands.ts`.
+- [x] `sc matview refresh <name> [--concurrently]` — `REFRESH MATERIALIZED VIEW [CONCURRENTLY]`
+- [x] `sc sequence set <name> <value> [--is-called true|false] [--dry-run]` — `setval(...)`; `sc sequence current <name>` — `last_value`
+- [x] `sc enum add <type> <value> [--before|--after <label>] [--dry-run]` — `ALTER TYPE … ADD VALUE` (string literal, not a bound param)
+- [x] `sc table count <name> [--where <expr>]`; `sc table find <name> <col=value> [--limit N]` (value bound as a param — pg infers its type); `sc table vacuum <name> [--full] [--analyze]`
+- [x] `sc index reindex <name>` — `REINDEX INDEX`
+- mutating commands honor `--dry-run` (print the SQL, don't run); identifiers quoted via `identifier()`, user `--where` spliced raw (CLI author trusted)
+
 ### Connection & engine
 - [x] `postgresConnection(...)` factory (static / resolver / keyed collection); `connect` reads `config.params.url`
 - [x] `Driver.query` (named `$name` + vars → positional `$1..$n` bind params); `pgSql` safe template builder
