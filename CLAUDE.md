@@ -46,6 +46,20 @@ Rules:
   Everyone else: **DM `core-dev` directly** for core/API questions, or discuss in `#general`. **Do not
   post in `#drivers`.**
 
+## Manuel's attention → use Tasks, not inline reminders (CONTRACT)
+
+Anything **pending Manuel's attention** — a decision, an approval (e.g. a BREAKING land), a security/
+secret action, a release-cut call, anything only he can decide — goes into the **session Task list**,
+never an inline "just a reminder that X is pending" in chat prose. The Task list is **persistent**, so
+Manuel can review it any time and ask again; he marks each item done as he attends it.
+
+- **Per-agent, not centralized.** EACH agent keeps its OWN pending-Manuel items in its OWN session Task
+  list (visible in that agent's chat). Do **not** route them to `core-dev` — Manuel reviews each agent's
+  chat for that agent's items.
+- **Don't pester inline.** Surface a pending item once when it arises (as a Task), then stop re-raising
+  it in prose. Act on everything you can decide yourself; only genuinely Manuel-only items become Tasks.
+- **Task naming** follows whatever format Manuel asked for (e.g. tracked secrets: `npm key: <id…> <date>`).
+
 ## Worktrees (don't step on each other)
 
 The repo is a **shared working directory** — multiple agents check it out. So one agent's
