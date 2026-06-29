@@ -12,6 +12,12 @@ tagged by package (**core** / **cli** / **surrealdb** / **postgres** / **setup**
 ## [Unreleased]
 
 ### Added
+- **core:** `DriverCommand` contract — drivers can contribute dialect-specific CLI commands invoked as
+  `sc <kind> <verb> [args]` (e.g. surreal `access rotate <name>`, postgres `matview refresh <name>`).
+  Core owns only the general mechanism: it discovers `driver.commands`, parses argv (variadic positionals
+  + value/boolean flags), resolves the connection, and dispatches to `run` with a `CommandContext`
+  ({conn, config, io with prompt(), secrets}); the driver owns each kind/verb's meaning. This commit
+  lands the contract types; the CLI dispatch follows.
 - **core:** secret-bearing DDL foundations (Phase-2a of the DEFINE ACCESS secret contract) — `SecretRef`
   + `env()`/`secret()` author-time helpers + a pluggable `SecretProvider` (default reads `process.env`),
   and a write-only `bindings` carrier (`$param` -> `SecretRef`) on `Statement` + `Diff`. The secret
